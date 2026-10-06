@@ -183,7 +183,7 @@ static void process_one_shrink(struct ion_system_secure_heap *secure_heap,
 	sys_heap->ops->free(&buffer);
 }
 
-static void ion_system_secure_heap_prefetch_work(struct work_struct *work)
+static void __maybe_unused ion_system_secure_heap_prefetch_work(struct work_struct *work)
 {
 	struct ion_system_secure_heap *secure_heap = container_of(work,
 						struct ion_system_secure_heap,
@@ -340,7 +340,7 @@ static int ion_system_secure_heap_shrink(struct ion_heap *heap, gfp_t gfp_mask,
 						gfp_mask, nr_to_scan);
 }
 
-static struct ion_heap_ops system_secure_heap_ops = {
+static struct ion_heap_ops __maybe_unused system_secure_heap_ops = {
 	.allocate = ion_system_secure_heap_allocate,
 	.free = ion_system_secure_heap_free,
 	.map_kernel = ion_system_secure_heap_map_kernel,

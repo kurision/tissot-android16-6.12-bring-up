@@ -940,6 +940,10 @@ long compat_qseecom_ioctl(struct file *file,
 						(unsigned long)data);
 	}
 	break;
+	case COMPAT_QSEECOM_IOCTL_GET_CE_PIPE_INFO:
+	case COMPAT_QSEECOM_IOCTL_FREE_CE_PIPE_INFO:
+	case COMPAT_QSEECOM_IOCTL_QUERY_CE_PIPE_INFO:
+		return qseecom_ioctl(file, cmd, (unsigned long)compat_ptr(arg));
 	default:
 		return -ENOIOCTLCMD;
 	break;

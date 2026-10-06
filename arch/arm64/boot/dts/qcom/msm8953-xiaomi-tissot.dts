@@ -42,6 +42,17 @@
 		};
 	};
 
+	ion {
+		compatible = "qcom,msm-ion";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		heap@1b {
+			reg = <27>;
+			qcom,ion-heap-type = "DMA";
+		};
+	};
+
 	reserved-memory {
 		qseecom_mem: qseecom@84a00000 {
 			reg = <0x0 0x84a00000 0x0 0x1900000>;

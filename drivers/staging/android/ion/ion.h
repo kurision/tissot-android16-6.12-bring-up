@@ -13,7 +13,8 @@
 #include <linux/device.h>
 #include <linux/dma-direction.h>
 #include <linux/kref.h>
-#include <linux/mm_types.h>
+#include <linux/mm.h>
+#include <linux/plist.h>
 #include <linux/mutex.h>
 #include <linux/rbtree.h>
 #include <linux/sched.h>

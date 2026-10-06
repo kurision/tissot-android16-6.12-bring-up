@@ -1392,7 +1392,7 @@ static int qseecom_dmabuf_map(int ion_fd, struct sg_table **sgt,
 		goto err_put;
 	}
 
-	new_sgt = dma_buf_map_attachment(new_attach, DMA_BIDIRECTIONAL);
+	new_sgt = dma_buf_map_attachment_unlocked(new_attach, DMA_BIDIRECTIONAL);
 	if (IS_ERR_OR_NULL(new_sgt)) {
 		ret = PTR_ERR(new_sgt);
 		pr_err("dma_buf_map_attachment for ion_fd %d failed ret = %d\n",
@@ -1411,7 +1411,7 @@ static int qseecom_dmabuf_map(int ion_fd, struct sg_table **sgt,
 	return ret;
 
 err_unmap_attachment:
-	dma_buf_unmap_attachment(new_attach, new_sgt, DMA_BIDIRECTIONAL);
+	dma_buf_unmap_attachment_unlocked(new_attach, new_sgt, DMA_BIDIRECTIONAL);
 err_detach:
 	dma_buf_detach(new_dma_buf, new_attach);
 err_put:
@@ -1424,7 +1424,7 @@ static void qseecom_dmabuf_unmap(struct sg_table *sgt,
 			struct dma_buf_attachment *attach,
 			struct dma_buf *dmabuf)
 {
-	dma_buf_unmap_attachment(attach, sgt, DMA_BIDIRECTIONAL);
+	dma_buf_unmap_attachment_unlocked(attach, sgt, DMA_BIDIRECTIONAL);
 	dma_buf_detach(dmabuf, attach);
 	dma_buf_put(dmabuf);
 }
@@ -1454,7 +1454,7 @@ static int qseecom_vaddr_map(int ion_fd,
 	*sb_length = new_sgt->sgl->length;
 
 	dma_buf_begin_cpu_access(new_dma_buf, DMA_BIDIRECTIONAL);
-	ret = dma_buf_vmap(new_dma_buf, &map);
+	ret = dma_buf_vmap_unlocked(new_dma_buf, &map);
 	if (ret) {
 		pr_err("dma_buf_kmap failed\n");
 		goto err_unmap;
@@ -1479,7 +1479,7 @@ static void qseecom_vaddr_unmap(void *vaddr, struct sg_table *sgt,
 		struct dma_buf *dmabuf)
 {
 	struct iosys_map map = IOSYS_MAP_INIT_VADDR(vaddr);
-	dma_buf_vunmap(dmabuf, &map);
+	dma_buf_vunmap_unlocked(dmabuf, &map);
 	dma_buf_end_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 	qseecom_dmabuf_unmap(sgt, attach, dmabuf);
 }
@@ -6456,6 +6456,10 @@ static int __qseecom_update_current_key_user_info(
 
 static int qseecom_enable_ice_setup(int usage)
 {
+	if (usage != QSEOS_KM_USAGE_UFS_ICE_DISK_ENCRYPTION &&
+	    usage != QSEOS_KM_USAGE_SDCC_ICE_DISK_ENCRYPTION)
+		return 0;
+
 	pr_debug("ICE setup unsupported for usage %d (fde %d pfe %d)\n",
 		 usage, qseecom.support_fde, qseecom.support_pfe);
 	return -ENODEV;
@@ -6463,6 +6467,10 @@ static int qseecom_enable_ice_setup(int usage)
 
 static int qseecom_disable_ice_setup(int usage)
 {
+	if (usage != QSEOS_KM_USAGE_UFS_ICE_DISK_ENCRYPTION &&
+	    usage != QSEOS_KM_USAGE_SDCC_ICE_DISK_ENCRYPTION)
+		return 0;
+
 	pr_debug("ICE teardown unsupported for usage %d (fde %d pfe %d)\n",
 		 usage, qseecom.support_fde, qseecom.support_pfe);
 	return -ENODEV;
@@ -6531,6 +6539,10 @@ static int qseecom_create_key(struct qseecom_dev_handle *data,
 		ret = -EFAULT;
 		return ret;
 	}
+	ret = qseecom_enable_ice_setup(create_key_req.usage);
+	if (ret)
+		return ret;
+
 	entries = qseecom_get_ce_hw_instance(DEFAULT_CE_INFO_UNIT,
 					create_key_req.usage);
 	if (entries <= 0) {
@@ -6583,20 +6595,8 @@ static int qseecom_create_key(struct qseecom_dev_handle *data,
 
 	for (i = 0; i < entries; i++) {
 		set_key_ireq.qsee_command_id = QSEOS_SET_KEY;
-		if (create_key_req.usage ==
-				QSEOS_KM_USAGE_UFS_ICE_DISK_ENCRYPTION) {
-			set_key_ireq.ce = QSEECOM_UFS_ICE_CE_NUM;
-			set_key_ireq.pipe = QSEECOM_ICE_FDE_KEY_INDEX;
-
-		} else if (create_key_req.usage ==
-				QSEOS_KM_USAGE_SDCC_ICE_DISK_ENCRYPTION) {
-			set_key_ireq.ce = QSEECOM_SDCC_ICE_CE_NUM;
-			set_key_ireq.pipe = QSEECOM_ICE_FDE_KEY_INDEX;
-
-		} else {
-			set_key_ireq.ce = ce_hw[i];
-			set_key_ireq.pipe = pipe;
-		}
+		set_key_ireq.ce = ce_hw[i];
+		set_key_ireq.pipe = pipe;
 		set_key_ireq.flags = flags;
 
 		/* set both PIPE_ENC and PIPE_ENC_XTS*/
@@ -6609,14 +6609,6 @@ static int qseecom_create_key(struct qseecom_dev_handle *data,
 		memcpy((void *)set_key_ireq.hash32,
 				(void *)create_key_req.hash32,
 				QSEECOM_HASH_SIZE);
-		/*
-		 * It will return false if it is GPCE based crypto instance or
-		 * ICE is setup properly
-		 */
-		ret = qseecom_enable_ice_setup(create_key_req.usage);
-		if (ret)
-			goto free_buf;
-
 		do {
 			ret = __qseecom_set_clear_ce_key(data,
 					create_key_req.usage,
@@ -6638,11 +6630,6 @@ static int qseecom_create_key(struct qseecom_dev_handle *data,
 			goto free_buf;
 		} else {
 			pr_err("Set the key successfully\n");
-			if ((create_key_req.usage ==
-				QSEOS_KM_USAGE_UFS_ICE_DISK_ENCRYPTION) ||
-			     (create_key_req.usage ==
-				QSEOS_KM_USAGE_SDCC_ICE_DISK_ENCRYPTION))
-				goto free_buf;
 		}
 	}
 
@@ -6676,6 +6663,10 @@ static int qseecom_wipe_key(struct qseecom_dev_handle *data,
 		ret = -EFAULT;
 		return ret;
 	}
+	ret = qseecom_enable_ice_setup(wipe_key_req.usage);
+	if (ret)
+		return ret;
+
 
 	entries = qseecom_get_ce_hw_instance(DEFAULT_CE_INFO_UNIT,
 					wipe_key_req.usage);
@@ -6721,31 +6712,13 @@ static int qseecom_wipe_key(struct qseecom_dev_handle *data,
 
 	for (j = 0; j < entries; j++) {
 		clear_key_ireq.qsee_command_id = QSEOS_SET_KEY;
-		if (wipe_key_req.usage ==
-				QSEOS_KM_USAGE_UFS_ICE_DISK_ENCRYPTION) {
-			clear_key_ireq.ce = QSEECOM_UFS_ICE_CE_NUM;
-			clear_key_ireq.pipe = QSEECOM_ICE_FDE_KEY_INDEX;
-		} else if (wipe_key_req.usage ==
-			QSEOS_KM_USAGE_SDCC_ICE_DISK_ENCRYPTION) {
-			clear_key_ireq.ce = QSEECOM_SDCC_ICE_CE_NUM;
-			clear_key_ireq.pipe = QSEECOM_ICE_FDE_KEY_INDEX;
-		} else {
-			clear_key_ireq.ce = ce_hw[j];
-			clear_key_ireq.pipe = pipe;
-		}
+		clear_key_ireq.ce = ce_hw[j];
+		clear_key_ireq.pipe = pipe;
 		clear_key_ireq.flags = flags;
 		clear_key_ireq.pipe_type = QSEOS_PIPE_ENC|QSEOS_PIPE_ENC_XTS;
 		for (i = 0; i < QSEECOM_KEY_ID_SIZE; i++)
 			clear_key_ireq.key_id[i] = QSEECOM_INVALID_KEY_ID;
 		memset((void *)clear_key_ireq.hash32, 0, QSEECOM_HASH_SIZE);
-
-		/*
-		 * It will return false if it is GPCE based crypto instance or
-		 * ICE is setup properly
-		 */
-		ret = qseecom_enable_ice_setup(wipe_key_req.usage);
-		if (ret)
-			goto free_buf;
 
 		ret = __qseecom_set_clear_ce_key(data, wipe_key_req.usage,
 					&clear_key_ireq);
@@ -6784,6 +6757,10 @@ static int qseecom_update_key_user_info(struct qseecom_dev_handle *data,
 		pr_err("Error:: unsupported usage %d\n", update_key_req.usage);
 		return -EFAULT;
 	}
+	ret = qseecom_enable_ice_setup(update_key_req.usage);
+	if (ret)
+		return ret;
+
 
 	ireq.qsee_command_id = QSEOS_UPDATE_KEY_USERINFO;
 
@@ -8405,7 +8382,6 @@ static int qseecom_open(struct inode *inode, struct file *file)
 	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
-	file->private_data = data;
 	data->abort = 0;
 	data->type = QSEECOM_GENERIC;
 	data->released = false;
@@ -8417,8 +8393,11 @@ static int qseecom_open(struct inode *inode, struct file *file)
 				sizeof(struct sglist_info) * MAX_ION_FD,
 				&data->sglistinfo_shm.paddr,
 				&data->sglistinfo_shm);
-	if (!data->sglistinfo_ptr)
+	if (!data->sglistinfo_ptr) {
+		kfree(data);
 		return -ENOMEM;
+	}
+	file->private_data = data;
 	return ret;
 }
 
@@ -9446,14 +9425,6 @@ static int qseecom_init_dev(struct platform_device *pdev)
 		goto exit_del_cdev;
 	}
 
-	if (!qseecom.dev->dma_parms) {
-		qseecom.dev->dma_parms =
-			kzalloc(sizeof(*qseecom.dev->dma_parms), GFP_KERNEL);
-		if (!qseecom.dev->dma_parms) {
-			rc = -ENOMEM;
-			goto exit_del_cdev;
-		}
-	}
 	dma_set_max_seg_size(qseecom.dev, UINT_MAX);
 	return 0;
 
@@ -9471,8 +9442,6 @@ exit_unreg_chrdev_region:
 
 static void qseecom_deinit_dev(void)
 {
-	kfree(qseecom.dev->dma_parms);
-	qseecom.dev->dma_parms = NULL;
 	cdev_del(&qseecom.cdev);
 	device_destroy(qseecom.driver_class, qseecom.qseecom_device_no);
 	class_destroy(qseecom.driver_class);

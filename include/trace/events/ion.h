@@ -32,8 +32,8 @@ DECLARE_EVENT_CLASS(ion_dma_map_cmo_class,
 	),
 
 	TP_fast_assign(
-		__assign_str(dev_name, dev ? dev_name(dev) : DEV_NAME_NONE);
-		__assign_str(name, name);
+		__assign_str(dev_name);
+		__assign_str(name);
 		__entry->cached = cached;
 		__entry->hlos_accessible = hlos_accessible;
 		__entry->map_attrs = map_attrs;
@@ -103,8 +103,8 @@ DECLARE_EVENT_CLASS(ion_access_cmo_class,
 	),
 
 	TP_fast_assign(
-		__assign_str(dev_name, dev ? dev_name(dev) : DEV_NAME_NONE);
-		__assign_str(name, name);
+		__assign_str(dev_name);
+		__assign_str(name);
 		__entry->cached = cached;
 		__entry->hlos_accessible = hlos_accessible;
 		__entry->dir = dir;
