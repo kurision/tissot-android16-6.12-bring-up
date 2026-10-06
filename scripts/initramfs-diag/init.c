@@ -355,18 +355,23 @@ static void capture_block_state(int log)
 		"/dev/block/platform/soc@0/7824900.mmc/by-name",
 		"/dev/block/bootdevice", "/dev/block/bootdevice/by-name",
 	};
-	int ns = -1, root = -1, sample;
+	int proc = -1, ns = -1, root = -1, sample;
 	size_t i;
 	char message[160];
-	const char *step = "open mount namespace";
+	const char *step = "open procfs";
 
+	/* Keep procfs reachable even if init removes our old root's /proc path. */
+	proc = open("/proc", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (proc < 0)
+		goto failed;
 	while (monotonic_seconds() < 75)
 		sleep(1);
-	ns = open("/proc/1/ns/mnt", O_RDONLY | O_CLOEXEC);
+	step = "open mount namespace";
+	ns = openat(proc, "1/ns/mnt", O_RDONLY | O_CLOEXEC);
 	if (ns < 0)
 		goto failed;
 	step = "open root";
-	root = open("/proc/1/root", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	root = openat(proc, "1/root", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	if (root < 0)
 		goto failed;
 	step = "setns";
@@ -383,6 +388,7 @@ static void capture_block_state(int log)
 		goto failed;
 	close(ns);
 	close(root);
+	close(proc);
 	for (sample = 0; sample < 2; sample++) {
 		while (monotonic_seconds() < 75 + sample * 30)
 			sleep(1);
@@ -402,6 +408,8 @@ failed:
 		close(ns);
 	if (root >= 0)
 		close(root);
+	if (proc >= 0)
+		close(proc);
 	_exit(1);
 }
 
