@@ -67,6 +67,8 @@ required=(
     CONFIG_USB_CONFIGFS       # adbd's FunctionFS is a configfs gadget
     CONFIG_USB_CONFIGFS_F_FS
     CONFIG_USB_F_FS
+    CONFIG_DRM_MSM            # mdss/mdp5/dsi0: without it the screen can never leave splash
+    CONFIG_DRM_PANEL_OTM1911  # tissot's preferred-primary panel (downstream dsi-pref-prim-pan)
 )
 
 missing=()

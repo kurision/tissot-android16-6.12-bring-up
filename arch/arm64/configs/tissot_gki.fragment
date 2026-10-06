@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0
+# tissot (msm8953) device fragment: legacy ION + QSEECOM chardevs.
+# Merged over gki_defconfig via merge_config.sh (same flow as the
+# tissot-fedora.config build fragment). gki_defconfig itself stays clean.
+# Built-in (=y, not =m): vendor.qseecomd starts at post-fs before vendor
+# modules load. CONFIG_DMABUF_HEAPS / CONFIG_QCOM_SCM come from the base;
+# they are required here (QSEECOM needs QCOM_SCM) — do not drop them.
+CONFIG_ION=y
+CONFIG_ION_LEGACY=y
+CONFIG_ION_SYSTEM_HEAP=y
+CONFIG_ION_CMA_HEAP=y
+CONFIG_QSEECOM=y

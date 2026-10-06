@@ -3,3 +3,4 @@ ccflags-y += -I$(src)			# needed for trace events
 
 obj-$(CONFIG_ASHMEM)		+= ashmem.o
 ashmem-objs += ashmem.o ashmem_exports.o
+obj-$(CONFIG_ION)			+= ion/

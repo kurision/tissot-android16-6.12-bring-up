@@ -1962,6 +1962,18 @@
 				};
 			};
 		};
+		/* First qcom,qseecom node on ACK (booted DTB tissot includes this dtsi): DT present, so no module_init fallback. */
+		qcom_seecom: qseecom@84a00000 {
+			compatible = "qcom,qseecom";
+			reg = <0x84a00000 0x1900000>;
+			reg-names = "secapp-region";
+			qcom,qsee-ce-hw-instance = <0>;
+			qcom,hlos-ce-hw-instance = <0>;
+			qcom,disk-encrypt-pipe-pair = <2>;
+			qcom,ce-opp-freq = <100000000>;
+			qcom,support-fde;
+			qcom,no-clock-support;
+		};
 	};
 
 	thermal-zones {
