@@ -6,7 +6,7 @@
  * provides /dev/<device>, not Android's /dev/block hierarchy.
  * Default mode never returns after setup; recovery requires a reboot.
  * Build with -DANDROID_CAPTURE to exec the original /system/bin/init as
- * PID 1 while a child records for 180 seconds in a private mount namespace.
+ * PID 1 while a child records for 300 seconds in a private mount namespace.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -17,6 +17,7 @@
 #include <sched.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/statvfs.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
@@ -24,6 +25,10 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(ANDROID_CAPTURE) && defined(ANDROID_GUARD_TEST)
+#include <assert.h>
+#include <stdlib.h>
+#endif
 
 #define G "/sys/kernel/config/usb_gadget/g1"
 #define POLL_TRIES 120 /* 60 seconds for storage, then 60 seconds for USB */
@@ -268,6 +273,295 @@ static int dump_log(int in, int out, unsigned seconds, int durable)
 }
 
 #ifdef ANDROID_CAPTURE
+#define GUARDED_FSTAB "/dev/block/ack-protected-fstab.qcom"
+#define GUARDED_CONTEXTS "/dev/block/ack-vendor-file-contexts"
+#define BOOT_CONTROLLER "/dev/block/platform/soc@0/7824900.mmc"
+
+static int guard_pre_policy(int proc)
+{
+	char context[64];
+	ssize_t n;
+	int fd = openat(proc, "self/attr/current", O_RDONLY | O_CLOEXEC);
+
+	if (fd < 0)
+		return -1;
+	do {
+		n = read(fd, context, sizeof context);
+	} while (n < 0 && errno == EINTR);
+	{
+		int error = errno;
+		close(fd);
+		errno = error;
+	}
+	/* Before initialization SELinux returns the initial, NUL-terminated SID.
+	 * A loaded policy's u:r:kernel:s0 is not permission to install overlays. */
+	if (n == (ssize_t)sizeof("kernel") &&
+	    !memcmp(context, "kernel", sizeof("kernel")))
+		return 0;
+	if (n >= 0)
+		errno = EPERM;
+	return -1;
+}
+
+static int validate_guard_fstab(int fd)
+{
+	char buf[8192], *line, *lines;
+	struct stat st;
+	ssize_t n;
+	int userdata = 0;
+
+	if (fstat(fd, &st))
+		return -1;
+	if (!S_ISREG(st.st_mode) || st.st_size <= 0 ||
+	    st.st_size >= (off_t)sizeof buf) {
+		errno = EINVAL;
+		return -1;
+	}
+	do {
+		n = pread(fd, buf, sizeof buf - 1, 0);
+	} while (n < 0 && errno == EINTR);
+	if (n < 0)
+		return -1;
+	if (n != st.st_size || memchr(buf, '\0', (size_t)n)) {
+		errno = EINVAL;
+		return -1;
+	}
+	buf[n] = '\0';
+	for (line = strtok_r(buf, "\n", &lines); line;
+	     line = strtok_r(NULL, "\n", &lines)) {
+		char *field[5], *word, *words, *comment = strchr(line, '#');
+		int fields = 0;
+
+		if (comment)
+			*comment = '\0';
+		for (word = strtok_r(line, " \t\r", &words); word;
+		     word = strtok_r(NULL, " \t\r", &words)) {
+			if (fields == 5)
+				goto invalid;
+			field[fields++] = word;
+		}
+		if (!fields)
+			continue;
+		if (fields != 5)
+			goto invalid;
+		for (word = strtok_r(field[4], ",", &words); word;
+		     word = strtok_r(NULL, ",", &words)) {
+			if (!strncmp(word, "formattable", 11) &&
+			    (!word[11] || word[11] == '=')) {
+				errno = EPERM;
+				return -1;
+			}
+		}
+		if (!strcmp(field[1], "/data")) {
+			if (strcmp(field[0],
+				   "/dev/block/bootdevice/by-name/userdata") ||
+			    strcmp(field[2], "f2fs") || ++userdata != 1)
+				goto invalid;
+		}
+	}
+	if (userdata == 1)
+		return 0;
+invalid:
+	errno = EINVAL;
+	return -1;
+}
+
+static int guard_bind_config(int proc, int in, const char *source,
+			     const char *target)
+{
+	char buf[8192];
+	struct stat input, staged, bound;
+	struct statvfs fs;
+	off_t offset = 0;
+	int out, error;
+
+	if (guard_pre_policy(proc) || fstat(in, &input))
+		return -1;
+	if (!S_ISREG(input.st_mode) || input.st_size <= 0 ||
+	    input.st_size > 128 * 1024) {
+		errno = EINVAL;
+		return -1;
+	}
+	out = open(source, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+		   0444);
+	if (out < 0)
+		return -1;
+	while (offset < input.st_size) {
+		ssize_t n = pread(in, buf, sizeof buf, offset);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0 || write_all(out, buf, (size_t)n)) {
+			if (!n)
+				errno = EIO;
+			goto failed;
+		}
+		offset += n;
+	}
+	if (fstat(out, &staged))
+		goto failed;
+	if (close(out)) {
+		out = -1;
+		goto failed;
+	}
+	out = -1;
+	if (guard_pre_policy(proc) ||
+	    mount(source, target, NULL, MS_BIND, NULL))
+		goto failed;
+	if (mount(NULL, target, NULL,
+		  MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV |
+		  MS_NOEXEC, NULL)) {
+		error = errno;
+		umount(target);
+		errno = error;
+		goto failed;
+	}
+	if (stat(target, &bound) || statvfs(target, &fs))
+		return -1;
+	if (bound.st_dev != staged.st_dev || bound.st_ino != staged.st_ino ||
+	    !(fs.f_flag & ST_RDONLY)) {
+		errno = EIO;
+		return -1;
+	}
+	return guard_pre_policy(proc);
+failed:
+	error = errno;
+	if (out >= 0)
+		close(out);
+	unlink(source);
+	errno = error;
+	return -1;
+}
+
+static int guard_bootdevice(int proc)
+{
+	struct stat st;
+	char temporary[128];
+	int error;
+
+	if (guard_pre_policy(proc))
+		return -1;
+	if (!lstat("/dev/block/bootdevice", &st)) {
+		if (!S_ISLNK(st.st_mode)) {
+			errno = EEXIST;
+			return -1;
+		}
+	} else if (errno != ENOENT) {
+		return -1;
+	}
+	/* With bootdevice=../.. the stock vendor wait resolves through soc.
+	 * Do not release that wait until both read-only overlays are verified. */
+	if (make_dir("/dev/block/platform/soc") ||
+	    stat("/dev/block/platform/soc", &st))
+		return -1;
+	if (!S_ISDIR(st.st_mode)) {
+		errno = ENOTDIR;
+		return -1;
+	}
+	snprintf(temporary, sizeof temporary, "/dev/block/.bootdevice-ack-%ld",
+		 (long)getpid());
+	if (symlink(BOOT_CONTROLLER, temporary))
+		return -1;
+	if (guard_pre_policy(proc) ||
+	    rename(temporary, "/dev/block/bootdevice")) {
+		error = errno;
+		unlink(temporary);
+		errno = error;
+		return -1;
+	}
+	return 0;
+}
+
+static void install_android_guard(int proc, int fstab, int contexts, int log)
+{
+	time_t deadline = monotonic_seconds() + 60;
+	int ns = -1, root = -1;
+	struct stat st;
+	char message[192];
+	const char *step = "validate protected fstab";
+
+	if (validate_guard_fstab(fstab))
+		goto failed;
+	for (;;) {
+		if (guard_pre_policy(proc))
+			goto failed;
+		step = "enter PID 1 mount namespace/root";
+		ns = openat(proc, "1/ns/mnt", O_RDONLY | O_CLOEXEC);
+		root = openat(proc, "1/root", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+		if (ns < 0 || root < 0 || setns(ns, CLONE_NEWNS) ||
+		    fchdir(root) || chroot(".") || chdir("/"))
+			goto failed;
+		close(ns);
+		close(root);
+		ns = root = -1;
+		if (!stat("/vendor/etc/fstab.qcom", &st) &&
+		    S_ISREG(st.st_mode) &&
+		    !stat("/vendor/etc/selinux/vendor_file_contexts", &st) &&
+		    S_ISREG(st.st_mode))
+			break;
+		if (monotonic_seconds() >= deadline) {
+			errno = ETIMEDOUT;
+			goto failed;
+		}
+		usleep(10000);
+	}
+	step = "install read-only protected fstab";
+	if (guard_bind_config(proc, fstab, GUARDED_FSTAB,
+			      "/vendor/etc/fstab.qcom"))
+		goto failed;
+	step = "install read-only vendor contexts";
+	if (guard_bind_config(proc, contexts, GUARDED_CONTEXTS,
+			      "/vendor/etc/selinux/vendor_file_contexts"))
+		goto failed;
+	step = "release canonical bootdevice and legacy wait";
+	if (guard_bootdevice(proc))
+		goto failed;
+	say(log, "DIAG: bootdevice guard installed read-only f2fs-only fstab"
+		 " and vendor contexts before policy load\n");
+	say(log, "DIAG: bootdevice canonical alias and legacy wait path ready\n");
+	_exit(0);
+failed:
+	snprintf(message, sizeof message,
+		 "DIAG: bootdevice guard step=%s failed errno=%d; alias not released\n",
+		 step, errno);
+	say(log, message);
+	_exit(1);
+}
+
+#ifdef ANDROID_GUARD_TEST
+static int guard_selftest(void)
+{
+	static const char data[] =
+		"/dev/block/bootdevice/by-name/userdata /data f2fs defaults wait\n";
+	static const char *const invalid[] = {
+		"", "/dev/block/bootdevice/by-name/userdata /data ext4 defaults wait\n",
+		"/dev/block/bootdevice/by-name/userdata /data f2fs defaults wait,formattable\n",
+		"/dev/block/bootdevice/by-name/userdata /data f2fs defaults formattable=false\n",
+		"/dev/mmcblk1p2 /data f2fs defaults wait\n",
+		"/dev/block/bootdevice/by-name/userdata /data f2fs defaults\n",
+		"/dev/block/bootdevice/by-name/userdata /data f2fs defaults wait extra\n",
+	};
+	char temporary[] = "/tmp/ack-fstab-check-XXXXXX";
+	int fd = mkstemp(temporary);
+	size_t i;
+
+	assert(fd >= 0);
+	assert(!unlink(temporary));
+	assert(!write_all(fd, data, sizeof data - 1));
+	assert(!validate_guard_fstab(fd));
+	assert(!write_all(fd, data, sizeof data - 1));
+	assert(validate_guard_fstab(fd) < 0);
+	for (i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+		assert(!ftruncate(fd, 0));
+		assert(lseek(fd, 0, SEEK_SET) == 0);
+		assert(!write_all(fd, invalid[i], strlen(invalid[i])));
+		assert(validate_guard_fstab(fd) < 0);
+	}
+	close(fd);
+	puts("Guard fstab safety checks PASS");
+	return 0;
+}
+#endif
+
 static void report_block_path(int log, const char *path)
 {
 	struct stat st, resolved;
@@ -303,6 +597,53 @@ static void report_block_path(int log, const char *path)
 		 path, (unsigned)st.st_mode, major(st.st_rdev), minor(st.st_rdev),
 		 target, resolve_error, label, label_error);
 	say(log, message);
+}
+/* Proc-relative component probe for the PID 1 namespace/root failure.
+ * openat(O_PATH) performs no data access, only parent search, so it names
+ * the exact failing depth where a plain openat cannot. Read-only. */
+static void report_proc_component(int log, int proc, const char *rel)
+{
+	int fd = openat(proc, rel, O_PATH | O_CLOEXEC);
+	struct stat st;
+	char target[256] = "-", label[256], message[640];
+	ssize_t n;
+	int label_error = 0;
+
+	if (fd < 0) {
+		snprintf(message, sizeof message,
+			 "DIAG: proc component=%s open_errno=%d\n", rel, errno);
+		say(log, message);
+		return;
+	}
+	if (fstat(fd, &st)) {
+		snprintf(message, sizeof message,
+			 "DIAG: proc component=%s fstat_errno=%d\n", rel, errno);
+		say(log, message);
+		close(fd);
+		return;
+	}
+	if (S_ISLNK(st.st_mode)) {
+		n = readlinkat(proc, rel, target, sizeof target - 1);
+		if (n < 0)
+			snprintf(target, sizeof target, "readlink_errno=%d", errno);
+		else
+			target[n] = '\0';
+	}
+	n = fgetxattr(fd, "security.selinux", label, sizeof label - 1);
+	if (n < 0) {
+		label_error = errno;
+		label[0] = '\0';
+	} else {
+		label[n] = '\0';
+	}
+	snprintf(message, sizeof message,
+		 "DIAG: proc component=%s mode=%o uid=%u dev=%u:%u ino=%lu"
+		 " target=%s label=%s label_errno=%d\n",
+		 rel, (unsigned)st.st_mode, (unsigned)st.st_uid,
+		 major(st.st_dev), minor(st.st_dev), (unsigned long)st.st_ino,
+		 target, label, label_error);
+	say(log, message);
+	close(fd);
 }
 
 static void snapshot_block_dir(int log, const char *path)
@@ -356,6 +697,7 @@ static void capture_block_state(int log)
 		"/dev/block/bootdevice", "/dev/block/bootdevice/by-name",
 	};
 	int proc = -1, ns = -1, root = -1, sample;
+	const int first_snapshot = 120;
 	size_t i;
 	char message[160];
 	const char *step = "open procfs";
@@ -364,7 +706,7 @@ static void capture_block_state(int log)
 	proc = open("/proc", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	if (proc < 0)
 		goto failed;
-	while (monotonic_seconds() < 75)
+	while (monotonic_seconds() < first_snapshot)
 		sleep(1);
 	step = "open mount namespace";
 	ns = openat(proc, "1/ns/mnt", O_RDONLY | O_CLOEXEC);
@@ -390,7 +732,7 @@ static void capture_block_state(int log)
 	close(root);
 	close(proc);
 	for (sample = 0; sample < 2; sample++) {
-		while (monotonic_seconds() < 75 + sample * 30)
+		while (monotonic_seconds() < first_snapshot + sample * 30)
 			sleep(1);
 		snprintf(message, sizeof message, "DIAG: block snapshot begin t=%ld\n",
 			 (long)monotonic_seconds());
@@ -404,6 +746,15 @@ failed:
 	snprintf(message, sizeof message,
 		 "DIAG: block observer step=%s failed errno=%d\n", step, errno);
 	say(log, message);
+	if (ns < 0 && proc >= 0 && !strcmp(step, "open mount namespace")) {
+		static const char *const components[] = {
+			"1", "1/ns", "1/ns/mnt", "1/root",
+		};
+		size_t k;
+
+		for (k = 0; k < sizeof components / sizeof components[0]; k++)
+			report_proc_component(log, proc, components[k]);
+	}
 	if (ns >= 0)
 		close(ns);
 	if (root >= 0)
@@ -458,6 +809,7 @@ static int launch_android(char **argv)
 	child = fork();
 	if (child == 0) {
 		int in = -1, out = -1, kin = -1, klog = -1, kerr = 0, n;
+		int proc = -1, fstab = -1, contexts = -1;
 		static const char marker[] =
 			"DIAG: Android capture ready; handing PID 1 to Android init\n";
 
@@ -488,6 +840,32 @@ static int launch_android(char **argv)
 		if (out < 0 || write_all(out, marker, sizeof marker - 1) ||
 		    fsync(out))
 			goto child_failed;
+		/* Retain inputs and procfs before Android removes the old ramdisk.
+		 * The guard, unlike the recorder, joins PID 1's namespace. */
+		proc = open("/proc", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+		fstab = open("/ack-protected-fstab.qcom", O_RDONLY | O_CLOEXEC);
+		contexts = open("/ack-vendor-file-contexts", O_RDONLY | O_CLOEXEC);
+		if (proc >= 0 && fstab >= 0 && contexts >= 0) {
+			pid_t guard = fork();
+			if (guard == 0) {
+				close(ready[1]);
+				close(in);
+				close(out);
+				if (kin >= 0)
+					close(kin);
+				install_android_guard(proc, fstab, contexts, klog);
+			}
+			if (guard < 0)
+				say(klog, "DIAG: bootdevice guard fork failed; alias not released\n");
+		} else {
+			say(klog, "DIAG: bootdevice guard inputs unavailable; alias not released\n");
+		}
+		if (proc >= 0)
+			close(proc);
+		if (fstab >= 0)
+			close(fstab);
+		if (contexts >= 0)
+			close(contexts);
 		if (fork() == 0) {
 			close(ready[1]);
 			close(in);
@@ -571,6 +949,9 @@ int main(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 #ifdef ANDROID_CAPTURE
+#ifdef ANDROID_GUARD_TEST
+	return guard_selftest();
+#endif
 	return launch_android(argv);
 #endif
 #ifdef HEARTBEAT_RECORDER
