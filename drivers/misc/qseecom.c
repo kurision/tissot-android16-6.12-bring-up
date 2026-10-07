@@ -1502,7 +1502,7 @@ static int __qseecom_set_sb_memory(struct qseecom_registered_listener_list *svc,
 	if (ret) {
 		pr_err("failed to convert ion_fd %d for lsnr %d with err: %d\n",
 			listener->ifd_data_fd, svc->svc.listener_id, ret);
-		return -EINVAL;
+		return ret;
 	}
 
 	if (qseecom.qsee_version < QSEE_VERSION_40) {
@@ -1533,7 +1533,6 @@ static int __qseecom_set_sb_memory(struct qseecom_registered_listener_list *svc,
 	mutex_lock(&listener_access_lock);
 	if (ret) {
 		pr_err("qseecom_scm_call failed with err: %d\n", ret);
-		ret = -EINVAL;
 		goto err;
 	}
 
@@ -1626,13 +1625,14 @@ static int qseecom_register_listener(struct qseecom_dev_handle *data,
 	new_entry->sb_length = rcvd_lstnr.sb_size;
 	new_entry->user_virt_sb_base = rcvd_lstnr.virt_sb_base;
 	data->listener.register_pending = true;
-	if (__qseecom_set_sb_memory(new_entry, data, &rcvd_lstnr)) {
+	ret = __qseecom_set_sb_memory(new_entry, data, &rcvd_lstnr);
+	if (ret) {
 		pr_err("qseecom_set_sb_memory failed for listener %d, size %d\n",
 				rcvd_lstnr.listener_id, rcvd_lstnr.sb_size);
 		__qseecom_free_tzbuf(&new_entry->sglistinfo_shm);
 		kfree_sensitive(new_entry);
 		data->listener.register_pending = false;
-		return -ENOMEM;
+		return ret;
 	}
 	data->listener.register_pending = false;
 

@@ -29,6 +29,7 @@
 
 #include <linux/types.h>
 #include <linux/device.h>
+#include <linux/errno.h>
 #include <linux/firmware/qcom/qcom_scm.h>
 
 /* Service IDs kept from the legacy interface */
@@ -137,16 +138,17 @@ static inline int scm_call2_noretry(u32 smc_id, struct scm_desc *desc)
 	for (i = 0; i < MAX_SCM_ARGS; i++)
 		mdesc.args[i] = desc->args[i];
 
-	/* NULL dev matches the firmware driver's own early-probe path;
-	 * the SMC layer serializes calls and remaps TZ errors to errno,
-	 * which is propagated to the caller (and on to userspace).
-	 */
+	/* NULL dev matches the firmware driver's own early-probe path. */
 	ret = scm_smc_call(NULL, &mdesc, &res, false);
 
 	desc->ret[0] = res.result[0];
 	desc->ret[1] = res.result[1];
 	desc->ret[2] = res.result[2];
-	return ret;
+	/* Modern SCM maps raw -1 to -EIO; the donor ABI used -EOPNOTSUPP
+	 * so legacy callers can fall back from unsupported TZ commands.
+	 * Keep this translation out of the native firmware interface.
+	 */
+	return ret == -EIO ? -EOPNOTSUPP : ret;
 }
 
 static inline int scm_call2(u32 smc_id, struct scm_desc *desc)
@@ -174,7 +176,8 @@ static inline int scm_call2_atomic(u32 smc_id, struct scm_desc *desc)
 	desc->ret[0] = res.result[0];
 	desc->ret[1] = res.result[1];
 	desc->ret[2] = res.result[2];
-	return ret;
+	/* Preserve the same donor errno convention for atomic calls. */
+	return ret == -EIO ? -EOPNOTSUPP : ret;
 }
 
 #endif /* __SOC_QCOM_SCM_H */
