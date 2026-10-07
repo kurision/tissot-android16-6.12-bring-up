@@ -6,7 +6,7 @@
  * provides /dev/<device>, not Android's /dev/block hierarchy.
  * Default mode never returns after setup; recovery requires a reboot.
  * Build with -DANDROID_CAPTURE to exec the original /system/bin/init as
- * PID 1 while a child records for 300 seconds in a private mount namespace.
+ * PID 1 while a child records for 900 seconds in a private mount namespace.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -250,7 +250,22 @@ static time_t monotonic_seconds(void)
 	return now.tv_sec;
 }
 
-static int dump_log(int in, int out, unsigned seconds, int durable)
+/* A failed backup must never take down the primary recorder. */
+static int write_capture(int out, int *mirror, const char *buf, size_t len,
+			 int durable)
+{
+	if (write_all(out, buf, len) || (durable && fsync(out)))
+		return -1;
+	if (mirror && *mirror >= 0 &&
+	    (write_all(*mirror, buf, len) || fsync(*mirror))) {
+		close(*mirror);
+		*mirror = -1;
+		say(out, "\nDIAG: SD mirror failed; primary capture continues\n");
+	}
+	return 0;
+}
+
+static int dump_log(int in, int out, unsigned seconds, int durable, int *mirror)
 {
 	time_t deadline = monotonic_seconds() + seconds;
 	char buf[8192];
@@ -258,11 +273,13 @@ static int dump_log(int in, int out, unsigned seconds, int durable)
 	do {
 		ssize_t got = read(in, buf, sizeof buf);
 		if (got > 0) {
-			if (write_all(out, buf, (size_t)got) ||
-			    (durable && fsync(out)))
+			if (write_capture(out, mirror, buf, (size_t)got, durable))
 				return -1;
 		} else if (got < 0 && errno == EPIPE) {
-			say(out, "\nDIAG: kmsg overrun; some records lost\n");
+			static const char lost[] =
+				"\nDIAG: kmsg overrun; some records lost\n";
+			if (write_capture(out, mirror, lost, sizeof lost - 1, durable))
+				return -1;
 		} else if (got < 0 && errno != EAGAIN && errno != EINTR) {
 			return -1;
 		} else {
@@ -273,6 +290,60 @@ static int dump_log(int in, int out, unsigned seconds, int durable)
 }
 
 #ifdef ANDROID_CAPTURE
+/* mmcblk numbering can swap between stock and ACK: never guess eMMC vs SD. */
+static int find_sd_partition(char *path, size_t size)
+{
+	DIR *dir = opendir("/sys/class/block");
+	struct dirent *entry;
+	int found = 0;
+
+	if (!dir)
+		return 0;
+	while ((entry = readdir(dir))) {
+		char type_path[512], type[16];
+		FILE *file;
+		size_t digits;
+
+		if (strncmp(entry->d_name, "mmcblk", 6))
+			continue;
+		digits = strspn(entry->d_name + 6, "0123456789");
+		if (!digits || entry->d_name[6 + digits])
+			continue;
+		snprintf(type_path, sizeof type_path,
+			 "/sys/class/block/%s/device/type", entry->d_name);
+		file = fopen(type_path, "r");
+		if (!file)
+			continue;
+		found = fgets(type, sizeof type, file) && !strcmp(type, "SD\n");
+		fclose(file);
+		if (found) {
+			snprintf(path, size, "/dev/%sp1", entry->d_name);
+			break;
+		}
+	}
+	closedir(dir);
+	return found;
+}
+
+static int open_sdlog(void)
+{
+	struct stat st;
+	char path[512];
+	int n;
+
+	for (n = 0; n < POLL_TRIES; n++) {
+		if (find_sd_partition(path, sizeof path) &&
+		    !stat(path, &st) && S_ISBLK(st.st_mode))
+			break;
+		usleep(500000);
+	}
+	if (n == POLL_TRIES || make_dir("/sdlog") ||
+	    mount(path, "/sdlog", "vfat", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL))
+		return -1;
+	return open("/sdlog/snapshot28-kmsg.log",
+		    O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+}
+
 #define GUARDED_FSTAB "/dev/block/ack-protected-fstab.qcom"
 #define GUARDED_CONTEXTS "/dev/block/ack-vendor-file-contexts"
 #define BOOT_CONTROLLER "/dev/block/platform/soc@0/7824900.mmc"
@@ -788,7 +859,7 @@ static void capture_usb(int kin, int klog, int kerr)
 		snprintf(msg, sizeof msg,
 			 "DIAG: USB kmsg unavailable errno=%d\n", kerr);
 		say(out, msg);
-	} else if (dump_log(kin, out, 300, 0)) {
+	} else if (dump_log(kin, out, 900, 0, NULL)) {
 		snprintf(msg, sizeof msg,
 			 "DIAG: USB dump failed errno=%d\n", errno);
 		say(out, msg);
@@ -809,7 +880,7 @@ static int launch_android(char **argv)
 	child = fork();
 	if (child == 0) {
 		int in = -1, out = -1, kin = -1, klog = -1, kerr = 0, n;
-		int proc = -1, fstab = -1, contexts = -1;
+		int proc = -1, fstab = -1, contexts = -1, sd = -1;
 		static const char marker[] =
 			"DIAG: Android capture ready; handing PID 1 to Android init\n";
 
@@ -837,9 +908,6 @@ static int launch_android(char **argv)
 				break;
 			usleep(500000);
 		}
-		if (out < 0 || write_all(out, marker, sizeof marker - 1) ||
-		    fsync(out))
-			goto child_failed;
 		/* Retain inputs and procfs before Android removes the old ramdisk.
 		 * The guard, unlike the recorder, joins PID 1's namespace. */
 		proc = open("/proc", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -880,6 +948,20 @@ static int launch_android(char **argv)
 				close(kin);
 			capture_block_state(klog);
 		}
+		/* Open the card before Android loads SELinux policy. Forked USB
+		 * and guard children never inherit the SD fd: one writer only. */
+		sd = open_sdlog();
+		if (sd < 0)
+			say(klog, "DIAG: SD capture unavailable; other sinks continue\n");
+		else
+			say(klog, "DIAG: SD capture ready at /sdlog/snapshot28-kmsg.log\n");
+		if (out < 0) {
+			out = sd;
+			sd = -1;
+		}
+		if (out < 0 ||
+		    write_capture(out, &sd, marker, sizeof marker - 1, 1))
+			goto child_failed;
 		status = 1;
 		write_all(ready[1], &status, 1);
 		{
@@ -890,21 +972,26 @@ static int launch_android(char **argv)
 				received = recv(ready[1], &error, sizeof error, MSG_WAITALL);
 			} while (received < 0 && errno == EINTR);
 			if (received == 0)
-				say(out, "DIAG: Android init exec succeeded\n");
+				write_capture(out, &sd, "DIAG: Android init exec succeeded\n",
+					      sizeof("DIAG: Android init exec succeeded\n") - 1, 1);
 			else {
 				snprintf(message, sizeof message,
 					 "DIAG: Android init exec failed or handshake lost: errno=%d\n",
 					 error);
-				say(out, message);
+				write_capture(out, &sd, message, strlen(message), 1);
 			}
 			fsync(out);
 		}
 		close(ready[1]);
-		if (dump_log(in, out, 300, 1))
-			say(out, "\nDIAG: Android capture failed\n");
-		else
-			say(out, "\nDIAG: EOF Android kmsg dump complete\n");
-		fsync(out);
+		if (dump_log(in, out, 900, 1, &sd)) {
+			static const char failed[] = "\nDIAG: Android capture failed\n";
+			write_capture(out, &sd, failed, sizeof failed - 1, 1);
+		} else {
+			static const char eof[] = "\nDIAG: EOF Android kmsg dump complete\n";
+			write_capture(out, &sd, eof, sizeof eof - 1, 1);
+		}
+		if (sd >= 0)
+			close(sd);
 		close(out);
 		close(in);
 		_exit(0);
@@ -1003,7 +1090,7 @@ int main(int argc, char **argv)
 		say(console, "DIAG: sink write failed\n");
 		goto spin;
 	}
-	if (dump_log(in, out, DUMP_SECONDS, DURABLE_CAPTURE && !usb)) {
+	if (dump_log(in, out, DUMP_SECONDS, DURABLE_CAPTURE && !usb, NULL)) {
 		say(console, "DIAG: kernel log capture failed\n");
 		goto spin;
 	}
