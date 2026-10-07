@@ -132,6 +132,15 @@
 	};
 };
 
+/* Attach the TZ-shared carveout to the qseecom device: every
+ * dma_alloc_coherent on it (tzbuf, SMC >4-arg spill buffers) then comes
+ * from memory TrustZone is allowed to read. Without this they fall back
+ * to generic memory and the first TA data transaction wedges silently.
+ */
+&qcom_seecom {
+	memory-region = <&qseecom_mem>;
+};
+
 &hsusb_phy {
 	vdd-supply = <&pm8953_l3>;
 	vdda-pll-supply = <&pm8953_l7>;

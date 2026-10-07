@@ -46,6 +46,7 @@
 #include <linux/cma.h>
 #include <linux/of_platform.h>
 #include <linux/of.h>
+#include <linux/of_reserved_mem.h>
 /*
  * ACK 6.12 port compat: the legacy msm-bus/msm-bus-board, crypto/ice,
  * pfk, socinfo and qtee-shmbridge drivers do not exist on this tree.
@@ -831,8 +832,12 @@ static int qseecom_scm_call2(uint32_t svc_id, uint32_t tz_cmd_id,
 			qseecom.smcinvoke_support = true;
 			smc_id = TZ_OS_REGISTER_LISTENER_SMCINVOKE_ID;
 			ret = __qseecom_scm_call2_locked(smc_id, &desc);
-			if (ret == -EOPNOTSUPP) {
-				/* smcinvoke is not supported */
+			if (ret == -EOPNOTSUPP || ret == -EIO) {
+				/* smcinvoke is not supported: either the modern
+				 * -EOPNOTSUPP or the raw generic TZ error surfacing
+				 * as -EIO on this firmware. All other callers see
+				 * the untranslated errno (see scm_call2_noretry).
+				 */
 				qseecom.smcinvoke_support = false;
 				smc_id = TZ_OS_REGISTER_LISTENER_ID;
 				ret = __qseecom_scm_call2_locked(smc_id, &desc);
@@ -1392,7 +1397,7 @@ static int qseecom_dmabuf_map(int ion_fd, struct sg_table **sgt,
 		goto err_put;
 	}
 
-	new_sgt = dma_buf_map_attachment_unlocked(new_attach, DMA_BIDIRECTIONAL);
+	new_sgt = dma_buf_map_attachment(new_attach, DMA_BIDIRECTIONAL);
 	if (IS_ERR_OR_NULL(new_sgt)) {
 		ret = PTR_ERR(new_sgt);
 		pr_err("dma_buf_map_attachment for ion_fd %d failed ret = %d\n",
@@ -1411,7 +1416,7 @@ static int qseecom_dmabuf_map(int ion_fd, struct sg_table **sgt,
 	return ret;
 
 err_unmap_attachment:
-	dma_buf_unmap_attachment_unlocked(new_attach, new_sgt, DMA_BIDIRECTIONAL);
+	dma_buf_unmap_attachment(new_attach, new_sgt, DMA_BIDIRECTIONAL);
 err_detach:
 	dma_buf_detach(new_dma_buf, new_attach);
 err_put:
@@ -1424,7 +1429,7 @@ static void qseecom_dmabuf_unmap(struct sg_table *sgt,
 			struct dma_buf_attachment *attach,
 			struct dma_buf *dmabuf)
 {
-	dma_buf_unmap_attachment_unlocked(attach, sgt, DMA_BIDIRECTIONAL);
+	dma_buf_unmap_attachment(attach, sgt, DMA_BIDIRECTIONAL);
 	dma_buf_detach(dmabuf, attach);
 	dma_buf_put(dmabuf);
 }
@@ -1454,7 +1459,7 @@ static int qseecom_vaddr_map(int ion_fd,
 	*sb_length = new_sgt->sgl->length;
 
 	dma_buf_begin_cpu_access(new_dma_buf, DMA_BIDIRECTIONAL);
-	ret = dma_buf_vmap_unlocked(new_dma_buf, &map);
+	ret = dma_buf_vmap(new_dma_buf, &map);
 	if (ret) {
 		pr_err("dma_buf_kmap failed\n");
 		goto err_unmap;
@@ -1479,7 +1484,7 @@ static void qseecom_vaddr_unmap(void *vaddr, struct sg_table *sgt,
 		struct dma_buf *dmabuf)
 {
 	struct iosys_map map = IOSYS_MAP_INIT_VADDR(vaddr);
-	dma_buf_vunmap_unlocked(dmabuf, &map);
+	dma_buf_vunmap(dmabuf, &map);
 	dma_buf_end_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 	qseecom_dmabuf_unmap(sgt, attach, dmabuf);
 }
@@ -9642,6 +9647,41 @@ static void qseecom_deregister_shmbridge(void)
 	qtee_shmbridge_deregister(qseecom.ta_bridge_handle);
 }
 
+static void *qseecom_spill_alloc(size_t len, dma_addr_t *phys, gfp_t flags)
+{
+	return dma_alloc_coherent(qseecom.dev, len, phys, flags);
+}
+
+static void qseecom_spill_free(void *virt, size_t len, dma_addr_t phys)
+{
+	dma_free_coherent(qseecom.dev, len, virt, phys);
+}
+
+static const struct qcom_scm_spill_mem qseecom_spill_mem = {
+	.alloc = qseecom_spill_alloc,
+	.free = qseecom_spill_free,
+};
+
+/*
+ * Attach the TZ-shared carveout (board DT puts memory-region on the qseecom
+ * node). From here on, every dma_alloc_coherent on this device - tzbuf and
+ * the SMC >4-arg spill buffers alike - comes from shared memory the secure
+ * world is allowed to read. Warn-and-continue without it: previous behavior.
+ */
+static void qseecom_init_carveout(struct platform_device *pdev)
+{
+	int rc = of_reserved_mem_device_init(&pdev->dev);
+
+	if (rc) {
+		pr_warn("qseecom: no shared carveout, SMC spill stays on tzmem (rc %d)\n",
+			rc);
+		return;
+	}
+
+	qcom_scm_set_spill_mem(&qseecom_spill_mem);
+	pr_info("qseecom: SMC spill buffers use the shared carveout\n");
+}
+
 static int qseecom_probe(struct platform_device *pdev)
 {
 	int rc;
@@ -9657,6 +9697,8 @@ static int qseecom_probe(struct platform_device *pdev)
 	rc = qseecom_parse_dt(pdev);
 	if (rc)
 		goto exit_deinit_dev;
+
+	qseecom_init_carveout(pdev);
 
 	rc = qseecom_retrieve_ce_data(pdev);
 	if (rc)

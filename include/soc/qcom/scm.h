@@ -30,6 +30,7 @@
 #include <linux/types.h>
 #include <linux/device.h>
 #include <linux/errno.h>
+#include <linux/gfp.h>
 #include <linux/firmware/qcom/qcom_scm.h>
 
 /* Service IDs kept from the legacy interface */
@@ -112,6 +113,19 @@ int __scm_smc_call(struct device *dev, const struct qcom_scm_desc *desc,
 #define scm_smc_call(dev, desc, res, atomic) \
 	__scm_smc_call((dev), (desc), qcom_scm_convention, (res), (atomic))
 
+/*
+ * struct qcom_scm_spill_mem - carveout allocator for >4-arg SMC spill
+ * Mirrors drivers/firmware/qcom/qcom_scm.h (kept in sync by inspection):
+ * legacy TrustZone without shmbridge cannot read the default tzmem spill
+ * buffer, so qseecom registers a carveout-backed pair at probe.
+ */
+struct qcom_scm_spill_mem {
+	void *(*alloc)(size_t len, dma_addr_t *phys, gfp_t flags);
+	void (*free)(void *virt, size_t len, dma_addr_t phys);
+};
+
+void qcom_scm_set_spill_mem(const struct qcom_scm_spill_mem *mem);
+
 /**
  * struct scm_desc - legacy secure-world call descriptor
  * @arginfo: Metadata describing the arguments in args[]
@@ -144,11 +158,11 @@ static inline int scm_call2_noretry(u32 smc_id, struct scm_desc *desc)
 	desc->ret[0] = res.result[0];
 	desc->ret[1] = res.result[1];
 	desc->ret[2] = res.result[2];
-	/* Modern SCM maps raw -1 to -EIO; the donor ABI used -EOPNOTSUPP
-	 * so legacy callers can fall back from unsupported TZ commands.
-	 * Keep this translation out of the native firmware interface.
+	/* Propagate the modern errno unchanged. Callers that treat a specific
+	 * error as "unsupported" (e.g. the qseecom listener smcinvoke probe)
+	 * test for it explicitly at their own site.
 	 */
-	return ret == -EIO ? -EOPNOTSUPP : ret;
+	return ret;
 }
 
 static inline int scm_call2(u32 smc_id, struct scm_desc *desc)
@@ -176,8 +190,8 @@ static inline int scm_call2_atomic(u32 smc_id, struct scm_desc *desc)
 	desc->ret[0] = res.result[0];
 	desc->ret[1] = res.result[1];
 	desc->ret[2] = res.result[2];
-	/* Preserve the same donor errno convention for atomic calls. */
-	return ret == -EIO ? -EOPNOTSUPP : ret;
+	/* Same as above: no blanket translation (see scm_call2_noretry). */
+	return ret;
 }
 
 #endif /* __SOC_QCOM_SCM_H */
