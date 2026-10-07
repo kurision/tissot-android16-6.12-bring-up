@@ -49,14 +49,55 @@
 
 		heap@1b {
 			reg = <27>;
+			memory-region = <&qseecom_mem>;
 			qcom,ion-heap-type = "DMA";
+		};
+
+		heap@13 {
+			reg = <19>;
+			memory-region = <&qseecom_ta_mem>;
+			qcom,ion-heap-type = "DMA";
+		};
+
+		heap@19 {
+			reg = <25>;
+			qcom,ion-heap-type = "SYSTEM";
 		};
 	};
 
 	reserved-memory {
-		qseecom_mem: qseecom@84a00000 {
+		/* 0x84a00000 is other_ext_region (secure-app loading window owned
+		 * by TrustZone), not the shared DMA pool. Kept no-map and kept at
+		 * 0x1900000: stock's 0x1e00000 would overlap smem@86300000 and
+		 * ramoops@86800000 in this layout. Renamed to end the confusion
+		 * with the qseecom shared pools below.
+		 */
+		other_ext_region: other_ext_region@84a00000 {
 			reg = <0x0 0x84a00000 0x0 0x1900000>;
 			no-map;
+		};
+
+		/* TZ-shared pools, values read off the stock live device-tree.
+		 * Heap 27 (QSEECOM, 40KB keymaster buffers) and heap 19 (TA heap)
+		 * must allocate here: TrustZone XPU rejects secure-command buffers
+		 * outside the carveout (snapshot30 resets). Without memory-region
+		 * the msm ION driver leaves base/size zero and the heap falls back
+		 * to generic CMA: boot logs "ION heap qsecom created" with no
+		 * address. With it, expect "created at <addr>".
+		 */
+		qseecom_mem: qseecom_region@0 {
+			compatible = "shared-dma-pool";
+			reusable;
+			alignment = <0x0 0x400000>;
+			size = <0x0 0x1000000>;
+		};
+
+		qseecom_ta_mem: qseecom_ta_region {
+			compatible = "shared-dma-pool";
+			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
+			reusable;
+			alignment = <0x0 0x400000>;
+			size = <0x0 0x800000>;
 		};
 
 		adsp_fw_mem: adsp@8d600000 {
