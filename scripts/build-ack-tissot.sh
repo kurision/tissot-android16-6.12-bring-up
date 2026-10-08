@@ -69,6 +69,8 @@ required=(
     CONFIG_USB_F_FS
     CONFIG_DRM_MSM            # mdss/mdp5/dsi0: without it the screen can never leave splash
     CONFIG_DRM_PANEL_OTM1911  # tissot's preferred-primary panel (downstream dsi-pref-prim-pan)
+    CONFIG_SECURITY_SELINUX          # enforcing mode is proven not to block Android init
+    CONFIG_SECURITY_SELINUX_BOOTPARAM # selinux=0 on the cmdline; without it the token is inert
 )
 
 missing=()

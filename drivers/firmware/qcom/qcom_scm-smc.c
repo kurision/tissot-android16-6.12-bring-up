@@ -15,6 +15,8 @@
 #include <linux/dma-mapping.h>
 #include <linux/export.h>
 #include <linux/printk.h>
+#include <linux/ratelimit.h>
+#include <linux/sched.h>
 
 #include "qcom_scm.h"
 
@@ -52,14 +54,20 @@ void qcom_scm_set_spill_mem(const struct qcom_scm_spill_mem *mem)
 EXPORT_SYMBOL_GPL(qcom_scm_set_spill_mem);
 
 static void __scm_smc_do_quirk(const struct arm_smccc_args *smc,
-			       struct arm_smccc_res *res)
+			       struct arm_smccc_res *res, bool trace_send)
 {
 	unsigned long a0 = smc->args[0];
 	struct arm_smccc_quirk quirk = { .id = ARM_SMCCC_QUIRK_QCOM_A6 };
+	static DEFINE_RATELIMIT_STATE(scm_pre_rs, HZ, 8);
 
 	quirk.state.a6 = 0;
 
 	do {
+		if (trace_send && __ratelimit(&scm_pre_rs))
+			pr_info("snapshot35 scm_pre pid=%d a0=0x%lx a1=0x%lx a2=0x%lx a3=0x%lx a4=0x%lx a5=0x%lx a6=0x%lx a7=0x%lx\n",
+				current->pid, a0, smc->args[1], smc->args[2],
+				smc->args[3], smc->args[4], smc->args[5],
+				quirk.state.a6, smc->args[7]);
 		arm_smccc_smc_quirk(a0, smc->args[1], smc->args[2],
 				    smc->args[3], smc->args[4], smc->args[5],
 				    quirk.state.a6, smc->args[7], res, &quirk);
@@ -94,7 +102,7 @@ int scm_get_wq_ctx(u32 *wq_ctx, u32 *flags, u32 *more_pending)
 				SCM_SMC_FNID(QCOM_SCM_SVC_WAITQ, QCOM_SCM_WAITQ_GET_WQ_CTX));
 
 	/* Guaranteed to return only success or error, no WAITQ_* */
-	__scm_smc_do_quirk(&get_wq_ctx, &get_wq_res);
+	__scm_smc_do_quirk(&get_wq_ctx, &get_wq_res, false);
 	ret = get_wq_res.a0;
 	if (ret)
 		return ret;
@@ -107,21 +115,30 @@ int scm_get_wq_ctx(u32 *wq_ctx, u32 *flags, u32 *more_pending)
 }
 
 static int __scm_smc_do_quirk_handle_waitq(struct device *dev, struct arm_smccc_args *waitq,
-					   struct arm_smccc_res *res)
+					   struct arm_smccc_res *res, bool trace_send)
 {
 	int ret;
 	u32 wq_ctx, smc_call_ctx;
 	struct arm_smccc_args resume;
 	struct arm_smccc_args *smc = waitq;
+	static DEFINE_RATELIMIT_STATE(scm_waitq_rs, HZ, 2);
+	bool log_wait;
 
 	do {
-		__scm_smc_do_quirk(smc, res);
+		__scm_smc_do_quirk(smc, res, trace_send);
 
 		if (res->a0 == QCOM_SCM_WAITQ_SLEEP) {
 			wq_ctx = res->a1;
 			smc_call_ctx = res->a2;
+			log_wait = trace_send && __ratelimit(&scm_waitq_rs);
+			if (log_wait)
+				pr_info("snapshot35 scm_waitq sleep pid=%d wq_ctx=%u call_ctx=%u\n",
+					current->pid, wq_ctx, smc_call_ctx);
 
 			ret = qcom_scm_wait_for_wq_completion(wq_ctx);
+			if (log_wait)
+				pr_info("snapshot35 scm_waitq resume pid=%d wq_ctx=%u call_ctx=%u ret=%d\n",
+					current->pid, wq_ctx, smc_call_ctx, ret);
 			if (ret)
 				return ret;
 
@@ -134,19 +151,19 @@ static int __scm_smc_do_quirk_handle_waitq(struct device *dev, struct arm_smccc_
 }
 
 static int __scm_smc_do(struct device *dev, struct arm_smccc_args *smc,
-			struct arm_smccc_res *res, bool atomic)
+			struct arm_smccc_res *res, bool atomic, bool trace_send)
 {
 	int ret, retry_count = 0;
 
 	if (atomic) {
-		__scm_smc_do_quirk(smc, res);
+		__scm_smc_do_quirk(smc, res, trace_send);
 		return 0;
 	}
 
 	do {
 		mutex_lock(&qcom_scm_lock);
 
-		ret = __scm_smc_do_quirk_handle_waitq(dev, smc, res);
+		ret = __scm_smc_do_quirk_handle_waitq(dev, smc, res, trace_send);
 
 		mutex_unlock(&qcom_scm_lock);
 
@@ -180,6 +197,10 @@ int __scm_smc_call(struct device *dev, const struct qcom_scm_desc *desc,
 				    ARM_SMCCC_SMC_32 : ARM_SMCCC_SMC_64;
 	struct arm_smccc_res smc_res;
 	struct arm_smccc_args smc = {0};
+	/* ponytail: cmd 1|6 was the snapshot35 gate, but keymaster's stall is
+	 * cmd 0x3 and stayed invisible. Trace every QSEE svc-0 command; the
+	 * per-SMC ratelimit in __scm_smc_do_quirk bounds the volume. */
+	bool trace_send = desc->owner == 48 && desc->svc == 0;
 
 	smc.args[0] = ARM_SMCCC_CALL_VAL(
 		smccc_call_type,
@@ -243,7 +264,22 @@ int __scm_smc_call(struct device *dev, const struct qcom_scm_desc *desc,
 		}
 	}
 
-	ret = __scm_smc_do(dev, &smc, &smc_res, atomic);
+	if (trace_send)
+		pr_info("snapshot35 scm_send_desc pid=%d owner=%u svc=%u cmd=%u arginfo=0x%x args0=0x%llx args1=0x%llx args2=0x%llx args3=0x%llx args4=0x%llx args5=0x%llx args6=0x%llx ext_pa=0x%lx ext_alloc_len=%zu ext_width=%u atomic=%u\n",
+			current->pid, desc->owner, desc->svc, desc->cmd,
+			desc->arginfo, (unsigned long long)desc->args[0],
+			(unsigned long long)desc->args[1],
+			(unsigned long long)desc->args[2],
+			(unsigned long long)desc->args[3],
+			(unsigned long long)desc->args[4],
+			(unsigned long long)desc->args[5],
+			(unsigned long long)desc->args[6],
+			arglen > SCM_SMC_N_REG_ARGS ? smc.args[5] : 0UL,
+			arglen > SCM_SMC_N_REG_ARGS ?
+				SCM_SMC_N_EXT_ARGS * sizeof(u64) : (size_t)0,
+			qcom_smccc_convention == ARM_SMCCC_SMC_32 ? 32 : 64,
+			atomic);
+	ret = __scm_smc_do(dev, &smc, &smc_res, atomic, trace_send);
 	if (ext_virt)
 		spill_mem_override->free(ext_virt,
 				SCM_SMC_N_EXT_ARGS * sizeof(u64), ext_phys);
