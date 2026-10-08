@@ -182,3 +182,13 @@ sphinx_*/
 
 # bc language scripts (not LLVM bitcode)
 !kernel/time/timeconst.bc
+
+# Diagnostic boot artifacts: boot images and pulled evidence blobs are
+# hundreds of megabytes and reproducible from porting/artifacts/snapshotNN/.
+porting/artifacts/*.img
+porting/artifacts/snapshot*/*.img
+porting/artifacts/snapshot*/*.gz
+porting/artifacts/snapshot*/base-ramdisk
+porting/artifacts/snapshot*/Image.gz
+porting/artifacts/snapshot*/init
+porting/artifacts/snapshot*/daemon-probe-selftest-host

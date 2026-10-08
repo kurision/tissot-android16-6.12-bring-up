@@ -25,7 +25,9 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
-#if defined(ANDROID_CAPTURE) && defined(ANDROID_GUARD_TEST)
+#if defined(ANDROID_CAPTURE) && \
+	(defined(ANDROID_GUARD_TEST) || defined(ANDROID_RAMOOPS_TEST) || \
+	 defined(ANDROID_DAEMON_TEST))
 #include <assert.h>
 #include <stdlib.h>
 #endif
@@ -40,6 +42,7 @@
 #define DURABLE_CAPTURE 0
 #endif
 static time_t monotonic_seconds(void);
+struct ramoops_sampler;
 
 static int write_all(int fd, const char *buf, size_t len)
 {
@@ -250,6 +253,141 @@ static time_t monotonic_seconds(void)
 	return now.tv_sec;
 }
 
+#ifdef ANDROID_CAPTURE
+struct ramoops_sampler {
+	int input;
+	int output[2];
+	int log;
+	unsigned int slot;
+	unsigned long long sample;
+	size_t bytes;
+	time_t next;
+};
+
+static void ramoops_sampler_close(struct ramoops_sampler *s)
+{
+	unsigned int i;
+
+	if (s->input >= 0)
+		close(s->input);
+	s->input = -1;
+	for (i = 0; i < 2; i++) {
+		if (s->output[i] >= 0)
+			close(s->output[i]);
+		s->output[i] = -1;
+	}
+	/* log is borrowed from the durable recorder. */
+}
+
+static int ramoops_snapshot(struct ramoops_sampler *s)
+{
+	char buf[8192];
+	int out = s->output[s->slot], ret;
+
+	s->bytes = 0;
+	if (ftruncate(out, 0) || lseek(out, 0, SEEK_SET) < 0)
+		return -1;
+	while (s->bytes < 1048576) {
+		size_t chunk = 1048576 - s->bytes;
+		ssize_t got;
+
+		if (chunk > sizeof buf)
+			chunk = sizeof buf;
+		got = pread(s->input, buf, chunk, (off_t)s->bytes);
+
+		if (got < 0 && errno == EINTR)
+			continue;
+		if (got <= 0) {
+			if (!got)
+				errno = EIO;
+			return -1;
+		}
+		if (write_all(out, buf, (size_t)got))
+			return -1;
+		s->bytes += (size_t)got;
+	}
+	do {
+		ret = fsync(out);
+	} while (ret < 0 && errno == EINTR);
+	if (ret)
+		return -1;
+	s->slot ^= 1;
+	s->sample++;
+	return 0;
+}
+
+static void ramoops_sampler_tick(struct ramoops_sampler *s)
+{
+	char message[192];
+	char slot;
+
+	if (!s || s->input < 0 || monotonic_seconds() < s->next)
+		return;
+	slot = (char)('a' + s->slot);
+	if (!ramoops_snapshot(s)) {
+		snprintf(message, sizeof message,
+			 "DIAG: ramoops sample=%llu slot=%c bytes=1048576 t=%ld complete\n",
+			 s->sample, slot, (long)monotonic_seconds());
+		say(s->log, message);
+	} else {
+		int error = errno;
+
+		snprintf(message, sizeof message,
+			 "DIAG: ramoops slot=%c completed_bytes=%zu errno=%d disabled; primary capture continues\n",
+			 slot, s->bytes, error);
+		say(s->log, message);
+		ramoops_sampler_close(s);
+		errno = error;
+	}
+	/* Skip missed ticks rather than replaying a backlog. */
+	s->next = monotonic_seconds() + 2;
+}
+
+static void ramoops_sampler_open(struct ramoops_sampler *s)
+{
+	struct stat st;
+	int directory = -1, error, ret;
+	char message[128];
+
+	s->input = open("/sys/kernel/ramoops_raw", O_RDONLY | O_CLOEXEC);
+	if (s->input < 0 || fstat(s->input, &st))
+		goto failed;
+	if (st.st_size != 1048576 || (st.st_mode & 07777) != 0400) {
+		errno = EINVAL;
+		goto failed;
+	}
+	s->output[0] = open("/sdlog/ramoops-a.bin",
+			    O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+	if (s->output[0] < 0)
+		goto failed;
+	s->output[1] = open("/sdlog/ramoops-b.bin",
+			    O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+	if (s->output[1] < 0)
+		goto failed;
+	directory = open("/sdlog", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (directory < 0)
+		goto failed;
+	do {
+		ret = fsync(directory);
+	} while (ret < 0 && errno == EINTR);
+	if (ret)
+		goto failed;
+	close(directory);
+	say(s->log, "DIAG: ramoops sampler ready size=1048576\n");
+	return;
+failed:
+	error = errno;
+	if (directory >= 0)
+		close(directory);
+	ramoops_sampler_close(s);
+	snprintf(message, sizeof message,
+		 "DIAG: ramoops sampler unavailable errno=%d; primary capture continues\n",
+		 error);
+	say(s->log, message);
+	errno = error;
+}
+#endif
+
 /* A failed backup must never take down the primary recorder. */
 static int write_capture(int out, int *mirror, const char *buf, size_t len,
 			 int durable)
@@ -265,13 +403,277 @@ static int write_capture(int out, int *mirror, const char *buf, size_t len,
 	return 0;
 }
 
-static int dump_log(int in, int out, unsigned seconds, int durable, int *mirror)
+#ifdef ANDROID_CAPTURE
+/* comm is capped at TASK_COMM_LEN-1 (15 visible bytes), so watch names match
+ * by prefix only; full-string equality would never fire. */
+static const char *const daemon_watch[] = {
+	"keymaster@3.0", "keystore2", "vold", "vdc",
+	"servicemanager", "logd",
+};
+#define DAEMON_WATCH_COUNT (sizeof daemon_watch / sizeof daemon_watch[0])
+
+struct daemon_probe {
+	char last[DAEMON_WATCH_COUNT][48];
+	time_t emitted[DAEMON_WATCH_COUNT];
+	/* -1 before the first scan so the census line always emits once. */
+	int comm_errno;
+	unsigned long entries;
+};
+
+/* Owned by the durable recorder child; the USB child never writes it. */
+static struct daemon_probe daemon_probe_state;
+
+struct daemon_status {
+	int pid;
+	char state;
+	int ppid;
+	int threads;
+	unsigned long utime;
+	unsigned long stime;
+	char wchan[16];
+	char comm[16];
+};
+
+static void daemon_probe_init(struct daemon_probe *p)
+{
+	unsigned i;
+
+	memset(p, 0, sizeof *p);
+	/* -1 is what marks "no scan yet"; 0 would look like a successful scan. */
+	p->comm_errno = -1;
+	for (i = 0; i < DAEMON_WATCH_COUNT; i++)
+		strcpy(p->last[i], "-");
+}
+
+/* No strtoul: stdlib.h is only pulled in for the host self-checks. */
+static unsigned long parse_ul(const char *s)
+{
+	unsigned long value = 0;
+
+	while (*s >= '0' && *s <= '9')
+		value = value * 10 + (unsigned long)(*s++ - '0');
+	return value;
+}
+
+static int read_proc_file(int root, const char *pid_name, const char *leaf,
+			  char *buf, size_t size)
+{
+	char path[96];
+	ssize_t got;
+	int fd;
+
+	snprintf(path, sizeof path, "%s/%s", pid_name, leaf);
+	fd = openat(root, path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return -1;
+	do {
+		got = read(fd, buf, size - 1);
+	} while (got < 0 && errno == EINTR);
+	close(fd);
+	if (got <= 0)
+		return -1;
+	buf[got] = '\0';
+	return (int)got;
+}
+
+/* Field 2 (comm) may itself contain spaces and parentheses: split after the
+ * LAST ')' so token 0 is field 3. A short or truncated stat leaves state '-'. */
+static void daemon_parse_stat(const char *stat, struct daemon_status *out)
+{
+	unsigned long field[19];
+	char state;
+	const char *cursor = strrchr(stat, ')');
+	size_t n;
+
+	if (!cursor)
+		return;
+	for (cursor++; *cursor == ' '; cursor++)
+		;
+	if (!*cursor)
+		return;
+	state = *cursor;
+	for (n = 0; n < sizeof field / sizeof field[0]; n++) {
+		while (*cursor && *cursor != ' ')
+			cursor++;
+		while (*cursor == ' ')
+			cursor++;
+		if (!*cursor)
+			break;
+		field[n] = parse_ul(cursor);
+	}
+	if (n < sizeof field / sizeof field[0])
+		return;
+	out->state = state;
+	out->ppid = (int)field[0];
+	out->utime = field[10];
+	out->stime = field[11];
+	out->threads = (int)field[16];
+}
+
+static void daemon_probe_collect(const char *proc_root, struct daemon_status *status,
+				 unsigned long *entries, int *comm_errno,
+				 char *dump, size_t dump_size)
+{
+	DIR *dir = opendir(proc_root);
+	struct dirent *entry;
+	unsigned i;
+	char found[DAEMON_WATCH_COUNT] = { 0 };
+
+	*entries = 0;
+	*comm_errno = 0;
+	if (dump && dump_size)
+		dump[0] = '\0';
+
+	memset(status, 0, DAEMON_WATCH_COUNT * sizeof *status);
+	for (i = 0; i < DAEMON_WATCH_COUNT; i++) {
+		status[i].state = '-';
+		strcpy(status[i].wchan, "-");
+		strcpy(status[i].comm, daemon_watch[i]);
+	}
+	if (!dir) {
+		*comm_errno = errno;
+		return;
+	}
+	while ((entry = readdir(dir))) {
+		unsigned matched = DAEMON_WATCH_COUNT;
+		size_t digits = strspn(entry->d_name, "0123456789");
+		char comm[32], stat[1024], wchan[32];
+		size_t n;
+
+		if (!digits || entry->d_name[digits])
+			continue;
+		(*entries)++;
+		if (read_proc_file(dirfd(dir), entry->d_name, "comm", comm,
+				   sizeof comm) <= 0) {
+			/* errno is only meaningful here: on success it is stale. */
+			if (!*comm_errno)
+				*comm_errno = errno;
+			continue;
+		}
+		/* comm carries a trailing newline and stops at 15 bytes. */
+		comm[15] = '\0';
+		for (n = strlen(comm); n && comm[n - 1] == '\n'; n--)
+			comm[n - 1] = '\0';
+		if (dump && dump_size) {
+			char line[320];
+			size_t at = strlen(dump);
+
+			snprintf(line, sizeof line, " pid=%s comm=%s", entry->d_name, comm);
+			if (at + strlen(line) + 1 < dump_size)
+				strcpy(dump + at, line);
+		}
+		for (i = 0; i < DAEMON_WATCH_COUNT; i++) {
+			if (found[i] ||
+			    strncmp(daemon_watch[i], comm, strlen(daemon_watch[i])))
+				continue;
+			found[i] = 1;
+			matched = i;
+			break;
+		}
+		if (matched == DAEMON_WATCH_COUNT)
+			continue;
+		status[matched].pid = (int)parse_ul(entry->d_name);
+		memcpy(status[matched].comm, comm, sizeof status[matched].comm);
+		if (read_proc_file(dirfd(dir), entry->d_name, "stat", stat,
+				   sizeof stat) > 0)
+			daemon_parse_stat(stat, &status[matched]);
+		/* wchan needs ptrace-mode access this domain may lack: diagnostic
+		 * only, never fatal. */
+		if (read_proc_file(dirfd(dir), entry->d_name, "wchan", wchan,
+				   sizeof wchan) > 0) {
+			wchan[15] = '\0';
+			memcpy(status[matched].wchan, wchan,
+			       sizeof status[matched].wchan);
+		}
+	}
+	closedir(dir);
+}
+
+/* Written straight to the capture fd, never through /dev/kmsg: if printk is
+ * what is wedged, the probe must survive it. */
+static void daemon_probe_tick(struct daemon_probe *p, const char *proc_root,
+			      int out, int *mirror)
+{
+	struct daemon_status status[DAEMON_WATCH_COUNT];
+	char dump[8192];
+	unsigned long entries;
+	unsigned i;
+	int comm_errno, first = p && p->comm_errno == -1;
+
+	if (!p)
+		return;
+	daemon_probe_collect(proc_root, status, &entries, &comm_errno,
+			     first ? dump : NULL, sizeof dump);
+	/* One census of every comm seen, so a watch name that can never match on
+	 * this kernel is visible instead of silently reporting pid=0. */
+	if (first && dump[0]) {
+		char line[sizeof dump];
+		size_t len;
+
+		len = (size_t)snprintf(line, sizeof line, "DIAG: proccomm%s\n", dump);
+		if (len < sizeof line)
+			write_capture(out, mirror, line, len, 1);
+	}
+	/* An unreadable /proc must say so: silence here is indistinguishable
+	 * from "no daemon yet" without it. */
+	if (comm_errno != p->comm_errno || entries != p->entries) {
+		char census[128];
+		size_t len;
+
+		len = (size_t)snprintf(census, sizeof census,
+			"DIAG: procdir path=%s self=%d entries=%lu comm_errno=%d\n",
+			proc_root, (int)getpid(), entries, comm_errno);
+		p->comm_errno = comm_errno;
+		p->entries = entries;
+		if (len < sizeof census)
+			write_capture(out, mirror, census, len, 1);
+	}
+	for (i = 0; i < DAEMON_WATCH_COUNT; i++) {
+		char signature[48], line[256];
+		time_t now = monotonic_seconds();
+		size_t len;
+
+		snprintf(signature, sizeof signature, "%d:%c:%d:%lu:%lu",
+			 status[i].pid, status[i].state, status[i].threads,
+			 status[i].utime, status[i].stime);
+		/* ponytail: measured 20s heartbeat missed the whole 65.2-67.0s
+		 * stall window; 1s costs ~600KB of the 64MiB logdump. */
+		if (!strcmp(p->last[i], signature) && now - p->emitted[i] < 1)
+			continue;
+		len = (size_t)snprintf(line, sizeof line,
+			"DIAG: daemon name=%s pid=%d state=%c ppid=%d threads=%d utime=%lu stime=%lu wchan=%s\n",
+			status[i].comm, status[i].pid, status[i].state, status[i].ppid,
+			status[i].threads, status[i].utime, status[i].stime, status[i].wchan);
+		memcpy(p->last[i], signature, sizeof signature);
+		p->emitted[i] = now;
+		if (len < sizeof line)
+			write_capture(out, mirror, line, len, 1);
+	}
+}
+#endif
+
+static int dump_log(int in, int out, unsigned seconds, int durable, int *mirror,
+		    struct ramoops_sampler *sampler)
 {
 	time_t deadline = monotonic_seconds() + seconds;
 	char buf[8192];
 
+#ifndef ANDROID_CAPTURE
+	(void)sampler;
+#endif
+
 	do {
-		ssize_t got = read(in, buf, sizeof buf);
+		ssize_t got;
+#ifdef ANDROID_CAPTURE
+		/* ponytail: SD read/write/fsync makes 2s best-effort; use a
+		 * separate collector only if measured latency warrants it. */
+		ramoops_sampler_tick(sampler);
+		/* Only the durable writer probes: the USB child is a separate
+		 * process with its own copy of the state. */
+		if (sampler)
+			daemon_probe_tick(&daemon_probe_state, "/proc", out, mirror);
+#endif
+		got = read(in, buf, sizeof buf);
 		if (got > 0) {
 			if (write_capture(out, mirror, buf, (size_t)got, durable))
 				return -1;
@@ -343,6 +745,267 @@ static int open_sdlog(void)
 	return open("/sdlog/snapshot28-kmsg.log",
 		    O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
 }
+
+#ifdef ANDROID_RAMOOPS_TEST
+/* Catch slot advancement on partial input and a sampler failure aborting kmsg. */
+static int ramoops_selftest(void)
+{
+	char directory[] = "/tmp/ack-ramoops-check-XXXXXX";
+	char pattern[8192], actual[8192], captured[256], whole[1024];
+	static const char records[] =
+		"6,1,1000,-;selfcheck primary record one\n"
+		"6,2,2000,-;selfcheck primary record two\n";
+	struct ramoops_sampler s = {
+		.input = -1, .output = { -1, -1 }, .log = -1,
+	};
+	struct stat st;
+	size_t i, offset;
+	int dir, source, completed_b, kmsg, primary, log;
+	ssize_t got;
+
+	assert(mkdtemp(directory));
+	dir = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	assert(dir >= 0);
+	source = openat(dir, "source", O_RDWR | O_CREAT | O_EXCL, 0600);
+	assert(source >= 0);
+	for (i = 0; i < sizeof pattern; i++)
+		pattern[i] = (char)((i * 37 + i / 251) & 255);
+	for (offset = 0; offset < 1048576; offset += sizeof pattern)
+		assert(!write_all(source, pattern, sizeof pattern));
+	s.input = openat(dir, "source", O_RDONLY | O_CLOEXEC);
+	s.output[0] = openat(dir, "a", O_WRONLY | O_CREAT | O_EXCL, 0600);
+	s.output[1] = openat(dir, "b", O_WRONLY | O_CREAT | O_EXCL, 0600);
+	assert(s.input >= 0 && s.output[0] >= 0 && s.output[1] >= 0);
+	for (i = 0; i < 2; i++) {
+		int check;
+		assert(!ramoops_snapshot(&s));
+		assert(s.slot == (i == 0 ? 1U : 0U) && s.sample == i + 1);
+		assert(s.bytes == 1048576);
+		check = openat(dir, i == 0 ? "a" : "b", O_RDONLY);
+		assert(check >= 0 && !fstat(check, &st) && st.st_size == 1048576);
+		for (offset = 0; offset < 1048576; offset += sizeof actual) {
+			assert(pread(check, actual, sizeof actual, (off_t)offset) ==
+			       (ssize_t)sizeof actual);
+			assert(!memcmp(actual, pattern, sizeof actual));
+		}
+		close(check);
+	}
+	assert(!ftruncate(source, 12345));
+	assert(ramoops_snapshot(&s) == -1 && errno == EIO);
+	assert(s.slot == 0 && s.sample == 2 && s.bytes == 12345);
+	completed_b = openat(dir, "b", O_RDONLY);
+	assert(completed_b >= 0 && !fstat(completed_b, &st) &&
+	       st.st_size == 1048576);
+	kmsg = openat(dir, "kmsg", O_RDWR | O_CREAT | O_EXCL, 0600);
+	primary = openat(dir, "primary", O_RDWR | O_CREAT | O_EXCL, 0600);
+	log = openat(dir, "log", O_RDWR | O_CREAT | O_EXCL, 0600);
+	assert(kmsg >= 0 && primary >= 0 && log >= 0);
+	assert(!write_all(kmsg, records, sizeof records - 1));
+	assert(lseek(kmsg, 0, SEEK_SET) == 0);
+	s.log = log;
+	s.next = 0;
+	assert(!dump_log(kmsg, primary, 0, 1, NULL, &s));
+	assert(s.input == -1 && s.output[0] == -1 && s.output[1] == -1);
+	assert(s.slot == 0 && s.sample == 2);
+	assert(fcntl(log, F_GETFD) >= 0);
+	/* The daemon probe ticks inside dump_log, so probe lines interleave with
+	 * the kmsg records. Their position is timing-dependent; the records must
+	 * still arrive byte-for-byte and the probe must have run. */
+	assert(!fstat(primary, &st));
+	assert(st.st_size > (off_t)0 && st.st_size < (off_t)sizeof whole);
+	got = pread(primary, whole, (size_t)st.st_size, 0);
+	assert(got == st.st_size);
+	whole[got] = '\0';
+	assert(strstr(whole, records));
+	assert(strstr(whole, "DIAG: procdir path="));
+	assert(strstr(whole, "DIAG: daemon name=keystore2"));
+	got = pread(log, captured, sizeof captured - 1, 0);
+	assert(got > 0);
+	captured[got] = '\0';
+	assert(strstr(captured, "completed_bytes=12345 errno=") &&
+	       strstr(captured, "disabled; primary capture continues"));
+	for (offset = 0; offset < 1048576; offset += sizeof actual) {
+		assert(pread(completed_b, actual, sizeof actual, (off_t)offset) ==
+		       (ssize_t)sizeof actual);
+		assert(!memcmp(actual, pattern, sizeof actual));
+	}
+	ramoops_sampler_close(&s);
+	close(completed_b);
+	close(source);
+	close(kmsg);
+	close(primary);
+	close(log);
+	assert(!unlinkat(dir, "source", 0));
+	assert(!unlinkat(dir, "a", 0));
+	assert(!unlinkat(dir, "b", 0));
+	assert(!unlinkat(dir, "kmsg", 0));
+	assert(!unlinkat(dir, "primary", 0));
+	assert(!unlinkat(dir, "log", 0));
+	close(dir);
+	assert(!rmdir(directory));
+	puts("Ramoops alternating snapshot and capture continuation checks PASS");
+	return 0;
+}
+#endif
+
+#ifdef ANDROID_DAEMON_TEST
+/* Catch prefix misses, the last-')' stat split, and a heartbeat that would
+ * flood the capture with an unchanged tree. */
+static void daemon_test_write(int dir, const char *path, const char *data)
+{
+	int fd = openat(dir, path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+
+	assert(fd >= 0);
+	assert(!write_all(fd, data, strlen(data)));
+	close(fd);
+}
+
+static int count_lines(const char *text, const char *needle)
+{
+	int seen = 0;
+	const char *at = text;
+
+	while ((at = strstr(at, needle))) {
+		seen++;
+		at += strlen(needle);
+	}
+	return seen;
+}
+
+static int daemon_probe_selftest(void)
+{
+	char directory[] = "/tmp/ack-daemon-check-XXXXXX";
+	char root[256];
+	char captured[8192];
+	/* comm carries a space and the field count is exactly 19 after ')'. */
+	static const char keystore_stat[] =
+		"100 (key store 2) S 1 100 100 0 -1 4194560 1234 5 0 0 20 3 0 0 20 0 4 0 987654 1234567 42\n";
+	static const char keymaster_stat[] =
+		"101 (keymaster@3.0-s) R 1 100 100 0 -1 4194560 1 0 0 0 7 1 0 0 20 0 2 0 111 222 7\n";
+	static const char unrelated_stat[] =
+		"102 (unrelated) D 1 100 100 0 -1 4194560 9 0 0 0 1 2 0 0 20 0 1 0 5 6 1\n";
+	static const char truncated_stat[] = "103 (vdc) S 1 100\n";
+	struct daemon_probe p;
+	struct stat before, after;
+	off_t size;
+	int dir, out;
+	ssize_t got;
+
+	assert(mkdtemp(directory));
+	dir = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	assert(dir >= 0);
+	assert((size_t)snprintf(root, sizeof root, "%s/root", directory) < sizeof root);
+	assert(!mkdirat(dir, "root", 0700));
+	{
+		int root_fd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+		assert(root_fd >= 0);
+		assert(!mkdirat(root_fd, "100", 0700));
+		assert(!mkdirat(root_fd, "101", 0700));
+		assert(!mkdirat(root_fd, "102", 0700));
+		assert(!mkdirat(root_fd, "103", 0700));
+		daemon_test_write(root_fd, "100/comm", "keystore2\n");
+		daemon_test_write(root_fd, "100/stat", keystore_stat);
+		daemon_test_write(root_fd, "100/wchan", "binder_ioctl_write_read\n");
+		daemon_test_write(root_fd, "101/comm", "keymaster@3.0-s\n");
+		daemon_test_write(root_fd, "101/stat", keymaster_stat);
+		daemon_test_write(root_fd, "102/comm", "unrelated\n");
+		daemon_test_write(root_fd, "102/stat", unrelated_stat);
+		daemon_test_write(root_fd, "103/comm", "vdc\n");
+		daemon_test_write(root_fd, "103/stat", truncated_stat);
+		close(root_fd);
+	}
+	out = openat(dir, "capture", O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+	assert(out >= 0);
+	daemon_probe_init(&p);
+	daemon_probe_tick(&p, root, out, NULL);
+	assert(!fsync(out));
+	assert(!fstat(out, &before));
+	size = before.st_size;
+	assert(size > 0);
+	assert(pread(out, captured, (size_t)size, 0) == size);
+	captured[size] = '\0';
+
+	assert(strstr(captured, "DIAG: procdir path=") &&
+	       strstr(captured, " entries=4 comm_errno=0\n"));
+	/* The one-shot comm census must land, or a watch name that can never match
+	 * on this kernel stays invisible. readdir order is not stable. */
+	assert(strstr(captured, "DIAG: proccomm "));
+	assert(strstr(captured, " pid=100 comm=keystore2") &&
+	       strstr(captured, " pid=101 comm=keymaster@3.0-s") &&
+	       strstr(captured, " pid=102 comm=unrelated") &&
+	       strstr(captured, " pid=103 comm=vdc"));
+
+	assert(count_lines(captured, "name=keystore2 ") == 1);
+	assert(count_lines(captured, "name=keymaster@3.0-s ") == 1);
+	/* The census legitimately names every process; only watch lines must skip it. */
+	assert(!strstr(captured, "name=unrelated"));
+	assert(strstr(captured,
+		      "DIAG: daemon name=keystore2 pid=100 state=S ppid=1 threads=4 utime=20 stime=3 wchan=binder_ioctl_wr\n"));
+	assert(strstr(captured,
+		      "DIAG: daemon name=keymaster@3.0-s pid=101 state=R ppid=1 threads=2 utime=7 stime=1 wchan=-\n"));
+	assert(strstr(captured, "DIAG: daemon name=vdc pid=103 state=- ppid=0 threads=0"));
+	assert(strstr(captured, "DIAG: daemon name=logd pid=0 state=-"));
+
+	/* Unchanged tree, inside the heartbeat: the probe must stay silent. */
+	daemon_probe_tick(&p, root, out, NULL);
+	assert(!fstat(out, &after));
+	assert(after.st_size == size);
+
+	/* Past the heartbeat the same tree must still emit: a cadence that never
+	 * fires leaves a short stall window unobserved. */
+	{
+		unsigned slot;
+
+		for (slot = 0; slot < DAEMON_WATCH_COUNT; slot++)
+			p.emitted[slot] -= 2;
+	}
+	daemon_probe_tick(&p, root, out, NULL);
+	assert(!fstat(out, &after));
+	assert(after.st_size > size);
+
+	/* An unreadable proc root must report the errno instead of going quiet. */
+	{
+		struct daemon_probe missing;
+		char missing_root[sizeof root + 8];
+
+		snprintf(missing_root, sizeof missing_root, "%s/absent", root);
+		daemon_probe_init(&missing);
+		daemon_probe_tick(&missing, missing_root, out, NULL);
+		assert(!fsync(out));
+		got = pread(out, captured, sizeof captured - 1, 0);
+		assert(got > (ssize_t)size);
+		captured[got] = '\0';
+		assert(strstr(captured, " entries=0 comm_errno=2\n"));
+	}
+
+	close(out);
+	assert(!unlinkat(dir, "capture", 0));
+	{
+		int root_fd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+		unsigned pid;
+
+		assert(root_fd >= 0);
+		for (pid = 100; pid < 104; pid++) {
+			char leaf[16];
+
+			snprintf(leaf, sizeof leaf, "%u/comm", pid);
+			assert(!unlinkat(root_fd, leaf, 0));
+			snprintf(leaf, sizeof leaf, "%u/stat", pid);
+			assert(!unlinkat(root_fd, leaf, 0));
+			if (pid == 100)
+				assert(!unlinkat(root_fd, "100/wchan", 0));
+			snprintf(leaf, sizeof leaf, "%u", pid);
+			assert(!unlinkat(root_fd, leaf, AT_REMOVEDIR));
+		}
+		close(root_fd);
+	}
+	assert(!rmdir(root));
+	close(dir);
+	assert(!rmdir(directory));
+	puts("Daemon probe prefix, stat split, dedup and heartbeat checks PASS");
+	return 0;
+}
+#endif
 
 #define GUARDED_FSTAB "/dev/block/ack-protected-fstab.qcom"
 #define GUARDED_CONTEXTS "/dev/block/ack-vendor-file-contexts"
@@ -542,6 +1205,38 @@ static int guard_bootdevice(int proc)
 	return 0;
 }
 
+/* Report what /proc looks like from the namespace this process is in. Runs in
+ * a short-lived child so the recorder keeps its single-writer invariant. */
+static void guardns_census(int log, const char *vantage)
+{
+	struct daemon_status seen[DAEMON_WATCH_COUNT];
+	char done[80];
+	time_t stop = monotonic_seconds() + 150;
+
+	while (monotonic_seconds() < stop) {
+		unsigned long entries;
+		char line[320];
+		size_t len;
+		int err;
+		unsigned i;
+
+		daemon_probe_collect("/proc", seen, &entries, &err, NULL, 0);
+		len = (size_t)snprintf(line, sizeof line,
+			"DIAG: guardns vantage=%s entries=%lu comm_errno=%d",
+			vantage, entries, err);
+		for (i = 0; i < DAEMON_WATCH_COUNT && len < sizeof line; i++)
+			len += (size_t)snprintf(line + len, sizeof line - len,
+				" %s=%d/%c", seen[i].comm, seen[i].pid, seen[i].state);
+		if (len < sizeof line)
+			snprintf(line + len, sizeof line - len, "\n");
+		say(log, line);
+		usleep(1000000);
+	}
+	snprintf(done, sizeof done,
+		 "DIAG: guardns vantage=%s census complete\n", vantage);
+	say(log, done);
+}
+
 static void install_android_guard(int proc, int fstab, int contexts, int log)
 {
 	time_t deadline = monotonic_seconds() + 60;
@@ -589,6 +1284,27 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	say(log, "DIAG: bootdevice guard installed read-only f2fs-only fstab"
 		 " and vendor contexts before policy load\n");
 	say(log, "DIAG: bootdevice canonical alias and legacy wait path ready\n");
+	/* The mount namespace does not cross the boundary: Android's services are
+	 * in a different PID namespace, visible only after setns(CLONE_NEWPID)
+	 * followed by a fork. Reap the child and keep the record either way. */
+	{
+		int pidns = openat(proc, "1/ns/pid", O_RDONLY | O_CLOEXEC);
+
+		if (pidns >= 0 && !setns(pidns, CLONE_NEWPID) && fork() == 0) {
+			close(pidns);
+			close(proc);
+			guardns_census(log, "pidns");
+			_exit(0);
+		}
+		snprintf(message, sizeof message,
+			 "DIAG: guardns pid namespace join failed errno=%d; "
+			 "mount namespace census follows\n", errno);
+		say(log, message);
+		if (pidns >= 0)
+			close(pidns);
+	}
+	/* Fallback vantage point: PID 1's mount namespace. */
+	guardns_census(log, "mntns");
 	_exit(0);
 failed:
 	snprintf(message, sizeof message,
@@ -859,7 +1575,7 @@ static void capture_usb(int kin, int klog, int kerr)
 		snprintf(msg, sizeof msg,
 			 "DIAG: USB kmsg unavailable errno=%d\n", kerr);
 		say(out, msg);
-	} else if (dump_log(kin, out, 900, 0, NULL)) {
+	} else if (dump_log(kin, out, 900, 0, NULL, NULL)) {
 		snprintf(msg, sizeof msg,
 			 "DIAG: USB dump failed errno=%d\n", errno);
 		say(out, msg);
@@ -881,9 +1597,14 @@ static int launch_android(char **argv)
 	if (child == 0) {
 		int in = -1, out = -1, kin = -1, klog = -1, kerr = 0, n;
 		int proc = -1, fstab = -1, contexts = -1, sd = -1;
+		struct ramoops_sampler sampler = {
+			.input = -1, .output = { -1, -1 }, .log = -1,
+		};
 		static const char marker[] =
 			"DIAG: Android capture ready; handing PID 1 to Android init\n";
 
+		/* The probe owns nothing: never closed, never freed. */
+		daemon_probe_init(&daemon_probe_state);
 		close(ready[0]);
 		/* Never expose the logger's mounts to Android's first-stage init. */
 		if (unshare(CLONE_NEWNS) ||
@@ -953,8 +1674,11 @@ static int launch_android(char **argv)
 		sd = open_sdlog();
 		if (sd < 0)
 			say(klog, "DIAG: SD capture unavailable; other sinks continue\n");
-		else
+		else {
 			say(klog, "DIAG: SD capture ready at /sdlog/snapshot28-kmsg.log\n");
+			sampler.log = klog;
+			ramoops_sampler_open(&sampler);
+		}
 		if (out < 0) {
 			out = sd;
 			sd = -1;
@@ -962,6 +1686,7 @@ static int launch_android(char **argv)
 		if (out < 0 ||
 		    write_capture(out, &sd, marker, sizeof marker - 1, 1))
 			goto child_failed;
+		ramoops_sampler_tick(&sampler);
 		status = 1;
 		write_all(ready[1], &status, 1);
 		{
@@ -983,19 +1708,21 @@ static int launch_android(char **argv)
 			fsync(out);
 		}
 		close(ready[1]);
-		if (dump_log(in, out, 900, 1, &sd)) {
+		if (dump_log(in, out, 900, 1, &sd, &sampler)) {
 			static const char failed[] = "\nDIAG: Android capture failed\n";
 			write_capture(out, &sd, failed, sizeof failed - 1, 1);
 		} else {
 			static const char eof[] = "\nDIAG: EOF Android kmsg dump complete\n";
 			write_capture(out, &sd, eof, sizeof eof - 1, 1);
 		}
+		ramoops_sampler_close(&sampler);
 		if (sd >= 0)
 			close(sd);
 		close(out);
 		close(in);
 		_exit(0);
 child_failed:
+		ramoops_sampler_close(&sampler);
 		write_all(ready[1], &status, 1);
 		_exit(1);
 	}
@@ -1038,6 +1765,12 @@ int main(int argc, char **argv)
 #ifdef ANDROID_CAPTURE
 #ifdef ANDROID_GUARD_TEST
 	return guard_selftest();
+#endif
+#ifdef ANDROID_RAMOOPS_TEST
+	return ramoops_selftest();
+#endif
+#ifdef ANDROID_DAEMON_TEST
+	return daemon_probe_selftest();
 #endif
 	return launch_android(argv);
 #endif
@@ -1090,7 +1823,7 @@ int main(int argc, char **argv)
 		say(console, "DIAG: sink write failed\n");
 		goto spin;
 	}
-	if (dump_log(in, out, DUMP_SECONDS, DURABLE_CAPTURE && !usb, NULL)) {
+	if (dump_log(in, out, DUMP_SECONDS, DURABLE_CAPTURE && !usb, NULL, NULL)) {
 		say(console, "DIAG: kernel log capture failed\n");
 		goto spin;
 	}
