@@ -418,6 +418,7 @@ struct daemon_probe {
 	/* -1 before the first scan so the census line always emits once. */
 	int comm_errno;
 	unsigned long entries;
+	unsigned long highest;
 };
 
 /* Owned by the durable recorder child; the USB child never writes it. */
@@ -512,6 +513,7 @@ static void daemon_parse_stat(const char *stat, struct daemon_status *out)
 
 static void daemon_probe_collect(const char *proc_root, struct daemon_status *status,
 				 unsigned long *entries, int *comm_errno,
+				 unsigned long *highest,
 				 char *dump, size_t dump_size)
 {
 	DIR *dir = opendir(proc_root);
@@ -521,6 +523,7 @@ static void daemon_probe_collect(const char *proc_root, struct daemon_status *st
 
 	*entries = 0;
 	*comm_errno = 0;
+	*highest = 0;
 	if (dump && dump_size)
 		dump[0] = '\0';
 
@@ -543,6 +546,12 @@ static void daemon_probe_collect(const char *proc_root, struct daemon_status *st
 		if (!digits || entry->d_name[digits])
 			continue;
 		(*entries)++;
+		{
+			unsigned long pid = parse_ul(entry->d_name);
+
+			if (pid > *highest)
+				*highest = pid;
+		}
 		if (read_proc_file(dirfd(dir), entry->d_name, "comm", comm,
 				   sizeof comm) <= 0) {
 			/* errno is only meaningful here: on success it is stale. */
@@ -589,6 +598,8 @@ static void daemon_probe_collect(const char *proc_root, struct daemon_status *st
 	closedir(dir);
 }
 
+static void daemon_pidns_report(const struct daemon_probe *p, int out, int *mirror);
+
 /* Written straight to the capture fd, never through /dev/kmsg: if printk is
  * what is wedged, the probe must survive it. */
 static void daemon_probe_tick(struct daemon_probe *p, const char *proc_root,
@@ -596,14 +607,15 @@ static void daemon_probe_tick(struct daemon_probe *p, const char *proc_root,
 {
 	struct daemon_status status[DAEMON_WATCH_COUNT];
 	char dump[8192];
-	unsigned long entries;
+	unsigned long entries, highest;
 	unsigned i;
 	int comm_errno, first = p && p->comm_errno == -1;
 
 	if (!p)
 		return;
 	daemon_probe_collect(proc_root, status, &entries, &comm_errno,
-			     first ? dump : NULL, sizeof dump);
+			     &highest, first ? dump : NULL, sizeof dump);
+	p->highest = highest;
 	/* One census of every comm seen, so a watch name that can never match on
 	 * this kernel is visible instead of silently reporting pid=0. */
 	if (first && dump[0]) {
@@ -628,6 +640,8 @@ static void daemon_probe_tick(struct daemon_probe *p, const char *proc_root,
 		if (len < sizeof census)
 			write_capture(out, mirror, census, len, 1);
 	}
+	if (first)
+		daemon_pidns_report(p, out, mirror);
 	for (i = 0; i < DAEMON_WATCH_COUNT; i++) {
 		char signature[48], line[256];
 		time_t now = monotonic_seconds();
@@ -649,6 +663,55 @@ static void daemon_probe_tick(struct daemon_probe *p, const char *proc_root,
 		if (len < sizeof line)
 			write_capture(out, mirror, line, len, 1);
 	}
+}
+
+/* The recorder's /proc ceiling sat at ~168 while Android allocated pids past
+ * 350. ns_last_pid separates "this view is restricted or frozen" from
+ * "Android's pids live in another namespace"; the readlinks show whether PID 1
+ * exposes one at all. Emitted once per run and again when the run ends. */
+static void daemon_pidns_report(const struct daemon_probe *p, int out, int *mirror)
+{
+	char one[64], me[64], line[320];
+	unsigned long next;
+	ssize_t n;
+	int ns_errno, fd;
+	size_t len;
+
+	n = readlink("/proc/1/ns/pid", one, sizeof one - 1);
+	if (n < 0)
+		snprintf(one, sizeof one, "errno=%d", errno);
+	else
+		one[n] = '\0';
+	n = readlink("/proc/self/ns/pid", me, sizeof me - 1);
+	if (n < 0)
+		snprintf(me, sizeof me, "errno=%d", errno);
+	else
+		me[n] = '\0';
+	fd = open("/proc/1/ns/pid", O_RDONLY | O_CLOEXEC);
+	ns_errno = fd < 0 ? errno : 0;
+	if (fd >= 0)
+		close(fd);
+	next = 0;
+	{
+		char buf[32];
+		ssize_t got;
+		int fd = open("/proc/sys/kernel/ns_last_pid",
+			      O_RDONLY | O_CLOEXEC);
+
+		if (fd >= 0) {
+			got = read(fd, buf, sizeof buf - 1);
+			close(fd);
+			if (got > 0) {
+				buf[got] = '\0';
+				next = parse_ul(buf);
+			}
+		}
+	}
+	len = (size_t)snprintf(line, sizeof line,
+		"DIAG: pidns entries=%lu highest=%lu ns_last_pid=%lu ns_pid_1=%s ns_self=%s ns_open_errno=%d\n",
+		p->entries, p->highest, next, one, me, ns_errno);
+	if (len < sizeof line)
+		write_capture(out, mirror, line, len, 1);
 }
 #endif
 
@@ -688,6 +751,12 @@ static int dump_log(int in, int out, unsigned seconds, int durable, int *mirror,
 			usleep(200000);
 		}
 	} while (monotonic_seconds() <= deadline);
+#ifdef ANDROID_CAPTURE
+	/* Last words: if Android's pids were invisible for the whole run, the
+	 * final ns_last_pid says whether the view ever moved. */
+	if (sampler)
+		daemon_pidns_report(&daemon_probe_state, out, mirror);
+#endif
 	return 0;
 }
 
@@ -927,6 +996,12 @@ static int daemon_probe_selftest(void)
 
 	assert(strstr(captured, "DIAG: procdir path=") &&
 	       strstr(captured, " entries=4 comm_errno=0\n"));
+	/* The /proc ceiling question: highest pid in the fixture must reach the
+	 * report, and every namespace field must be present even when the
+	 * kernel refuses the read. */
+	assert(strstr(captured, "DIAG: pidns entries=4 highest=103 ns_last_pid="));
+	assert(strstr(captured, " ns_pid_1=") && strstr(captured, " ns_self=") &&
+	       strstr(captured, " ns_open_errno="));
 	/* The one-shot comm census must land, or a watch name that can never match
 	 * on this kernel stays invisible. readdir order is not stable. */
 	assert(strstr(captured, "DIAG: proccomm "));
@@ -1214,13 +1289,14 @@ static void guardns_census(int log, const char *vantage)
 	time_t stop = monotonic_seconds() + 150;
 
 	while (monotonic_seconds() < stop) {
-		unsigned long entries;
+		unsigned long entries, highest;
 		char line[320];
 		size_t len;
 		int err;
 		unsigned i;
 
-		daemon_probe_collect("/proc", seen, &entries, &err, NULL, 0);
+		daemon_probe_collect("/proc", seen, &entries, &err, &highest,
+				     NULL, 0);
 		len = (size_t)snprintf(line, sizeof line,
 			"DIAG: guardns vantage=%s entries=%lu comm_errno=%d",
 			vantage, entries, err);
