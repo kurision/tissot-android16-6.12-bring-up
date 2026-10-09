@@ -71,6 +71,10 @@ required=(
     CONFIG_DRM_PANEL_OTM1911  # tissot's preferred-primary panel (downstream dsi-pref-prim-pan)
     CONFIG_SECURITY_SELINUX          # enforcing mode is proven not to block Android init
     CONFIG_SECURITY_SELINUX_BOOTPARAM # selinux=0 on the cmdline; without it the token is inert
+    CONFIG_CFG80211           # snapshot52 shipped =m and dropped WCN36XX
+    CONFIG_MAC80211           # silently: wireless must be asserted like the rest
+    CONFIG_WCN36XX            # WCN3680 WLAN (wcn36xx); deps MAC80211/HAS_DMA
+    CONFIG_QCOM_WCNSS_PIL     # pronto remoteproc; wcnss.mdt still unharvested
 )
 
 missing=()
