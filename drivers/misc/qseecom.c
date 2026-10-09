@@ -61,8 +61,9 @@ extern int ramoops_qtrace_write(u64 seq, const void *data, size_t len);
 /*
  * ACK 6.12 port compat: the legacy msm-bus/msm-bus-board, crypto/ice,
  * pfk, socinfo and qtee-shmbridge drivers do not exist on this tree.
- * Bus scaling is a no-op returning 0 (clocks are firmware-owned; see
- * qseecom.no_clock_support / qseecom.support_bus_scaling), while
+ * msm-bus bandwidth voting is a no-op returning 0; the CE clocks
+ * themselves are switched through the common clock framework when the
+ * DT omits qcom,no-clock-support, while
  * CE/ICE/key paths degrade to -ENODEV with pr_debug so that the
  * listener-register + send-cmd paths used at boot keep working.
  * SCM firmware errors from __scm_smc_call_legacy() propagate unchanged.
@@ -74,10 +75,10 @@ struct qtee_shm {
 };
 
 
-/* msm-bus bandwidth voting: firmware owns the clocks, always a no-op. */
+/* msm-bus bandwidth voting has no ACK equivalent: always a no-op. */
 static inline int __qseecom_bus_scale_noop(uint32_t mode)
 {
-	pr_debug("bus scaling request %u ignored (firmware-owned clocks)\n",
+	pr_debug("bus scaling request %u ignored (no msm-bus on ACK)\n",
 		 mode);
 	return 0;
 }
@@ -514,6 +515,7 @@ static void stall_witness_write(u64 canary, u32 quiet)
  * is written with FUA to a ring in the logdump partition (fs/pstore/ram.c),
  * so the last persisted record shows where a reset happened. Decoded by
  * porting/logging/decode-qsee-trace.py; keep the layout in sync with it.
+ * extra[1] of SMC events is qseecom.qsee.clk_access_cnt at trace time.
  */
 #define QSEE_TRACE_MAGIC	0x3143525445455351ULL	/* "QSEETRC1" */
 
@@ -791,19 +793,21 @@ static int __qseecom_scm_call2_locked(uint32_t smc_id, struct scm_desc *desc)
 
 	pr_info("qseecom: smc %08x argc %u call\n", smc_id, desc->arginfo & 0xf);
 	if (qseecom.support_bus_scaling) {
-		qsee_trace(QSEE_TRACE_SMC_SEND, smc_id, desc, 0, 0, 0, 0, 0);
+		qsee_trace(QSEE_TRACE_SMC_SEND, smc_id, desc, 0, 0,
+			   qseecom.qsee.clk_access_cnt, 0, 0);
 		ret = scm_call2(smc_id, desc);
-		qsee_trace(QSEE_TRACE_SMC_RET, smc_id, desc, ret, 0, 0, 0, 0);
+		qsee_trace(QSEE_TRACE_SMC_RET, smc_id, desc, ret, 0,
+			   qseecom.qsee.clk_access_cnt, 0, 0);
 		pr_info("qseecom: smc %08x -> %d\n", smc_id, ret);
 		return ret;
 	}
 
 	do {
 		qsee_trace(QSEE_TRACE_SMC_SEND, smc_id, desc, 0,
-			   retry_count, 0, 0, 0);
+			   retry_count, qseecom.qsee.clk_access_cnt, 0, 0);
 		ret = scm_call2_noretry(smc_id, desc);
 		qsee_trace(QSEE_TRACE_SMC_RET, smc_id, desc, ret,
-			   retry_count, 0, 0, 0);
+			   retry_count, qseecom.qsee.clk_access_cnt, 0, 0);
 		if (ret == -EBUSY) {
 			mutex_unlock(&app_access_lock);
 			msleep(QSEECOM_SCM_EBUSY_WAIT_MS);
@@ -2022,7 +2026,7 @@ static int __qseecom_set_msm_bus_request(uint32_t mode)
 	int ret = 0;
 	struct qseecom_clk *qclk;
 
-	/* Clocks are firmware-owned on ACK: scaling is a no-op. */
+	/* Only the CE clocks are switched here; the msm-bus vote is a no-op. */
 	if (qseecom.no_clock_support || !qseecom.support_bus_scaling)
 		return 0;
 
@@ -9562,6 +9566,11 @@ static int qseecom_init_clk(void)
 		qseecom.ce_drv.ce_core_src_clk = qseecom.qsee.ce_core_src_clk;
 		qseecom.ce_drv.ce_bus_clk = qseecom.qsee.ce_bus_clk;
 	}
+
+	if (!rc)
+		pr_info("qseecom: HLOS CE clocks ready core=%lu Hz\n",
+			qseecom.qsee.ce_core_clk ?
+			clk_get_rate(qseecom.qsee.ce_core_clk) : 0UL);
 
 	return rc;
 }

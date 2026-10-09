@@ -1972,7 +1972,13 @@
 			qcom,disk-encrypt-pipe-pair = <2>;
 			qcom,ce-opp-freq = <100000000>;
 			qcom,support-fde;
-			qcom,no-clock-support;
+			qcom,support-bus-scaling;
+			clocks = <&gcc CRYPTO_CLK_SRC>,
+				 <&gcc GCC_CRYPTO_CLK>,
+				 <&gcc GCC_CRYPTO_AHB_CLK>,
+				 <&gcc GCC_CRYPTO_AXI_CLK>;
+			clock-names = "core_clk_src", "core_clk",
+				      "iface_clk", "bus_clk";
 		};
 	};
 
