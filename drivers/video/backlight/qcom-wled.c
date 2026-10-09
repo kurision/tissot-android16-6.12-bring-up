@@ -332,6 +332,7 @@ static int wled_module_enable(struct wled *wled, int val)
 				disable_irq(wled->ovp_irq);
 				wled->ovp_irq_disabled = true;
 			}
+		}
 	}
 
 	return 0;
