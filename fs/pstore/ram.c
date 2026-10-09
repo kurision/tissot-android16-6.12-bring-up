@@ -646,6 +646,13 @@ static int ramoops_snap_open_logdump(struct ramoops_snapper *s)
 	dev_t found = 0;
 	int err;
 
+	/*
+	 * block_class registers at subsys_initcall, after this probe path:
+	 * walking it earlier WARNs in class_for_each_device. Retry later.
+	 */
+	if (!class_is_registered(&block_class))
+		return -ENODEV;
+
 	class_for_each_device(&block_class, NULL, &found,
 			      ramoops_snap_find_logdump);
 	if (!found)
@@ -815,6 +822,9 @@ static int ramoops_witness_open(void)
 
 	if (ramoops_witness_bdev)
 		return 0;
+	/* Same init-order guard as ramoops_snap_open_logdump above. */
+	if (!class_is_registered(&block_class))
+		return -ENODEV;
 	class_for_each_device(&block_class, NULL, &found,
 			      ramoops_snap_find_logdump);
 	if (!found)
