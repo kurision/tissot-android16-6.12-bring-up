@@ -72,9 +72,9 @@ MODULE_AUTHOR("Urs Thuermann <urs.thuermann@volkswagen.de>, "
 
 MODULE_ALIAS_NETPROTO(PF_CAN);
 
-static int stats_timer __read_mostly = 1;
+static int stats_timer __read_mostly;
 module_param(stats_timer, int, 0444);
-MODULE_PARM_DESC(stats_timer, "enable timer for statistics (default:on)");
+MODULE_PARM_DESC(stats_timer, "enable timer for statistics (default:off)");
 
 static struct kmem_cache *rcv_cache __read_mostly;
 
