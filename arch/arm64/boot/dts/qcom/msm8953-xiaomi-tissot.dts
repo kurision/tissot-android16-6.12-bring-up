@@ -439,6 +439,21 @@
 
 &lpass {
 	status = "okay";
+
+	smd-edge {
+		/*
+		 * FastRPC compute channel (mirrors msm8996.dtsi): label
+		 * must match the ADSP domain; no cb children (no LPASS
+		 * SMMU on 8953). Creates /dev/adsprpc-smdX once ADSP
+		 * announces the channel.
+		 */
+		fastrpc {
+			compatible = "qcom,fastrpc";
+			qcom,smd-channels = "fastrpcsmd-apps-dsp";
+			label = "adsp";
+			qcom,non-secure-domain;
+		};
+	};
 };
 
 &gpu {
@@ -446,8 +461,8 @@
 };
 
 /* WCN3680 (stock live DT iris compatible); supplies from the live DT:
- * vddxo=l7, vddrfa=l19, vddpa=l9, vdddig=l5. wcnss.mdt/.bXX not yet
- * harvested (modem partition) — pronto fails fast until staged. */
+ * vddxo=l7, vddrfa=l19, vddpa=l9, vdddig=l5. Blobs from the
+ * modem-partition harvest (adsp.*+wcnss.*) plus vendor wlan/prima/. */
 &wcnss {
 	status = "okay";
 };

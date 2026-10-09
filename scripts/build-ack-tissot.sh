@@ -74,7 +74,8 @@ required=(
     CONFIG_CFG80211           # snapshot52 shipped =m and dropped WCN36XX
     CONFIG_MAC80211           # silently: wireless must be asserted like the rest
     CONFIG_WCN36XX            # WCN3680 WLAN (wcn36xx); deps MAC80211/HAS_DMA
-    CONFIG_QCOM_WCNSS_PIL     # pronto remoteproc; wcnss.mdt still unharvested
+    CONFIG_QCOM_WCNSS_PIL     # pronto remoteproc; blobs from modem harvest
+    CONFIG_QCOM_SYSMON        # SSR crash detection; silent FW deaths visible
 )
 
 missing=()
