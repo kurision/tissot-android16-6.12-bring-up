@@ -15,10 +15,10 @@ Last update: 2026-10-09 (snapshot53 run1).
 
 | Component | Symptom (evidence) | Status | Next action |
 |---|---|---|---|
-| ADSP `qcom_q6v5_pas` probe | `Direct firmware load for adsp.mdt failed -2` (every run) | FIXING | s54: modem mounted t≈66 s yet `adsp.mdt never appeared` through 263 s — symlink or perms, not timing. v2 harvester (startup line + last-errno + `/sdlog` mirror) pushed; needs rebuild + boot |
+| ADSP `qcom_q6v5_pas` probe | Boots from staged ramdisk (s55-run2: `now up` + APR live) but no `adsprpc-smd` channels; adsprpcd loops on missing `/dev` | FIXING | fastrpc DT channel node (`label adsp`) pushed; needs rebuild + boot. `QCOM_SYSMON` added for crash visibility |
 | Touchscreen `edt-ft5406` probe | `-110` at 300/500 ms (s50/s52); re-toggle + 500 ms succeeds (s51); bounded retry probes clean s53+s54 (`input2`, no failure) | CLOSED | Retry-with-toggle fix verified twice; keep in tree |
 | `pclk0 update_config` WARN | `clk-rcg2.c:133` ×8 in s48/s52, ×0 in s49/s50/s51 — flickers run to run | WATCH | Parked with display; re-examine if it ever goes persistent |
-| WLAN `wcn36xx` + pronto PIL | Driver present s53 (`remoteproc1`, `wcnss.mdt -2` fast fail, no stall); stock `wcnss-service` starts, exits 255 without fw | FIXING | Same harvest boot as ADSP; `wlan/prima/nv.bin` denied to shell — NV still open after modem side lands |
+| WLAN `wcn36xx` + pronto PIL | Pronto boots, NV acked, `WCNSS Version 1.5 1.2`, but cold boot never completes (5 s timeout); zero crash evidence without sysmon; wcn36xx silent (channel absent) | FIXING | Sysmon + harvest staged; needs rebuild + boot to see crash-or-CBC |
 | QSEE listener registration | SMC `0x32000206` `ret=-5` ×8/boot; 8 siblings succeed same path | CLOSED | TZ refuses those IDs; tolerated; no kernel fix applies |
 | `mdp5 INTF1_UNDER_RUN` | Single `errors: 04000000` at first modeset, panel healthy after | CLOSED | Benign bringup transient |
 | Coldboot time | 34.3 / 11.1 / 13.7 / 13.7 / 12.6 s vs stock 2.8 s (s50–s54) | WATCH | Stable ~12–14 s band; s50 34 s the outlier. Bisect if a run exceeds ~25 s |
