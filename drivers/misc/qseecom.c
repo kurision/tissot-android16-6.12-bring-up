@@ -63,7 +63,7 @@ extern int ramoops_witness_read(void *data, size_t len);
  * qseecom.no_clock_support / qseecom.support_bus_scaling), while
  * CE/ICE/key paths degrade to -ENODEV with pr_debug so that the
  * listener-register + send-cmd paths used at boot keep working.
- * SCM firmware errors from __scm_smc_call() propagate unchanged.
+ * SCM firmware errors from __scm_smc_call_legacy() propagate unchanged.
  */
 struct qtee_shm {
 	void *vaddr;
@@ -101,10 +101,14 @@ static inline void msm_bus_scale_unregister_client(uint32_t client)
 }
 
 
-/* arm64 has no dmac_flush_range(); TZ buffers here are DMA-coherent. */
+/*
+ * arm64 has no dmac_flush_range(). Match the donor's __dma_flush_area():
+ * clean AND invalidate, because callers also use it after TZ has written
+ * a buffer, where a clean alone could leave stale lines visible to the CPU.
+ */
 static inline void dmac_flush_range(const void *start, const void *end)
 {
-	dcache_clean_poc((unsigned long)start, (unsigned long)end);
+	dcache_clean_inval_poc((unsigned long)start, (unsigned long)end);
 }
 
 #define PERM_READ	0x4
@@ -542,7 +546,11 @@ static int qseecom_stall_watchdog_fn(void *unused)
 	return 0;
 }
 
-/* TZ shared-buffer allocation backed by DMA-coherent memory. */
+/*
+ * TZ shared-buffer allocation backed by DMA-coherent memory. On this
+ * non-coherent arm64 device shm->vaddr is a remapped (vmalloc-range)
+ * address, so virt_to_phys() on it is invalid: hand TZ shm->paddr.
+ */
 static inline int qtee_shmbridge_allocate_shm(size_t size, struct qtee_shm *shm)
 {
 	size_t aligned = PAGE_ALIGN(size);
@@ -1513,7 +1521,7 @@ static int qseecom_dmabuf_map(int ion_fd, struct sg_table **sgt,
 		goto err_put;
 	}
 
-	new_sgt = dma_buf_map_attachment(new_attach, DMA_BIDIRECTIONAL);
+	new_sgt = dma_buf_map_attachment_unlocked(new_attach, DMA_BIDIRECTIONAL);
 	if (IS_ERR_OR_NULL(new_sgt)) {
 		ret = PTR_ERR(new_sgt);
 		pr_err("dma_buf_map_attachment for ion_fd %d failed ret = %d\n",
@@ -1532,7 +1540,7 @@ static int qseecom_dmabuf_map(int ion_fd, struct sg_table **sgt,
 	return ret;
 
 err_unmap_attachment:
-	dma_buf_unmap_attachment(new_attach, new_sgt, DMA_BIDIRECTIONAL);
+	dma_buf_unmap_attachment_unlocked(new_attach, new_sgt, DMA_BIDIRECTIONAL);
 err_detach:
 	dma_buf_detach(new_dma_buf, new_attach);
 err_put:
@@ -1545,7 +1553,7 @@ static void qseecom_dmabuf_unmap(struct sg_table *sgt,
 			struct dma_buf_attachment *attach,
 			struct dma_buf *dmabuf)
 {
-	dma_buf_unmap_attachment(attach, sgt, DMA_BIDIRECTIONAL);
+	dma_buf_unmap_attachment_unlocked(attach, sgt, DMA_BIDIRECTIONAL);
 	dma_buf_detach(dmabuf, attach);
 	dma_buf_put(dmabuf);
 }
@@ -1575,7 +1583,7 @@ static int qseecom_vaddr_map(int ion_fd,
 	*sb_length = new_sgt->sgl->length;
 
 	dma_buf_begin_cpu_access(new_dma_buf, DMA_BIDIRECTIONAL);
-	ret = dma_buf_vmap(new_dma_buf, &map);
+	ret = dma_buf_vmap_unlocked(new_dma_buf, &map);
 	if (ret) {
 		pr_err("dma_buf_kmap failed\n");
 		goto err_unmap;
@@ -1600,7 +1608,7 @@ static void qseecom_vaddr_unmap(void *vaddr, struct sg_table *sgt,
 		struct dma_buf *dmabuf)
 {
 	struct iosys_map map = IOSYS_MAP_INIT_VADDR(vaddr);
-	dma_buf_vunmap(dmabuf, &map);
+	dma_buf_vunmap_unlocked(dmabuf, &map);
 	dma_buf_end_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 	qseecom_dmabuf_unmap(sgt, attach, dmabuf);
 }
@@ -2281,6 +2289,7 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 	void *cmd_buf = NULL;
 	size_t cmd_len;
 	struct sglist_info *table = NULL;
+	phys_addr_t table_pa = 0;
 
 	qseecom.app_block_ref_cnt++;
 	while (resp->result == QSEOS_RESULT_INCOMPLETE) {
@@ -2391,13 +2400,13 @@ err_resp:
 		if (ptr_svc) {
 			ptr_svc->send_resp_flag = 0;
 			table = ptr_svc->sglistinfo_ptr;
+			table_pa = ptr_svc->sglistinfo_shm.paddr;
 		}
 		if (qseecom.qsee_version < QSEE_VERSION_40) {
 			send_data_rsp.listener_id  = lstnr;
 			send_data_rsp.status = status;
 			if (table) {
-				send_data_rsp.sglistinfo_ptr =
-					(uint32_t)virt_to_phys(table);
+				send_data_rsp.sglistinfo_ptr = (uint32_t)table_pa;
 				send_data_rsp.sglistinfo_len =
 					SGLISTINFO_TABLE_SIZE;
 				dmac_flush_range((void *)table,
@@ -2409,8 +2418,7 @@ err_resp:
 			send_data_rsp_64bit.listener_id  = lstnr;
 			send_data_rsp_64bit.status = status;
 			if (table) {
-				send_data_rsp_64bit.sglistinfo_ptr =
-					virt_to_phys(table);
+				send_data_rsp_64bit.sglistinfo_ptr = table_pa;
 				send_data_rsp_64bit.sglistinfo_len =
 					SGLISTINFO_TABLE_SIZE;
 				dmac_flush_range((void *)table,
@@ -2424,6 +2432,8 @@ err_resp:
 		else
 			*(uint32_t *)cmd_buf =
 				QSEOS_LISTENER_DATA_RSP_COMMAND_WHITELIST;
+		pr_info("qseecom: listener %u response status %u cmd %#x sglistinfo %pa\n",
+			lstnr, status, *(uint32_t *)cmd_buf, &table_pa);
 
 		if ((lstnr == RPMB_SERVICE) || (lstnr == SSD_SERVICE)) {
 			ret = __qseecom_enable_clk(CLK_QSEE);
@@ -2630,6 +2640,7 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 	void *cmd_buf = NULL;
 	size_t cmd_len;
 	struct sglist_info *table = NULL;
+	phys_addr_t table_pa = 0;
 
 	while (ret == 0 && resp->result == QSEOS_RESULT_INCOMPLETE) {
 		lstnr = resp->data;
@@ -2730,14 +2741,15 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 			status  = QSEOS_RESULT_SUCCESS;
 		}
 err_resp:
-		if (ptr_svc)
+		if (ptr_svc) {
 			table = ptr_svc->sglistinfo_ptr;
+			table_pa = ptr_svc->sglistinfo_shm.paddr;
+		}
 		if (qseecom.qsee_version < QSEE_VERSION_40) {
 			send_data_rsp.listener_id  = lstnr;
 			send_data_rsp.status = status;
 			if (table) {
-				send_data_rsp.sglistinfo_ptr =
-					(uint32_t)virt_to_phys(table);
+				send_data_rsp.sglistinfo_ptr = (uint32_t)table_pa;
 				send_data_rsp.sglistinfo_len =
 						SGLISTINFO_TABLE_SIZE;
 				dmac_flush_range((void *)table,
@@ -2749,8 +2761,7 @@ err_resp:
 			send_data_rsp_64bit.listener_id  = lstnr;
 			send_data_rsp_64bit.status = status;
 			if (table) {
-				send_data_rsp_64bit.sglistinfo_ptr =
-					virt_to_phys(table);
+				send_data_rsp_64bit.sglistinfo_ptr = table_pa;
 				send_data_rsp_64bit.sglistinfo_len =
 					SGLISTINFO_TABLE_SIZE;
 				dmac_flush_range((void *)table,
@@ -2764,6 +2775,8 @@ err_resp:
 		else
 			*(uint32_t *)cmd_buf =
 				QSEOS_LISTENER_DATA_RSP_COMMAND_WHITELIST;
+		pr_info("qseecom: listener %u response status %u cmd %#x sglistinfo %pa\n",
+			lstnr, status, *(uint32_t *)cmd_buf, &table_pa);
 
 		if (lstnr == RPMB_SERVICE) {
 			ret = __qseecom_enable_clk(CLK_QSEE);
@@ -7472,7 +7485,7 @@ static int __qseecom_qteec_issue_cmd(struct qseecom_dev_handle *data,
 		ireq.resp_ptr = (uint32_t)__qseecom_uvirt_to_kphys(data,
 						(uintptr_t)resp_ptr);
 		ireq.resp_len = req->resp_len;
-		ireq.sglistinfo_ptr = (uint32_t)virt_to_phys(table);
+		ireq.sglistinfo_ptr = (uint32_t)data->sglistinfo_shm.paddr;
 		ireq.sglistinfo_len = SGLISTINFO_TABLE_SIZE;
 		dmac_flush_range((void *)table,
 				(void *)table + SGLISTINFO_TABLE_SIZE);
@@ -7498,7 +7511,7 @@ static int __qseecom_qteec_issue_cmd(struct qseecom_dev_handle *data,
 				ireq_64bit.resp_ptr, ireq_64bit.resp_len);
 			return -EFAULT;
 		}
-		ireq_64bit.sglistinfo_ptr = (uint64_t)virt_to_phys(table);
+		ireq_64bit.sglistinfo_ptr = (uint64_t)data->sglistinfo_shm.paddr;
 		ireq_64bit.sglistinfo_len = SGLISTINFO_TABLE_SIZE;
 		dmac_flush_range((void *)table,
 				(void *)table + SGLISTINFO_TABLE_SIZE);
@@ -7681,7 +7694,7 @@ static int qseecom_qteec_invoke_modfd_cmd(struct qseecom_dev_handle *data,
 		ireq.resp_len = req.resp_len;
 		cmd_buf = (void *)&ireq;
 		cmd_len = sizeof(struct qseecom_qteec_ireq);
-		ireq.sglistinfo_ptr = (uint32_t)virt_to_phys(table);
+		ireq.sglistinfo_ptr = (uint32_t)data->sglistinfo_shm.paddr;
 		ireq.sglistinfo_len = SGLISTINFO_TABLE_SIZE;
 		dmac_flush_range((void *)table,
 				(void *)table + SGLISTINFO_TABLE_SIZE);
@@ -7695,7 +7708,7 @@ static int qseecom_qteec_invoke_modfd_cmd(struct qseecom_dev_handle *data,
 		ireq_64bit.resp_len = req.resp_len;
 		cmd_buf = (void *)&ireq_64bit;
 		cmd_len = sizeof(struct qseecom_qteec_64bit_ireq);
-		ireq_64bit.sglistinfo_ptr = (uint64_t)virt_to_phys(table);
+		ireq_64bit.sglistinfo_ptr = (uint64_t)data->sglistinfo_shm.paddr;
 		ireq_64bit.sglistinfo_len = SGLISTINFO_TABLE_SIZE;
 		dmac_flush_range((void *)table,
 				(void *)table + SGLISTINFO_TABLE_SIZE);

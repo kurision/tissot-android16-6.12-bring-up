@@ -6,9 +6,11 @@
  * The legacy tree provided struct scm_desc + scm_call2() backed by its
  * own smc driver, with results returned via desc->ret[]. On ACK 6.12 the
  * transport is drivers/firmware/qcom/qcom_scm + qcom_tzmem: a call is
- * described by struct qcom_scm_desc and issued with __scm_smc_call(),
- * which returns the remapped SCM errno directly and delivers response
- * words via struct qcom_scm_res.
+ * described by struct qcom_scm_desc and issued with
+ * __scm_smc_call_legacy(), which keeps the donor scm.c semantics this
+ * firmware expects (carveout spill, resume with the returned x0..x6,
+ * negative-x0-only errors, no WAITQ), returns the remapped SCM errno and
+ * delivers response words via struct qcom_scm_res.
  *
  * Legacy smc_id encoding (SCM_SIP_FNID/SCM_SMC_FNID) carries the owner in
  * bits [29:24] (0x02000000 == ARM_SMCCC_OWNER_SIP), the service in
@@ -19,9 +21,9 @@
  * QCOM_SCM_ARGS layout for the argument counts used here, so arginfo is
  * passed through verbatim.
  *
- * struct qcom_scm_desc / struct qcom_scm_res / enum qcom_scm_convention
- * mirror drivers/firmware/qcom/qcom_scm.h (internal to the firmware
- * driver, not installed under include/); kept in sync by inspection.
+ * struct qcom_scm_desc / struct qcom_scm_res mirror
+ * drivers/firmware/qcom/qcom_scm.h (internal to the firmware driver, not
+ * installed under include/); kept in sync by inspection.
  */
 
 #ifndef __SOC_QCOM_SCM_H
@@ -85,15 +87,6 @@ enum scm_arg_types {
 #define MAX_QCOM_SCM_ARGS 10
 #define MAX_QCOM_SCM_RETS 3
 
-enum qcom_scm_convention {
-	SMC_CONVENTION_UNKNOWN,
-	SMC_CONVENTION_LEGACY,
-	SMC_CONVENTION_ARM_32,
-	SMC_CONVENTION_ARM_64,
-};
-
-extern enum qcom_scm_convention qcom_scm_convention;
-
 struct qcom_scm_desc {
 	u32 svc;
 	u32 cmd;
@@ -106,18 +99,12 @@ struct qcom_scm_res {
 	u64 result[MAX_QCOM_SCM_RETS];
 };
 
-int __scm_smc_call(struct device *dev, const struct qcom_scm_desc *desc,
-		   enum qcom_scm_convention con, struct qcom_scm_res *res,
-		   bool atomic);
-
-#define scm_smc_call(dev, desc, res, atomic) \
-	__scm_smc_call((dev), (desc), qcom_scm_convention, (res), (atomic))
-
 /*
  * struct qcom_scm_spill_mem - carveout allocator for >4-arg SMC spill
  * Mirrors drivers/firmware/qcom/qcom_scm.h (kept in sync by inspection):
  * legacy TrustZone without shmbridge cannot read the default tzmem spill
- * buffer, so qseecom registers a carveout-backed pair at probe.
+ * buffer, so qseecom registers a carveout-backed pair at probe. It backs
+ * only __scm_smc_call_legacy() calls.
  */
 struct qcom_scm_spill_mem {
 	void *(*alloc)(size_t len, dma_addr_t *phys, gfp_t flags);
@@ -125,6 +112,9 @@ struct qcom_scm_spill_mem {
 };
 
 void qcom_scm_set_spill_mem(const struct qcom_scm_spill_mem *mem);
+
+int __scm_smc_call_legacy(const struct qcom_scm_desc *desc,
+			  struct qcom_scm_res *res, bool atomic);
 
 /**
  * struct scm_desc - legacy secure-world call descriptor
@@ -158,8 +148,7 @@ static inline int scm_call2_noretry(u32 smc_id, struct scm_desc *desc)
 			desc->arginfo, desc->args[0], desc->args[1],
 			desc->args[2], desc->args[3]);
 
-	/* NULL dev matches the firmware driver's own early-probe path. */
-	ret = scm_smc_call(NULL, &mdesc, &res, false);
+	ret = __scm_smc_call_legacy(&mdesc, &res, false);
 
 	desc->ret[0] = res.result[0];
 	desc->ret[1] = res.result[1];
@@ -195,7 +184,7 @@ static inline int scm_call2_atomic(u32 smc_id, struct scm_desc *desc)
 	for (i = 0; i < MAX_SCM_ARGS; i++)
 		mdesc.args[i] = desc->args[i];
 
-	ret = scm_smc_call(NULL, &mdesc, &res, true);
+	ret = __scm_smc_call_legacy(&mdesc, &res, true);
 
 	desc->ret[0] = res.result[0];
 	desc->ret[1] = res.result[1];

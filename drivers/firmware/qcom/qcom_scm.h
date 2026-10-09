@@ -75,6 +75,8 @@ int __scm_smc_call(struct device *dev, const struct qcom_scm_desc *desc,
 		   struct qcom_scm_res *res, bool atomic);
 #define scm_smc_call(dev, desc, res, atomic) \
 	__scm_smc_call((dev), (desc), qcom_scm_convention, (res), (atomic))
+int __scm_smc_call_legacy(const struct qcom_scm_desc *desc,
+			  struct qcom_scm_res *res, bool atomic);
 
 #define SCM_LEGACY_FNID(s, c)	(((s) << 10) | ((c) & 0x3ff))
 int scm_legacy_call_atomic(struct device *dev, const struct qcom_scm_desc *desc,
@@ -90,8 +92,9 @@ struct qcom_tzmem_pool *qcom_scm_get_tzmem_pool(void);
  * @free:	release a buffer from @alloc
  *
  * Legacy TrustZone without shmbridge cannot read the default tzmem spill
- * buffer. qseecom registers a carveout-backed pair at probe; NULL (default)
- * keeps native tzmem behavior for all other clients.
+ * buffer. qseecom registers a carveout-backed pair at probe; it backs only
+ * __scm_smc_call_legacy() calls. NULL (default) and all other callers keep
+ * native tzmem behavior.
  */
 struct qcom_scm_spill_mem {
 	void *(*alloc)(size_t len, dma_addr_t *phys, gfp_t flags);

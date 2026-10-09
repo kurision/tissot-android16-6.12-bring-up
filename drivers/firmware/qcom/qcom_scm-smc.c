@@ -42,8 +42,9 @@ static DEFINE_MUTEX(qcom_scm_lock);
 /*
  * Legacy Qualcomm TrustZone (MSM8953-era) has no shmbridge, so it cannot be
  * granted the tzmem spill buffer used for >4-arg SMCs. qseecom registers a
- * carveout-backed allocator at probe; all other clients keep tzmem.
- * NULL (default) preserves native behavior exactly.
+ * carveout-backed allocator at probe. It is used only by legacy calls
+ * (__scm_smc_call_legacy(), i.e. the <soc/qcom/scm.h> shim); every other
+ * client keeps tzmem. NULL (default) preserves native behavior exactly.
  */
 static const struct qcom_scm_spill_mem *spill_mem_override;
 
@@ -53,30 +54,31 @@ void qcom_scm_set_spill_mem(const struct qcom_scm_spill_mem *mem)
 }
 EXPORT_SYMBOL_GPL(qcom_scm_set_spill_mem);
 
-/* Bound the snapshot43 post-SMC register capture. Three attempts is the
- * first return plus the first two resume attempts; enough to compare the
- * returned register set against what we feed back, without spamming.
- */
+static void __scm_smc_do_quirk(const struct arm_smccc_args *smc,
+			       struct arm_smccc_res *res)
+{
+	unsigned long a0 = smc->args[0];
+	struct arm_smccc_quirk quirk = { .id = ARM_SMCCC_QUIRK_QCOM_A6 };
+
+	quirk.state.a6 = 0;
+
+	do {
+		arm_smccc_smc_quirk(a0, smc->args[1], smc->args[2],
+				    smc->args[3], smc->args[4], smc->args[5],
+				    quirk.state.a6, smc->args[7], res, &quirk);
+
+		if (res->a0 == QCOM_SCM_INTERRUPTED)
+			a0 = res->a0;
+
+	} while (res->a0 == QCOM_SCM_INTERRUPTED);
+}
+
+#ifdef CONFIG_ARM64
+/* Log the full returned register set for the first attempts of a traced call. */
 #define SCM_SMC_INT_CAPTURE_ATTEMPTS	3
 
-/*
- * snapshot43: capture the complete SMC result register set (x0..x7).
- *
- * arm_smccc_smc() retains only x0..x3 (plus x6 for the QCOM quirk; see
- * arch/arm64/kernel/smccc-call.S), so what the firmware returns in x4/x5/x7
- * on an interrupted call is otherwise invisible to this driver. The donor
- * kernel (drivers/soc/qcom/scm.c __scm_call_armv8_64) declares x0..x6 as
- * in-out operands of its SMC asm, i.e. it feeds the *returned* x0..x6 back
- * into the resume call; this driver keeps the original x1..x5 and only
- * follows a0 and the quirk's a6. x4/x5 are therefore where the two resume
- * semantics can diverge, and they have never been observed.
- *
- * Inputs here are identical to what the resume call in the loop would have
- * issued (a0, x1..x5 unchanged, x6 = quirk a6, x7 unchanged), so this only
- * widens what we can see - the resume inputs themselves are not altered.
- */
-#ifdef CONFIG_ARM64
-static void scm_capture_result_regs(const unsigned long *in, unsigned long *out)
+/* One SMC with x0..x7 as inputs and x0..x7 as outputs. */
+static void scm_smc_full_regs(const unsigned long *in, unsigned long *out)
 {
 	register unsigned long x0 asm("x0") = in[0];
 	register unsigned long x1 asm("x1") = in[1];
@@ -98,76 +100,72 @@ static void scm_capture_result_regs(const unsigned long *in, unsigned long *out)
 	out[0] = x0; out[1] = x1; out[2] = x2; out[3] = x3;
 	out[4] = x4; out[5] = x5; out[6] = x6; out[7] = x7;
 }
-#endif
 
-static void __scm_smc_do_quirk(const struct arm_smccc_args *smc,
-			       struct arm_smccc_res *res, bool trace_send)
+/*
+ * Legacy QSEE call loop, matching the donor msm-4.19 __scm_call_armv8_64():
+ * x6 starts at 0 and, while the firmware returns INTERRUPTED, the call is
+ * re-issued with the *returned* x0..x6 as inputs. The upstream quirk loop
+ * instead re-sends the original x1..x5 and only follows x0/x6.
+ */
+static void __scm_smc_do_legacy(const struct arm_smccc_args *smc,
+				struct arm_smccc_res *res, bool trace_send)
 {
-	unsigned long a0 = smc->args[0];
-	unsigned int attempts = 0;
-	struct arm_smccc_quirk quirk = { .id = ARM_SMCCC_QUIRK_QCOM_A6 };
 	static DEFINE_RATELIMIT_STATE(scm_pre_rs, HZ, 8);
+	unsigned long in[8], out[8];
+	unsigned int attempts = 0;
+	int i;
 
-	quirk.state.a6 = 0;
+	for (i = 0; i < 8; i++)
+		in[i] = smc->args[i];
+	in[6] = 0;
 
-	do {
-		if (trace_send && __ratelimit(&scm_pre_rs))
-			pr_info("snapshot35 scm_pre pid=%d a0=0x%lx a1=0x%lx a2=0x%lx a3=0x%lx a4=0x%lx a5=0x%lx a6=0x%lx a7=0x%lx\n",
-				current->pid, a0, smc->args[1], smc->args[2],
-				smc->args[3], smc->args[4], smc->args[5],
-				quirk.state.a6, smc->args[7]);
+	for (;;) {
 		attempts++;
 		if (trace_send && attempts == 1)
 			pr_info("snapshot43 scm_raw_enter pid=%d fn=0x%lx\n",
 				current->pid, smc->args[0]);
+		if (trace_send && __ratelimit(&scm_pre_rs))
+			pr_info("snapshot35 scm_pre pid=%d a0=0x%lx a1=0x%lx a2=0x%lx a3=0x%lx a4=0x%lx a5=0x%lx a6=0x%lx a7=0x%lx\n",
+				current->pid, in[0], in[1], in[2], in[3],
+				in[4], in[5], in[6], in[7]);
 
-#ifdef CONFIG_ARM64
-		if (trace_send && attempts <= SCM_SMC_INT_CAPTURE_ATTEMPTS) {
-			unsigned long in[8], out[8];
+		scm_smc_full_regs(in, out);
 
-			in[0] = a0;
-			in[1] = smc->args[1];
-			in[2] = smc->args[2];
-			in[3] = smc->args[3];
-			in[4] = smc->args[4];
-			in[5] = smc->args[5];
-			in[6] = quirk.state.a6;
-			in[7] = smc->args[7];
-			scm_capture_result_regs(in, out);
-
+		if (trace_send && attempts <= SCM_SMC_INT_CAPTURE_ATTEMPTS)
 			pr_info("snapshot43 scm_regs pid=%d fn=0x%lx attempt=%u x0=0x%lx x1=0x%lx x2=0x%lx x3=0x%lx x4=0x%lx x5=0x%lx x6=0x%lx x7=0x%lx\n",
 				current->pid, smc->args[0], attempts,
 				out[0], out[1], out[2], out[3],
 				out[4], out[5], out[6], out[7]);
 
-			res->a0 = out[0];
-			res->a1 = out[1];
-			res->a2 = out[2];
-			res->a3 = out[3];
-			/* Keep the quirk state exactly where the standard
-			 * smccc-call.S quirk path would have left it.
-			 */
-			quirk.state.a6 = out[6];
-		} else
-#endif
-		{
-			arm_smccc_smc_quirk(a0, smc->args[1], smc->args[2],
-					    smc->args[3], smc->args[4], smc->args[5],
-					    quirk.state.a6, smc->args[7], res, &quirk);
-		}
+		if (out[0] != QCOM_SCM_INTERRUPTED)
+			break;
 
-		if (trace_send && attempts == 1)
-			pr_info("snapshot43 scm_raw_first_ret pid=%d fn=0x%lx a0=0x%lx a1=0x%lx a2=0x%lx a3=0x%lx\n",
-				current->pid, smc->args[0], res->a0,
-				res->a1, res->a2, res->a3);
+		for (i = 0; i < 7; i++)
+			in[i] = out[i];
+	}
 
-		if (res->a0 == QCOM_SCM_INTERRUPTED)
-			a0 = res->a0;
-
-	} while (res->a0 == QCOM_SCM_INTERRUPTED);
+	res->a0 = out[0];
+	res->a1 = out[1];
+	res->a2 = out[2];
+	res->a3 = out[3];
 	if (trace_send)
 		pr_info("snapshot43 scm_raw_done pid=%d fn=0x%lx attempts=%u a0=0x%lx\n",
 			current->pid, smc->args[0], attempts, res->a0);
+}
+#endif
+
+/* One complete firmware call, resuming INTERRUPTED returns internally. */
+static void __scm_smc_do_resumable(const struct arm_smccc_args *smc,
+				   struct arm_smccc_res *res, bool legacy,
+				   bool trace_send)
+{
+#ifdef CONFIG_ARM64
+	if (legacy) {
+		__scm_smc_do_legacy(smc, res, trace_send);
+		return;
+	}
+#endif
+	__scm_smc_do_quirk(smc, res);
 }
 
 static void fill_wq_resume_args(struct arm_smccc_args *resume, u32 smc_call_ctx)
@@ -194,7 +192,7 @@ int scm_get_wq_ctx(u32 *wq_ctx, u32 *flags, u32 *more_pending)
 				SCM_SMC_FNID(QCOM_SCM_SVC_WAITQ, QCOM_SCM_WAITQ_GET_WQ_CTX));
 
 	/* Guaranteed to return only success or error, no WAITQ_* */
-	__scm_smc_do_quirk(&get_wq_ctx, &get_wq_res, false);
+	__scm_smc_do_quirk(&get_wq_ctx, &get_wq_res);
 	ret = get_wq_res.a0;
 	if (ret)
 		return ret;
@@ -207,30 +205,21 @@ int scm_get_wq_ctx(u32 *wq_ctx, u32 *flags, u32 *more_pending)
 }
 
 static int __scm_smc_do_quirk_handle_waitq(struct device *dev, struct arm_smccc_args *waitq,
-					   struct arm_smccc_res *res, bool trace_send)
+					   struct arm_smccc_res *res)
 {
 	int ret;
 	u32 wq_ctx, smc_call_ctx;
 	struct arm_smccc_args resume;
 	struct arm_smccc_args *smc = waitq;
-	static DEFINE_RATELIMIT_STATE(scm_waitq_rs, HZ, 2);
-	bool log_wait;
 
 	do {
-		__scm_smc_do_quirk(smc, res, trace_send);
+		__scm_smc_do_quirk(smc, res);
 
 		if (res->a0 == QCOM_SCM_WAITQ_SLEEP) {
 			wq_ctx = res->a1;
 			smc_call_ctx = res->a2;
-			log_wait = trace_send && __ratelimit(&scm_waitq_rs);
-			if (log_wait)
-				pr_info("snapshot35 scm_waitq sleep pid=%d wq_ctx=%u call_ctx=%u\n",
-					current->pid, wq_ctx, smc_call_ctx);
 
 			ret = qcom_scm_wait_for_wq_completion(wq_ctx);
-			if (log_wait)
-				pr_info("snapshot35 scm_waitq resume pid=%d wq_ctx=%u call_ctx=%u ret=%d\n",
-					current->pid, wq_ctx, smc_call_ctx, ret);
 			if (ret)
 				return ret;
 
@@ -242,13 +231,20 @@ static int __scm_smc_do_quirk_handle_waitq(struct device *dev, struct arm_smccc_
 	return 0;
 }
 
+/*
+ * Legacy calls skip the WAITQ protocol: MSM8953-era QSEE predates it, and
+ * the donor treats every non-negative x0 other than INTERRUPTED as a
+ * finished call. Waiting on the WAITQ completion here would block forever
+ * with qcom_scm_lock held, because this firmware never signals it.
+ */
 static int __scm_smc_do(struct device *dev, struct arm_smccc_args *smc,
-			struct arm_smccc_res *res, bool atomic, bool trace_send)
+			struct arm_smccc_res *res, bool atomic, bool legacy,
+			bool trace_send)
 {
 	int ret, retry_count = 0;
 
 	if (atomic) {
-		__scm_smc_do_quirk(smc, res, trace_send);
+		__scm_smc_do_resumable(smc, res, legacy, trace_send);
 		return 0;
 	}
 
@@ -261,7 +257,12 @@ static int __scm_smc_do(struct device *dev, struct arm_smccc_args *smc,
 			pr_info("snapshot43 scm_lock_acquired pid=%d fn=0x%lx\n",
 				current->pid, smc->args[0]);
 
-		ret = __scm_smc_do_quirk_handle_waitq(dev, smc, res, trace_send);
+		if (legacy) {
+			__scm_smc_do_resumable(smc, res, true, trace_send);
+			ret = 0;
+		} else {
+			ret = __scm_smc_do_quirk_handle_waitq(dev, smc, res);
+		}
 
 		mutex_unlock(&qcom_scm_lock);
 
@@ -278,10 +279,11 @@ static int __scm_smc_do(struct device *dev, struct arm_smccc_args *smc,
 	return 0;
 }
 
-
-int __scm_smc_call(struct device *dev, const struct qcom_scm_desc *desc,
-		   enum qcom_scm_convention qcom_convention,
-		   struct qcom_scm_res *res, bool atomic)
+static int __scm_smc_call_common(struct device *dev,
+				 const struct qcom_scm_desc *desc,
+				 enum qcom_scm_convention qcom_convention,
+				 struct qcom_scm_res *res, bool atomic,
+				 bool legacy)
 {
 	struct qcom_tzmem_pool *mempool = qcom_scm_get_tzmem_pool();
 	int arglen = desc->arginfo & 0xf;
@@ -296,7 +298,7 @@ int __scm_smc_call(struct device *dev, const struct qcom_scm_desc *desc,
 	struct arm_smccc_res smc_res;
 	struct arm_smccc_args smc = {0};
 	/* Trace app transactions only; owner-50 listener calls have shim markers. */
-	bool trace_send = desc->owner == 48 && desc->svc == 0;
+	bool trace_send = legacy && desc->owner == 48 && desc->svc == 0;
 
 	smc.args[0] = ARM_SMCCC_CALL_VAL(
 		smccc_call_type,
@@ -308,7 +310,7 @@ int __scm_smc_call(struct device *dev, const struct qcom_scm_desc *desc,
 		smc.args[i + SCM_SMC_FIRST_REG_IDX] = desc->args[i];
 
 	if (unlikely(arglen > SCM_SMC_N_REG_ARGS)) {
-		if (spill_mem_override) {
+		if (legacy && spill_mem_override) {
 			ext_virt = spill_mem_override->alloc(
 					SCM_SMC_N_EXT_ARGS * sizeof(u64),
 					&ext_phys, flag);
@@ -375,7 +377,7 @@ int __scm_smc_call(struct device *dev, const struct qcom_scm_desc *desc,
 				SCM_SMC_N_EXT_ARGS * sizeof(u64) : (size_t)0,
 			qcom_smccc_convention == ARM_SMCCC_SMC_32 ? 32 : 64,
 			atomic);
-	ret = __scm_smc_do(dev, &smc, &smc_res, atomic, trace_send);
+	ret = __scm_smc_do(dev, &smc, &smc_res, atomic, legacy, trace_send);
 	if (ext_virt)
 		spill_mem_override->free(ext_virt,
 				SCM_SMC_N_EXT_ARGS * sizeof(u64), ext_phys);
@@ -388,6 +390,30 @@ int __scm_smc_call(struct device *dev, const struct qcom_scm_desc *desc,
 		res->result[2] = smc_res.a3;
 	}
 
-	return (long)smc_res.a0 ? qcom_scm_remap_error(smc_res.a0) : 0;
+	/* Donor semantics: only a negative x0 is a firmware error. */
+	if (legacy)
+		return (int)smc_res.a0 < 0 ?
+			qcom_scm_remap_error((int)smc_res.a0) : 0;
 
+	return (long)smc_res.a0 ? qcom_scm_remap_error(smc_res.a0) : 0;
 }
+
+int __scm_smc_call(struct device *dev, const struct qcom_scm_desc *desc,
+		   enum qcom_scm_convention qcom_convention,
+		   struct qcom_scm_res *res, bool atomic)
+{
+	return __scm_smc_call_common(dev, desc, qcom_convention, res, atomic,
+				     false);
+}
+
+/*
+ * Entry for the legacy <soc/qcom/scm.h> shim (qseecom): carveout spill,
+ * donor-style INTERRUPTED resume and donor errno semantics, no WAITQ.
+ */
+int __scm_smc_call_legacy(const struct qcom_scm_desc *desc,
+			  struct qcom_scm_res *res, bool atomic)
+{
+	return __scm_smc_call_common(NULL, desc, qcom_scm_convention, res,
+				     atomic, true);
+}
+EXPORT_SYMBOL_GPL(__scm_smc_call_legacy);

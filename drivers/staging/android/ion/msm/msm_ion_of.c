@@ -11,6 +11,7 @@
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
+#include <linux/of_reserved_mem.h>
 #include <linux/dma-map-ops.h>
 #include <linux/cma.h>
 #include "../ion.h"
@@ -224,6 +225,17 @@ static struct ion_platform_data *msm_ion_parse_dt(struct platform_device *pdev)
 			goto free_heaps;
 		}
 		of_dma_configure(&new_dev->dev, node, true);
+		/*
+		 * of_dma_configure() does not attach shared-dma-pool regions.
+		 * Without this, dev_get_cma_area() falls back to the default
+		 * CMA area and the heap ignores its DT memory-region.
+		 */
+		if (of_property_present(node, "memory-region")) {
+			ret = of_reserved_mem_device_init(&new_dev->dev);
+			if (ret)
+				pr_err("%s: heap %pOFn memory-region not bound: %d\n",
+				       __func__, node, ret);
+		}
 
 		pdata->heaps[idx].priv = &new_dev->dev;
 		val = of_get_address(node, 0, NULL, NULL);
