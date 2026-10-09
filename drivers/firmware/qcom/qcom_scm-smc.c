@@ -53,10 +53,58 @@ void qcom_scm_set_spill_mem(const struct qcom_scm_spill_mem *mem)
 }
 EXPORT_SYMBOL_GPL(qcom_scm_set_spill_mem);
 
+/* Bound the snapshot43 post-SMC register capture. Three attempts is the
+ * first return plus the first two resume attempts; enough to compare the
+ * returned register set against what we feed back, without spamming.
+ */
+#define SCM_SMC_INT_CAPTURE_ATTEMPTS	3
+
+/*
+ * snapshot43: capture the complete SMC result register set (x0..x7).
+ *
+ * arm_smccc_smc() retains only x0..x3 (plus x6 for the QCOM quirk; see
+ * arch/arm64/kernel/smccc-call.S), so what the firmware returns in x4/x5/x7
+ * on an interrupted call is otherwise invisible to this driver. The donor
+ * kernel (drivers/soc/qcom/scm.c __scm_call_armv8_64) declares x0..x6 as
+ * in-out operands of its SMC asm, i.e. it feeds the *returned* x0..x6 back
+ * into the resume call; this driver keeps the original x1..x5 and only
+ * follows a0 and the quirk's a6. x4/x5 are therefore where the two resume
+ * semantics can diverge, and they have never been observed.
+ *
+ * Inputs here are identical to what the resume call in the loop would have
+ * issued (a0, x1..x5 unchanged, x6 = quirk a6, x7 unchanged), so this only
+ * widens what we can see - the resume inputs themselves are not altered.
+ */
+#ifdef CONFIG_ARM64
+static void scm_capture_result_regs(const unsigned long *in, unsigned long *out)
+{
+	register unsigned long x0 asm("x0") = in[0];
+	register unsigned long x1 asm("x1") = in[1];
+	register unsigned long x2 asm("x2") = in[2];
+	register unsigned long x3 asm("x3") = in[3];
+	register unsigned long x4 asm("x4") = in[4];
+	register unsigned long x5 asm("x5") = in[5];
+	register unsigned long x6 asm("x6") = in[6];
+	register unsigned long x7 asm("x7") = in[7];
+
+	asm volatile("smc	#0\n"
+		: "=r" (x0), "=r" (x1), "=r" (x2), "=r" (x3),
+		  "=r" (x4), "=r" (x5), "=r" (x6), "=r" (x7)
+		: "r" (x0), "r" (x1), "r" (x2), "r" (x3),
+		  "r" (x4), "r" (x5), "r" (x6), "r" (x7)
+		: "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+		  "x16", "x17", "memory");
+
+	out[0] = x0; out[1] = x1; out[2] = x2; out[3] = x3;
+	out[4] = x4; out[5] = x5; out[6] = x6; out[7] = x7;
+}
+#endif
+
 static void __scm_smc_do_quirk(const struct arm_smccc_args *smc,
 			       struct arm_smccc_res *res, bool trace_send)
 {
 	unsigned long a0 = smc->args[0];
+	unsigned int attempts = 0;
 	struct arm_smccc_quirk quirk = { .id = ARM_SMCCC_QUIRK_QCOM_A6 };
 	static DEFINE_RATELIMIT_STATE(scm_pre_rs, HZ, 8);
 
@@ -68,14 +116,58 @@ static void __scm_smc_do_quirk(const struct arm_smccc_args *smc,
 				current->pid, a0, smc->args[1], smc->args[2],
 				smc->args[3], smc->args[4], smc->args[5],
 				quirk.state.a6, smc->args[7]);
-		arm_smccc_smc_quirk(a0, smc->args[1], smc->args[2],
-				    smc->args[3], smc->args[4], smc->args[5],
-				    quirk.state.a6, smc->args[7], res, &quirk);
+		attempts++;
+		if (trace_send && attempts == 1)
+			pr_info("snapshot43 scm_raw_enter pid=%d fn=0x%lx\n",
+				current->pid, smc->args[0]);
+
+#ifdef CONFIG_ARM64
+		if (trace_send && attempts <= SCM_SMC_INT_CAPTURE_ATTEMPTS) {
+			unsigned long in[8], out[8];
+
+			in[0] = a0;
+			in[1] = smc->args[1];
+			in[2] = smc->args[2];
+			in[3] = smc->args[3];
+			in[4] = smc->args[4];
+			in[5] = smc->args[5];
+			in[6] = quirk.state.a6;
+			in[7] = smc->args[7];
+			scm_capture_result_regs(in, out);
+
+			pr_info("snapshot43 scm_regs pid=%d fn=0x%lx attempt=%u x0=0x%lx x1=0x%lx x2=0x%lx x3=0x%lx x4=0x%lx x5=0x%lx x6=0x%lx x7=0x%lx\n",
+				current->pid, smc->args[0], attempts,
+				out[0], out[1], out[2], out[3],
+				out[4], out[5], out[6], out[7]);
+
+			res->a0 = out[0];
+			res->a1 = out[1];
+			res->a2 = out[2];
+			res->a3 = out[3];
+			/* Keep the quirk state exactly where the standard
+			 * smccc-call.S quirk path would have left it.
+			 */
+			quirk.state.a6 = out[6];
+		} else
+#endif
+		{
+			arm_smccc_smc_quirk(a0, smc->args[1], smc->args[2],
+					    smc->args[3], smc->args[4], smc->args[5],
+					    quirk.state.a6, smc->args[7], res, &quirk);
+		}
+
+		if (trace_send && attempts == 1)
+			pr_info("snapshot43 scm_raw_first_ret pid=%d fn=0x%lx a0=0x%lx a1=0x%lx a2=0x%lx a3=0x%lx\n",
+				current->pid, smc->args[0], res->a0,
+				res->a1, res->a2, res->a3);
 
 		if (res->a0 == QCOM_SCM_INTERRUPTED)
 			a0 = res->a0;
 
 	} while (res->a0 == QCOM_SCM_INTERRUPTED);
+	if (trace_send)
+		pr_info("snapshot43 scm_raw_done pid=%d fn=0x%lx attempts=%u a0=0x%lx\n",
+			current->pid, smc->args[0], attempts, res->a0);
 }
 
 static void fill_wq_resume_args(struct arm_smccc_args *resume, u32 smc_call_ctx)
@@ -161,7 +253,13 @@ static int __scm_smc_do(struct device *dev, struct arm_smccc_args *smc,
 	}
 
 	do {
+		if (trace_send && !retry_count)
+			pr_info("snapshot43 scm_lock_wait pid=%d fn=0x%lx\n",
+				current->pid, smc->args[0]);
 		mutex_lock(&qcom_scm_lock);
+		if (trace_send && !retry_count)
+			pr_info("snapshot43 scm_lock_acquired pid=%d fn=0x%lx\n",
+				current->pid, smc->args[0]);
 
 		ret = __scm_smc_do_quirk_handle_waitq(dev, smc, res, trace_send);
 
@@ -197,9 +295,7 @@ int __scm_smc_call(struct device *dev, const struct qcom_scm_desc *desc,
 				    ARM_SMCCC_SMC_32 : ARM_SMCCC_SMC_64;
 	struct arm_smccc_res smc_res;
 	struct arm_smccc_args smc = {0};
-	/* ponytail: cmd 1|6 was the snapshot35 gate, but keymaster's stall is
-	 * cmd 0x3 and stayed invisible. Trace every QSEE svc-0 command; the
-	 * per-SMC ratelimit in __scm_smc_do_quirk bounds the volume. */
+	/* Trace app transactions only; owner-50 listener calls have shim markers. */
 	bool trace_send = desc->owner == 48 && desc->svc == 0;
 
 	smc.args[0] = ARM_SMCCC_CALL_VAL(

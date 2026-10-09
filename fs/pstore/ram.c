@@ -21,6 +21,19 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/mm.h>
+#include <linux/cred.h>
+#include <linux/kobject.h>
+#include <linux/sizes.h>
+#include <linux/sysfs.h>
+#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
+#include <linux/bio.h>
+#include <linux/blkdev.h>
+#include <linux/device/class.h>
+#endif
+#include <linux/fs.h>
+#include <linux/kthread.h>
+#include <linux/timekeeping.h>
+#include <linux/vmalloc.h>
 
 #include "internal.h"
 #include "ram_internal.h"
@@ -104,6 +117,7 @@ struct ramoops_context {
 	unsigned int ftrace_read_cnt;
 	unsigned int pmsg_read_cnt;
 	struct pstore_info pstore;
+	bool raw_published;
 };
 
 static struct platform_device *dummy;
@@ -452,6 +466,475 @@ static struct ramoops_context oops_cxt = {
 		.erase	= ramoops_pstore_erase,
 	},
 };
+
+#define RAMOOPS_RAW_PHYS 0x86800000ULL
+#define RAMOOPS_RAW_CONSOLE 0x77000
+#define RAMOOPS_RAW_PMSG 0xf7000
+#define RAMOOPS_RAW_FTRACE 0xff000
+
+static bool ramoops_raw_zone_valid(struct persistent_ram_zone *prz,
+				  size_t offset, size_t size)
+{
+	return prz && prz->vaddr && prz->size == size &&
+		prz->paddr == RAMOOPS_RAW_PHYS + offset;
+}
+
+static bool ramoops_raw_geometry_valid(struct ramoops_context *cxt)
+{
+	unsigned int i;
+
+	if (cxt->phys_addr != RAMOOPS_RAW_PHYS || cxt->size != SZ_1M ||
+	    cxt->record_size != SZ_4K || cxt->console_size != SZ_512K ||
+	    cxt->pmsg_size != SZ_32K || cxt->ftrace_size != SZ_4K ||
+	    cxt->max_dump_cnt != 119 || cxt->max_ftrace_cnt != 1 ||
+	    !cxt->dprzs || !cxt->fprzs || cxt->ecc_info.ecc_size ||
+	    (cxt->flags & RAMOOPS_FLAG_FTRACE_PER_CPU))
+		return false;
+	for (i = 0; i < 119; i++)
+		if (!ramoops_raw_zone_valid(cxt->dprzs[i], i * SZ_4K, SZ_4K))
+			return false;
+	return ramoops_raw_zone_valid(cxt->cprz, RAMOOPS_RAW_CONSOLE, SZ_512K) &&
+		ramoops_raw_zone_valid(cxt->mprz, RAMOOPS_RAW_PMSG, SZ_32K) &&
+		ramoops_raw_zone_valid(cxt->fprzs[0], RAMOOPS_RAW_FTRACE, SZ_4K);
+}
+
+/* Copy live, non-atomic bytes, including each zone's persistent-RAM header. */
+static ssize_t ramoops_raw_copy(struct ramoops_context *cxt, char *buf,
+				size_t off, size_t count)
+{
+	size_t copied = 0;
+
+	while (copied < count) {
+		struct persistent_ram_zone *prz;
+		size_t pos = off + copied;
+		size_t start, size, n;
+
+		if (pos < RAMOOPS_RAW_CONSOLE) {
+			unsigned int index = pos / SZ_4K;
+
+			if (!cxt->dprzs || index >= cxt->max_dump_cnt)
+				return -EIO;
+			prz = cxt->dprzs[index];
+			start = index * SZ_4K;
+			size = SZ_4K;
+		} else if (pos < RAMOOPS_RAW_PMSG) {
+			prz = cxt->cprz;
+			start = RAMOOPS_RAW_CONSOLE;
+			size = SZ_512K;
+		} else if (pos < RAMOOPS_RAW_FTRACE) {
+			prz = cxt->mprz;
+			start = RAMOOPS_RAW_PMSG;
+			size = SZ_32K;
+		} else {
+			if (!cxt->fprzs || cxt->max_ftrace_cnt != 1)
+				return -EIO;
+			prz = cxt->fprzs[0];
+			start = RAMOOPS_RAW_FTRACE;
+			size = SZ_4K;
+		}
+		if (!ramoops_raw_zone_valid(prz, start, size) ||
+		    pos - start >= size)
+			return -EIO;
+		n = min(count - copied, size - (pos - start));
+		memcpy_fromio(buf + copied,
+			      (void __iomem *)prz->vaddr + (pos - start), n);
+		copied += n;
+	}
+	return copied;
+}
+
+static ssize_t ramoops_raw_read(struct file *file, struct kobject *kobj,
+			       struct bin_attribute *attr, char *buf,
+			       loff_t off, size_t count)
+{
+	(void)file;
+	(void)kobj;
+	(void)attr;
+	if (!uid_eq(current_euid(), GLOBAL_ROOT_UID))
+		return -EACCES;
+	if (off < 0)
+		return -EINVAL;
+	if (off >= SZ_1M)
+		return 0;
+	return ramoops_raw_copy(&oops_cxt, buf, off,
+				min_t(size_t, count, SZ_1M - (size_t)off));
+}
+
+static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
+
+/* Partition diagnostics require the non-exported built-in block class. */
+#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
+
+/*
+ * Kernel-side periodic snapshot of the live reservation.
+ *
+ * The userspace sampler dies with the SELinux domain transition, so this
+ * keeps copying the 1 MiB reservation to the "logdump" block device
+ * without any process.
+ *
+ * Two slots alternate, so a freeze cannot destroy every sample: the slot
+ * being written is overwritten two samples later, leaving the previous
+ * sample intact. A single slot was proven to miss a cutoff by ~1 s.
+ *
+ * Each slot is one reserved page (header in its first 64 bytes) followed
+ * by the 1048576 raw ramoops bytes:
+ *
+ *   slot 0  header 62914560..62918655  payload 62918656..63967231
+ *   slot 1  header 63967232..63971327  payload 63971328..65019903
+ *
+ * Both sit inside the 64 MiB partition, above the growing kmsg text
+ * region. The payload starts a page in because the whole snapshot is
+ * written from vmalloc pages, which bio_add_page() requires.
+ */
+#define RAMOOPS_SNAP_OFFSET		62914560ULL
+#define RAMOOPS_SNAP_HDR_SIZE		64
+#define RAMOOPS_SNAP_PAYLOAD_OFFSET	(RAMOOPS_SNAP_OFFSET + PAGE_SIZE)
+#define RAMOOPS_SNAP_SLOT_STRIDE	(PAGE_SIZE + SZ_1M)
+#define RAMOOPS_SNAP_SLOTS		2
+#define RAMOOPS_SNAP_INTERVAL_MS	2000
+#define RAMOOPS_SNAP_MAGIC		0x52414d4fULL	/* "RAMO" */
+
+struct ramoops_snap_header {
+	__le64 magic;
+	__le64 seq;
+	__le64 index;
+	__le64 timestamp_ns;
+	__le32 payload_offset;
+	__le32 payload_len;
+	__le32 phys_addr_lo;
+	__le32 slot;
+	__le32 reserved[4];	/* struct is exactly 64 bytes */
+};
+
+struct ramoops_snapper {
+	struct ramoops_context *cxt;
+	struct file *file;
+	struct block_device *bdev;
+	void *buf;			/* header page + SZ_1M payload, vmalloc'd once */
+	struct task_struct *task;
+	struct completion wake;
+	u64 seq;
+	unsigned int slot;		/* next slot to write */
+	bool warned;
+};
+
+static struct ramoops_snapper ramoops_snapper;
+
+static_assert(sizeof(struct ramoops_snap_header) == RAMOOPS_SNAP_HDR_SIZE);
+
+/* Find the "logdump" partition the way uevent PARTNAME=logdump names it. */
+static int ramoops_snap_find_logdump(struct device *dev, void *data)
+{
+	dev_t *found = data;
+	struct block_device *bdev;
+
+	if (!dev->devt || !dev->type || strcmp(dev->type->name, "partition"))
+		return 0;
+	bdev = dev_to_bdev(dev);
+	if (!bdev->bd_meta_info || !bdev->bd_meta_info->volname[0])
+		return 0;
+	if (memcmp(bdev->bd_meta_info->volname, "logdump", 7) ||
+	    bdev->bd_meta_info->volname[7])
+		return 0;
+	*found = dev->devt;
+	return 1;
+}
+
+/* Resolved late: MMC block devices register after ramoops probes. */
+static int ramoops_snap_open_logdump(struct ramoops_snapper *s)
+{
+	dev_t found = 0;
+	int err;
+
+	class_for_each_device(&block_class, NULL, &found,
+			      ramoops_snap_find_logdump);
+	if (!found)
+		return -ENODEV;
+
+	s->file = bdev_file_open_by_dev(found, BLK_OPEN_WRITE, &ramoops_snapper,
+					NULL);
+	if (IS_ERR(s->file)) {
+		err = PTR_ERR(s->file);
+		s->file = NULL;
+		return err;
+	}
+	s->bdev = file_bdev(s->file);
+	return 0;
+}
+
+/* Copy @len bytes of vmalloc-backed @data to byte @offset of @bdev. */
+static int ramoops_snap_bio_write(struct block_device *bdev, void *data,
+				  size_t len, u64 offset)
+{
+	unsigned int nr_pages = (len + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	struct bio *bio;
+	size_t done = 0;
+	int err = 0;
+
+	bio = bio_alloc(bdev, bio_max_segs(nr_pages), REQ_OP_WRITE,
+			GFP_KERNEL | __GFP_NOFAIL);
+	if (!bio)
+		return -ENOMEM;
+
+	while (done < len) {
+		size_t chunk = min_t(size_t, len - done, PAGE_SIZE);
+		struct page *page = vmalloc_to_page((char *)data + done);
+
+		if (!page || bio_add_page(bio, page, chunk, 0) < 0) {
+			bio_put(bio);
+			return -EIO;
+		}
+		done += chunk;
+	}
+
+	bio->bi_iter.bi_sector = offset >> SECTOR_SHIFT;
+	bio->bi_iter.bi_size = len;
+	submit_bio_wait(bio);
+	err = blk_status_to_errno(bio->bi_status);
+	bio_put(bio);
+
+	return err;
+}
+
+static int ramoops_snap_take(struct ramoops_snapper *s)
+{
+	struct ramoops_snap_header *hdr = s->buf;
+	void *payload = s->buf + PAGE_SIZE;
+	unsigned int slot = s->slot % RAMOOPS_SNAP_SLOTS;
+	u64 base = RAMOOPS_SNAP_OFFSET + slot * RAMOOPS_SNAP_SLOT_STRIDE;
+	ssize_t copied;
+	int err;
+
+	copied = ramoops_raw_copy(s->cxt, payload, 0, SZ_1M);
+	if (copied < 0)
+		return (int)copied;
+
+	s->seq++;
+
+	memset(s->buf, 0, PAGE_SIZE);
+	hdr->magic = cpu_to_le64(RAMOOPS_SNAP_MAGIC);
+	hdr->seq = cpu_to_le64(s->seq);
+	hdr->index = cpu_to_le64(s->seq);	/* sample index within this boot */
+	hdr->timestamp_ns = cpu_to_le64(ktime_get_ns());
+	hdr->payload_offset = cpu_to_le32(PAGE_SIZE);
+	hdr->payload_len = cpu_to_le32(SZ_1M);
+	hdr->phys_addr_lo = cpu_to_le32(RAMOOPS_RAW_PHYS);
+	hdr->slot = cpu_to_le32(slot);
+
+	/* Header page first, so a recovery sees this sample's identity. */
+	err = ramoops_snap_bio_write(s->bdev, s->buf, PAGE_SIZE, base);
+	if (err)
+		return err;
+
+	err = ramoops_snap_bio_write(s->bdev, payload, SZ_1M,
+				     base + RAMOOPS_SNAP_PAYLOAD_OFFSET -
+				     RAMOOPS_SNAP_OFFSET);
+	if (err)
+		return err;
+
+	/* Reach stable storage: the last sample before a freeze is the
+	 * one this whole channel exists to preserve. */
+	err = blkdev_issue_flush(s->bdev);
+	if (err)
+		pr_warn("snapshot38 logdump flush failed errno=%d\n", err);
+
+	/* Advance only after a fully flushed sample. */
+	s->slot = slot + 1;
+	return 0;
+}
+
+/*
+ * The thread retries the open because MMC block devices register at
+ * device_initcall, long after ramoops probes at postcore_initcall.
+ */
+static int ramoops_snap_thread(void *unused)
+{
+	struct ramoops_snapper *s = &ramoops_snapper;
+	(void)unused;
+
+	while (!kthread_should_stop()) {
+		if (!s->file) {
+			int err = ramoops_snap_open_logdump(s);
+
+			if (err) {
+				/* Storage is not ready yet; keep waiting. */
+				wait_for_completion_interruptible_timeout(
+					&s->wake,
+					msecs_to_jiffies(RAMOOPS_SNAP_INTERVAL_MS));
+				continue;
+			}
+		}
+
+		if (ramoops_snap_take(s)) {
+			pr_err("snapshot38 logdump snapshot failed; disabled\n");
+			break;
+		}
+		if (!s->warned) {
+			s->warned = true;
+			pr_info("snapshot38 logdump snapshotter ready offset=%llu slots=%u size=%u\n",
+				RAMOOPS_SNAP_OFFSET, RAMOOPS_SNAP_SLOTS, SZ_1M);
+		}
+		wait_for_completion_interruptible_timeout(
+			&s->wake, msecs_to_jiffies(RAMOOPS_SNAP_INTERVAL_MS));
+	}
+	return 0;
+}
+
+/*
+ * Stall witness (snapshot43 diagnostic).
+ *
+ * Keep a sampled execution witness in the partition tail, separate from
+ * the historical RAM witness. A correctly attributed later record shows
+ * execution/write progress at that time; old or missing records do not
+ * distinguish storage failure, scheduling failure, or a kernel-wide halt.
+ * The caller records the previous canary sample before updating it.
+ * Plain writes wait for I/O but do not provide an explicit flush/FUA
+ * guarantee. Saved records alone do not establish reset durability.
+ */
+#define RAMOOPS_WITNESS_OFFSET	0x3f00000ULL
+#define RAMOOPS_WITNESS_LEN	512
+
+static struct file *ramoops_witness_file;
+static struct block_device *ramoops_witness_bdev;
+static void *ramoops_witness_buf;
+
+static int ramoops_witness_open(void)
+{
+	dev_t found = 0;
+	struct file *file;
+	void *buf;
+
+	if (ramoops_witness_bdev)
+		return 0;
+	class_for_each_device(&block_class, NULL, &found,
+			      ramoops_snap_find_logdump);
+	if (!found)
+		return -ENODEV;
+	file = bdev_file_open_by_dev(found, BLK_OPEN_READ | BLK_OPEN_WRITE,
+				     &ramoops_snapper, NULL);
+	if (IS_ERR(file))
+		return PTR_ERR(file);
+	buf = vmalloc(RAMOOPS_WITNESS_LEN);
+	if (!buf) {
+		filp_close(file, &ramoops_snapper);
+		return -ENOMEM;
+	}
+	ramoops_witness_file = file;
+	ramoops_witness_buf = buf;
+	ramoops_witness_bdev = file_bdev(file);
+	return 0;
+}
+
+int ramoops_witness_write(const void *data, size_t len)
+{
+	struct bio *bio;
+	int err;
+
+	if (len > RAMOOPS_WITNESS_LEN)
+		return -EINVAL;
+	err = ramoops_witness_open();
+	if (err)
+		return err;
+	memset(ramoops_witness_buf, 0, RAMOOPS_WITNESS_LEN);
+	memcpy(ramoops_witness_buf, data, len);
+
+	bio = bio_alloc(ramoops_witness_bdev, 1, REQ_OP_WRITE,
+			GFP_KERNEL | __GFP_NOFAIL);
+	if (!bio)
+		return -ENOMEM;
+	if (bio_add_page(bio, vmalloc_to_page(ramoops_witness_buf),
+			 RAMOOPS_WITNESS_LEN, 0) != RAMOOPS_WITNESS_LEN) {
+		bio_put(bio);
+		return -EIO;
+	}
+	bio->bi_iter.bi_sector = RAMOOPS_WITNESS_OFFSET >> SECTOR_SHIFT;
+	bio->bi_iter.bi_size = RAMOOPS_WITNESS_LEN;
+	submit_bio_wait(bio);
+	err = blk_status_to_errno(bio->bi_status);
+	bio_put(bio);
+	return err;
+}
+EXPORT_SYMBOL_GPL(ramoops_witness_write);
+
+int ramoops_witness_read(void *data, size_t len)
+{
+	struct bio *bio;
+	int err;
+
+	if (len > RAMOOPS_WITNESS_LEN)
+		return -EINVAL;
+	err = ramoops_witness_open();
+	if (err)
+		return err;
+	memset(ramoops_witness_buf, 0, RAMOOPS_WITNESS_LEN);
+
+	bio = bio_alloc(ramoops_witness_bdev, 1, REQ_OP_READ,
+			GFP_KERNEL | __GFP_NOFAIL);
+	if (!bio)
+		return -ENOMEM;
+	if (bio_add_page(bio, vmalloc_to_page(ramoops_witness_buf),
+			 RAMOOPS_WITNESS_LEN, 0) != RAMOOPS_WITNESS_LEN) {
+		bio_put(bio);
+		return -EIO;
+	}
+	bio->bi_iter.bi_sector = RAMOOPS_WITNESS_OFFSET >> SECTOR_SHIFT;
+	bio->bi_iter.bi_size = RAMOOPS_WITNESS_LEN;
+	submit_bio_wait(bio);
+	err = blk_status_to_errno(bio->bi_status);
+	if (!err)
+		memcpy(data, ramoops_witness_buf, len);
+	bio_put(bio);
+	return err;
+}
+EXPORT_SYMBOL_GPL(ramoops_witness_read);
+
+static void ramoops_snap_start(struct ramoops_context *cxt)
+{
+	struct ramoops_snapper *s = &ramoops_snapper;
+
+	memset(s, 0, sizeof(*s));
+	s->cxt = cxt;
+	init_completion(&s->wake);
+
+	s->buf = __vmalloc(PAGE_SIZE + SZ_1M, GFP_KERNEL);
+	if (!s->buf) {
+		pr_err("snapshot38 staging buffer alloc failed; snapshotter disabled\n");
+		return;
+	}
+
+	s->task = kthread_create(ramoops_snap_thread, s, "ramoops_snap");
+	if (IS_ERR(s->task)) {
+		pr_err("snapshot38 thread create failed errno=%ld; snapshotter disabled\n",
+		       PTR_ERR(s->task));
+		s->task = NULL;
+		vfree(s->buf);
+		s->buf = NULL;
+		return;
+	}
+	wake_up_process(s->task);
+}
+
+
+/* Drain the worker before any zone mapping is freed or unmapped. */
+static void ramoops_snap_stop(void)
+{
+	struct ramoops_snapper *s = &ramoops_snapper;
+
+	if (s->task) {
+		kthread_stop(s->task);
+		s->task = NULL;
+	}
+	if (s->buf) {
+		vfree(s->buf);
+		s->buf = NULL;
+	}
+	if (s->file) {
+		filp_close(s->file, &ramoops_snapper);
+		s->file = NULL;
+		s->bdev = NULL;
+	}
+}
+#endif
 
 static void ramoops_free_przs(struct ramoops_context *cxt)
 {
@@ -853,6 +1336,29 @@ static int ramoops_probe(struct platform_device *pdev)
 		goto fail_buf;
 	}
 
+	if (!ramoops_raw_geometry_valid(cxt)) {
+		pr_err("snapshot35 ramoops_raw geometry mismatch; exporter omitted\n");
+	} else {
+		err = sysfs_create_bin_file(kernel_kobj, &bin_attr_ramoops_raw);
+		if (err) {
+			pr_err("snapshot35 ramoops_raw creation failed errno=%d; pstore continues\n",
+			       err);
+		} else {
+			cxt->raw_published = true;
+			pr_info("snapshot35 ramoops_raw ready phys=0x86800000 size=1048576\n");
+		}
+	}
+
+#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
+	/*
+	 * Start the kernel-side snapshotter only once pstore is registered
+	 * and the same validated geometry backed the exporter, so it can
+	 * only copy mappings that are actually live.
+	 */
+	if (cxt->raw_published)
+		ramoops_snap_start(cxt);
+#endif
+
 	/*
 	 * Update the module parameter variables as well so they are visible
 	 * through /sys/module/ramoops/parameters/
@@ -884,6 +1390,21 @@ fail_out:
 static void ramoops_remove(struct platform_device *pdev)
 {
 	struct ramoops_context *cxt = &oops_cxt;
+
+#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
+	/*
+	 * Drain the snapshot worker first: it reads the same zone mappings
+	 * the exporter serves, and kthread_stop() waits for the in-flight
+	 * block write to finish before any zone is freed.
+	 */
+	ramoops_snap_stop();
+#endif
+
+	/* kernfs drains active reads before the existing mappings are freed. */
+	if (cxt->raw_published) {
+		sysfs_remove_bin_file(kernel_kobj, &bin_attr_ramoops_raw);
+		cxt->raw_published = false;
+	}
 
 	pstore_unregister(&cxt->pstore);
 

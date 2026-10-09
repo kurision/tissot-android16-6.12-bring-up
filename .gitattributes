@@ -3,3 +3,7 @@
 *.dts diff=dts
 *.dts[io] diff=dts
 *.rs diff=rust
+
+# Historical capture bytes are evidence, not source text to normalize.
+porting/artifacts/snapshot43/run*-logdump.bin binary
+porting/artifacts/snapshot43/run*-*.log -text -whitespace

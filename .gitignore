@@ -192,3 +192,19 @@ porting/artifacts/snapshot*/base-ramdisk
 porting/artifacts/snapshot*/Image.gz
 porting/artifacts/snapshot*/init
 porting/artifacts/snapshot*/daemon-probe-selftest-host
+
+# Keep only snapshot43 runs 10/11 capture evidence in repository history.
+# Older captures remain local; reports retain their checked measurements.
+porting/artifacts/**/*.log
+porting/artifacts/**/*.status
+porting/artifacts/**/*.stdout
+porting/artifacts/**/*.stderr
+porting/artifacts/dmesg-live.txt
+porting/artifacts/failed-units.txt
+porting/artifacts/snapshot*/run*-*.txt
+!porting/artifacts/snapshot43/run10-*.log
+!porting/artifacts/snapshot43/run11-*.log
+!porting/artifacts/snapshot43/run10-*.status
+!porting/artifacts/snapshot43/run11-*.status
+!porting/artifacts/snapshot43/run10-logdump.bin
+!porting/artifacts/snapshot43/run11-logdump.bin

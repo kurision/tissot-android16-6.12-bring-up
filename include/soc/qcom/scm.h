@@ -152,17 +152,15 @@ static inline int scm_call2_noretry(u32 smc_id, struct scm_desc *desc)
 	for (i = 0; i < MAX_SCM_ARGS; i++)
 		mdesc.args[i] = desc->args[i];
 
+	if (SCM_OWNER_ID(smc_id) == 50 || SCM_OWNER_ID(smc_id) == 48)
+		pr_info("snapshot43 qsee_send pid=%d smc=%08x argc=%u arginfo=0x%x args0=0x%llx args1=0x%llx args2=0x%llx args3=0x%llx\n",
+			current->pid, smc_id, desc->arginfo & 0xf,
+			desc->arginfo, desc->args[0], desc->args[1],
+			desc->args[2], desc->args[3]);
+
 	/* NULL dev matches the firmware driver's own early-probe path. */
 	ret = scm_smc_call(NULL, &mdesc, &res, false);
 
-	/* ponytail: qseecom never enters __scm_smc_call, so the owner-48 gate
-	 * there traced remoteproc/RPM only. This is the real chokepoint: every
-	 * qseecom call lands here, with the fnid already packed in smc_id. */
-	if (SCM_OWNER_ID(smc_id) == 50)
-		pr_info("snapshot41 qsee_send pid=%d smc=%08x argc=%u arginfo=0x%x args0=0x%llx args1=0x%llx args2=0x%llx\n",
-			current->pid, smc_id, desc->arginfo & 0xf,
-			desc->arginfo, desc->args[0], desc->args[1],
-			desc->args[2]);
 	desc->ret[0] = res.result[0];
 	desc->ret[1] = res.result[1];
 	desc->ret[2] = res.result[2];
@@ -170,8 +168,8 @@ static inline int scm_call2_noretry(u32 smc_id, struct scm_desc *desc)
 	 * error as "unsupported" (e.g. the qseecom listener smcinvoke probe)
 	 * test for it explicitly at their own site.
 	 */
-	if (SCM_OWNER_ID(smc_id) == 50)
-		pr_info("snapshot41 qsee_ret  pid=%d smc=%08x -> %d ret0=0x%llx ret1=0x%llx ret2=0x%llx\n",
+	if (SCM_OWNER_ID(smc_id) == 50 || SCM_OWNER_ID(smc_id) == 48)
+		pr_info("snapshot43 qsee_ret  pid=%d smc=%08x -> %d ret0=0x%llx ret1=0x%llx ret2=0x%llx\n",
 			current->pid, smc_id, ret, res.result[0],
 			res.result[1], res.result[2]);
 	return ret;

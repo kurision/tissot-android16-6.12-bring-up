@@ -574,6 +574,15 @@ long compat_qseecom_ioctl(struct file *file,
 		unsigned int cmd, unsigned long arg)
 {
 	long ret;
+	bool trace_completion = cmd == COMPAT_QSEECOM_IOCTL_LOAD_APP_REQ ||
+		cmd == COMPAT_QSEECOM_IOCTL_APP_LOADED_QUERY_REQ ||
+		cmd == COMPAT_QSEECOM_IOCTL_SET_MEM_PARAM_REQ ||
+		cmd == COMPAT_QSEECOM_IOCTL_SEND_CMD_REQ ||
+		cmd == COMPAT_QSEECOM_IOCTL_SEND_MODFD_CMD_REQ ||
+		cmd == COMPAT_QSEECOM_IOCTL_SEND_MODFD_CMD_64_REQ;
+
+	if (trace_completion)
+		pr_info("qseecom: compat ioctl %#x nr %u enter\n", cmd, _IOC_NR(cmd));
 
 	switch (cmd) {
 
@@ -612,16 +621,22 @@ long compat_qseecom_ioctl(struct file *file,
 
 		data32 = compat_ptr(arg);
 		data = qseecom_compat_alloc_user_space(sizeof(*data));
-		if (data == NULL)
+		if (data == NULL) {
+			pr_info("qseecom: compat ioctl %#x translate -> %d\n", cmd, -EFAULT);
 			return -EFAULT;
+		}
 
 		err = compat_get_qseecom_load_img_req(data32, data);
-		if (err)
+		if (err) {
+			pr_info("qseecom: compat ioctl %#x translate -> %d\n", cmd, err);
 			return err;
+		}
 
 		ret = qseecom_ioctl(file, convert_cmd(cmd),
 						(unsigned long)data);
 		err = compat_put_qseecom_load_img_req(data32, data);
+		pr_info("qseecom: compat ioctl %#x -> %ld native %ld copyback %d\n",
+			cmd, ret ? ret : err, ret, err);
 		return ret ? ret : err;
 	}
 	break;
@@ -632,15 +647,21 @@ long compat_qseecom_ioctl(struct file *file,
 
 		data32 = compat_ptr(arg);
 		data = qseecom_compat_alloc_user_space(sizeof(*data));
-		if (data == NULL)
+		if (data == NULL) {
+			pr_info("qseecom: compat ioctl %#x translate -> %d\n", cmd, -EFAULT);
 			return -EFAULT;
+		}
 
 		err = compat_get_qseecom_send_cmd_req(data32, data);
-		if (err)
+		if (err) {
+			pr_info("qseecom: compat ioctl %#x translate -> %d\n", cmd, err);
 			return err;
+		}
 
-		return qseecom_ioctl(file, convert_cmd(cmd),
+		ret = qseecom_ioctl(file, convert_cmd(cmd),
 						(unsigned long)data);
+		pr_info("qseecom: compat ioctl %#x -> %ld\n", cmd, ret);
+		return ret;
 	}
 	break;
 	case COMPAT_QSEECOM_IOCTL_SEND_MODFD_CMD_REQ:
@@ -651,15 +672,21 @@ long compat_qseecom_ioctl(struct file *file,
 
 		data32 = compat_ptr(arg);
 		data = qseecom_compat_alloc_user_space(sizeof(*data));
-		if (data == NULL)
+		if (data == NULL) {
+			pr_info("qseecom: compat ioctl %#x translate -> %d\n", cmd, -EFAULT);
 			return -EFAULT;
+		}
 
 		err = compat_get_qseecom_send_modfd_cmd_req(data32, data);
-		if (err)
+		if (err) {
+			pr_info("qseecom: compat ioctl %#x translate -> %d\n", cmd, err);
 			return err;
+		}
 
-		return qseecom_ioctl(file, convert_cmd(cmd),
+		ret = qseecom_ioctl(file, convert_cmd(cmd),
 						(unsigned long)data);
+		pr_info("qseecom: compat ioctl %#x -> %ld\n", cmd, ret);
+		return ret;
 	}
 	break;
 	case COMPAT_QSEECOM_IOCTL_SET_MEM_PARAM_REQ: {
@@ -669,15 +696,21 @@ long compat_qseecom_ioctl(struct file *file,
 
 		data32 = compat_ptr(arg);
 		data = qseecom_compat_alloc_user_space(sizeof(*data));
-		if (data == NULL)
+		if (data == NULL) {
+			pr_info("qseecom: compat ioctl %#x translate -> %d\n", cmd, -EFAULT);
 			return -EFAULT;
+		}
 
 		err = compat_get_qseecom_set_sb_mem_param_req(data32, data);
-		if (err)
+		if (err) {
+			pr_info("qseecom: compat ioctl %#x translate -> %d\n", cmd, err);
 			return err;
+		}
 
-		return qseecom_ioctl(file, convert_cmd(cmd),
+		ret = qseecom_ioctl(file, convert_cmd(cmd),
 						(unsigned long)data);
+		pr_info("qseecom: compat ioctl %#x -> %ld\n", cmd, ret);
+		return ret;
 	}
 	break;
 	case COMPAT_QSEECOM_IOCTL_GET_QSEOS_VERSION_REQ: {
@@ -742,16 +775,22 @@ long compat_qseecom_ioctl(struct file *file,
 
 		data32 = compat_ptr(arg);
 		data = qseecom_compat_alloc_user_space(sizeof(*data));
-		if (data == NULL)
+		if (data == NULL) {
+			pr_info("qseecom: compat ioctl %#x translate -> %d\n", cmd, -EFAULT);
 			return -EFAULT;
+		}
 
 		err = compat_get_qseecom_qseos_app_load_query(data32, data);
-		if (err)
+		if (err) {
+			pr_info("qseecom: compat ioctl %#x translate -> %d\n", cmd, err);
 			return err;
+		}
 
 		ret = qseecom_ioctl(file, convert_cmd(cmd),
 					(unsigned long)data);
 		err = compat_put_qseecom_qseos_app_load_query(data32, data);
+		pr_info("qseecom: compat ioctl %#x -> %ld native %ld copyback %d\n",
+			cmd, ret ? ret : err, ret, err);
 		return ret ? ret : err;
 	}
 	break;

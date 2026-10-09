@@ -811,8 +811,7 @@ static int open_sdlog(void)
 	if (n == POLL_TRIES || make_dir("/sdlog") ||
 	    mount(path, "/sdlog", "vfat", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL))
 		return -1;
-	return open("/sdlog/snapshot28-kmsg.log",
-		    O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+	return open("/sdlog/ack-kmsg.log", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
 }
 
 #ifdef ANDROID_RAMOOPS_TEST
@@ -1751,7 +1750,7 @@ static int launch_android(char **argv)
 		if (sd < 0)
 			say(klog, "DIAG: SD capture unavailable; other sinks continue\n");
 		else {
-			say(klog, "DIAG: SD capture ready at /sdlog/snapshot28-kmsg.log\n");
+			say(klog, "DIAG: SD capture ready at /sdlog/ack-kmsg.log\n");
 			sampler.log = klog;
 			ramoops_sampler_open(&sampler);
 		}
