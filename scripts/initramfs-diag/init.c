@@ -1130,6 +1130,34 @@ static void harvest_modem_child(int log)
 	time_t deadline = monotonic_seconds() + 240;
 	char message[256];
 	int pathset = 0;
+	/*
+	 * Whole-partition harvest first: needs no mounts (devtmpfs block
+	 * nodes exist from boot) and sidesteps all file-level DAC issues.
+	 * Shell cannot read mmcblk0p1 (brw------- root); this root child
+	 * can. /sdlog is vfat and host-readable; adb pull is a fallback.
+	 */
+	{
+		long bytes = 0;
+		int error = 0;
+
+		/* /sdlog must be the card, not ramdisk: refuse unless the
+		 * mirror log the SD setup creates is already there.
+		 */
+		if (!mounts_contain("/sdlog")) {
+			snprintf(message, sizeof(message),
+				 "DIAG: fwlate partition skipped: no sdlog mount\n");
+			say(log, message);
+		} else {
+			make_dir("/sdlog/fwpart");
+			error = stage_firmware_file("/dev/block/mmcblk0p1",
+						    "/sdlog/fwpart/modem_a.img",
+						    &bytes);
+		}
+		snprintf(message, sizeof(message),
+			 "DIAG: fwlate partition mmcblk0p1 bytes=%ld errno=%d\n",
+			 bytes, error);
+		say(log, message);
+	}
 
 	say(log, "DIAG: fwlate: waiting for modem mount\n");
 	for (;;) {
