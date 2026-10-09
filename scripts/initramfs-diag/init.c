@@ -26,8 +26,7 @@
 #include <time.h>
 #include <unistd.h>
 #if defined(ANDROID_CAPTURE) && \
-	(defined(ANDROID_GUARD_TEST) || defined(ANDROID_RAMOOPS_TEST) || \
-	 defined(ANDROID_DAEMON_TEST))
+	(defined(ANDROID_GUARD_TEST) || defined(ANDROID_RAMOOPS_TEST))
 #include <assert.h>
 #include <stdlib.h>
 #endif
@@ -403,318 +402,6 @@ static int write_capture(int out, int *mirror, const char *buf, size_t len,
 	return 0;
 }
 
-#ifdef ANDROID_CAPTURE
-/* comm is capped at TASK_COMM_LEN-1 (15 visible bytes), so watch names match
- * by prefix only; full-string equality would never fire. */
-static const char *const daemon_watch[] = {
-	"keymaster@3.0", "keystore2", "vold", "vdc",
-	"servicemanager", "logd",
-};
-#define DAEMON_WATCH_COUNT (sizeof daemon_watch / sizeof daemon_watch[0])
-
-struct daemon_probe {
-	char last[DAEMON_WATCH_COUNT][48];
-	time_t emitted[DAEMON_WATCH_COUNT];
-	/* -1 before the first scan so the census line always emits once. */
-	int comm_errno;
-	unsigned long entries;
-	unsigned long highest;
-};
-
-/* Owned by the durable recorder child; the USB child never writes it. */
-static struct daemon_probe daemon_probe_state;
-
-struct daemon_status {
-	int pid;
-	char state;
-	int ppid;
-	int threads;
-	unsigned long utime;
-	unsigned long stime;
-	char wchan[16];
-	char comm[16];
-};
-
-static void daemon_probe_init(struct daemon_probe *p)
-{
-	unsigned i;
-
-	memset(p, 0, sizeof *p);
-	/* -1 is what marks "no scan yet"; 0 would look like a successful scan. */
-	p->comm_errno = -1;
-	for (i = 0; i < DAEMON_WATCH_COUNT; i++)
-		strcpy(p->last[i], "-");
-}
-
-/* No strtoul: stdlib.h is only pulled in for the host self-checks. */
-static unsigned long parse_ul(const char *s)
-{
-	unsigned long value = 0;
-
-	while (*s >= '0' && *s <= '9')
-		value = value * 10 + (unsigned long)(*s++ - '0');
-	return value;
-}
-
-static int read_proc_file(int root, const char *pid_name, const char *leaf,
-			  char *buf, size_t size)
-{
-	char path[96];
-	ssize_t got;
-	int fd;
-
-	snprintf(path, sizeof path, "%s/%s", pid_name, leaf);
-	fd = openat(root, path, O_RDONLY | O_CLOEXEC);
-	if (fd < 0)
-		return -1;
-	do {
-		got = read(fd, buf, size - 1);
-	} while (got < 0 && errno == EINTR);
-	close(fd);
-	if (got <= 0)
-		return -1;
-	buf[got] = '\0';
-	return (int)got;
-}
-
-/* Field 2 (comm) may itself contain spaces and parentheses: split after the
- * LAST ')' so token 0 is field 3. A short or truncated stat leaves state '-'. */
-static void daemon_parse_stat(const char *stat, struct daemon_status *out)
-{
-	unsigned long field[19];
-	char state;
-	const char *cursor = strrchr(stat, ')');
-	size_t n;
-
-	if (!cursor)
-		return;
-	for (cursor++; *cursor == ' '; cursor++)
-		;
-	if (!*cursor)
-		return;
-	state = *cursor;
-	for (n = 0; n < sizeof field / sizeof field[0]; n++) {
-		while (*cursor && *cursor != ' ')
-			cursor++;
-		while (*cursor == ' ')
-			cursor++;
-		if (!*cursor)
-			break;
-		field[n] = parse_ul(cursor);
-	}
-	if (n < sizeof field / sizeof field[0])
-		return;
-	out->state = state;
-	out->ppid = (int)field[0];
-	out->utime = field[10];
-	out->stime = field[11];
-	out->threads = (int)field[16];
-}
-
-static void daemon_probe_collect(const char *proc_root, struct daemon_status *status,
-				 unsigned long *entries, int *comm_errno,
-				 unsigned long *highest,
-				 char *dump, size_t dump_size)
-{
-	DIR *dir = opendir(proc_root);
-	struct dirent *entry;
-	unsigned i;
-	char found[DAEMON_WATCH_COUNT] = { 0 };
-
-	*entries = 0;
-	*comm_errno = 0;
-	*highest = 0;
-	if (dump && dump_size)
-		dump[0] = '\0';
-
-	memset(status, 0, DAEMON_WATCH_COUNT * sizeof *status);
-	for (i = 0; i < DAEMON_WATCH_COUNT; i++) {
-		status[i].state = '-';
-		strcpy(status[i].wchan, "-");
-		strcpy(status[i].comm, daemon_watch[i]);
-	}
-	if (!dir) {
-		*comm_errno = errno;
-		return;
-	}
-	while ((entry = readdir(dir))) {
-		unsigned matched = DAEMON_WATCH_COUNT;
-		size_t digits = strspn(entry->d_name, "0123456789");
-		char comm[32], stat[1024], wchan[32];
-		size_t n;
-
-		if (!digits || entry->d_name[digits])
-			continue;
-		(*entries)++;
-		{
-			unsigned long pid = parse_ul(entry->d_name);
-
-			if (pid > *highest)
-				*highest = pid;
-		}
-		if (read_proc_file(dirfd(dir), entry->d_name, "comm", comm,
-				   sizeof comm) <= 0) {
-			/* errno is only meaningful here: on success it is stale. */
-			if (!*comm_errno)
-				*comm_errno = errno;
-			continue;
-		}
-		/* comm carries a trailing newline and stops at 15 bytes. */
-		comm[15] = '\0';
-		for (n = strlen(comm); n && comm[n - 1] == '\n'; n--)
-			comm[n - 1] = '\0';
-		if (dump && dump_size) {
-			char line[320];
-			size_t at = strlen(dump);
-
-			snprintf(line, sizeof line, " pid=%s comm=%s", entry->d_name, comm);
-			if (at + strlen(line) + 1 < dump_size)
-				strcpy(dump + at, line);
-		}
-		for (i = 0; i < DAEMON_WATCH_COUNT; i++) {
-			if (found[i] ||
-			    strncmp(daemon_watch[i], comm, strlen(daemon_watch[i])))
-				continue;
-			found[i] = 1;
-			matched = i;
-			break;
-		}
-		if (matched == DAEMON_WATCH_COUNT)
-			continue;
-		status[matched].pid = (int)parse_ul(entry->d_name);
-		memcpy(status[matched].comm, comm, sizeof status[matched].comm);
-		if (read_proc_file(dirfd(dir), entry->d_name, "stat", stat,
-				   sizeof stat) > 0)
-			daemon_parse_stat(stat, &status[matched]);
-		/* wchan needs ptrace-mode access this domain may lack: diagnostic
-		 * only, never fatal. */
-		if (read_proc_file(dirfd(dir), entry->d_name, "wchan", wchan,
-				   sizeof wchan) > 0) {
-			wchan[15] = '\0';
-			memcpy(status[matched].wchan, wchan,
-			       sizeof status[matched].wchan);
-		}
-	}
-	closedir(dir);
-}
-
-static void daemon_pidns_report(const struct daemon_probe *p, int out, int *mirror);
-
-/* Written straight to the capture fd, never through /dev/kmsg: if printk is
- * what is wedged, the probe must survive it. */
-static void daemon_probe_tick(struct daemon_probe *p, const char *proc_root,
-			      int out, int *mirror)
-{
-	struct daemon_status status[DAEMON_WATCH_COUNT];
-	char dump[8192];
-	unsigned long entries, highest;
-	unsigned i;
-	int comm_errno, first = p && p->comm_errno == -1;
-
-	if (!p)
-		return;
-	daemon_probe_collect(proc_root, status, &entries, &comm_errno,
-			     &highest, first ? dump : NULL, sizeof dump);
-	p->highest = highest;
-	/* One census of every comm seen, so a watch name that can never match on
-	 * this kernel is visible instead of silently reporting pid=0. */
-	if (first && dump[0]) {
-		char line[sizeof dump];
-		size_t len;
-
-		len = (size_t)snprintf(line, sizeof line, "DIAG: proccomm%s\n", dump);
-		if (len < sizeof line)
-			write_capture(out, mirror, line, len, 1);
-	}
-	/* An unreadable /proc must say so: silence here is indistinguishable
-	 * from "no daemon yet" without it. */
-	if (comm_errno != p->comm_errno || entries != p->entries) {
-		char census[128];
-		size_t len;
-
-		len = (size_t)snprintf(census, sizeof census,
-			"DIAG: procdir path=%s self=%d entries=%lu comm_errno=%d\n",
-			proc_root, (int)getpid(), entries, comm_errno);
-		p->comm_errno = comm_errno;
-		p->entries = entries;
-		if (len < sizeof census)
-			write_capture(out, mirror, census, len, 1);
-	}
-	if (first)
-		daemon_pidns_report(p, out, mirror);
-	for (i = 0; i < DAEMON_WATCH_COUNT; i++) {
-		char signature[48], line[256];
-		time_t now = monotonic_seconds();
-		size_t len;
-
-		snprintf(signature, sizeof signature, "%d:%c:%d:%lu:%lu",
-			 status[i].pid, status[i].state, status[i].threads,
-			 status[i].utime, status[i].stime);
-		/* ponytail: measured 20s heartbeat missed the whole 65.2-67.0s
-		 * stall window; 1s costs ~600KB of the 64MiB logdump. */
-		if (!strcmp(p->last[i], signature) && now - p->emitted[i] < 1)
-			continue;
-		len = (size_t)snprintf(line, sizeof line,
-			"DIAG: daemon name=%s pid=%d state=%c ppid=%d threads=%d utime=%lu stime=%lu wchan=%s\n",
-			status[i].comm, status[i].pid, status[i].state, status[i].ppid,
-			status[i].threads, status[i].utime, status[i].stime, status[i].wchan);
-		memcpy(p->last[i], signature, sizeof signature);
-		p->emitted[i] = now;
-		if (len < sizeof line)
-			write_capture(out, mirror, line, len, 1);
-	}
-}
-
-/* The recorder's /proc ceiling sat at ~168 while Android allocated pids past
- * 350. ns_last_pid separates "this view is restricted or frozen" from
- * "Android's pids live in another namespace"; the readlinks show whether PID 1
- * exposes one at all. Emitted once per run and again when the run ends. */
-static void daemon_pidns_report(const struct daemon_probe *p, int out, int *mirror)
-{
-	char one[64], me[64], line[320];
-	unsigned long next;
-	ssize_t n;
-	int ns_errno, fd;
-	size_t len;
-
-	n = readlink("/proc/1/ns/pid", one, sizeof one - 1);
-	if (n < 0)
-		snprintf(one, sizeof one, "errno=%d", errno);
-	else
-		one[n] = '\0';
-	n = readlink("/proc/self/ns/pid", me, sizeof me - 1);
-	if (n < 0)
-		snprintf(me, sizeof me, "errno=%d", errno);
-	else
-		me[n] = '\0';
-	fd = open("/proc/1/ns/pid", O_RDONLY | O_CLOEXEC);
-	ns_errno = fd < 0 ? errno : 0;
-	if (fd >= 0)
-		close(fd);
-	next = 0;
-	{
-		char buf[32];
-		ssize_t got;
-		int fd = open("/proc/sys/kernel/ns_last_pid",
-			      O_RDONLY | O_CLOEXEC);
-
-		if (fd >= 0) {
-			got = read(fd, buf, sizeof buf - 1);
-			close(fd);
-			if (got > 0) {
-				buf[got] = '\0';
-				next = parse_ul(buf);
-			}
-		}
-	}
-	len = (size_t)snprintf(line, sizeof line,
-		"DIAG: pidns entries=%lu highest=%lu ns_last_pid=%lu ns_pid_1=%s ns_self=%s ns_open_errno=%d\n",
-		p->entries, p->highest, next, one, me, ns_errno);
-	if (len < sizeof line)
-		write_capture(out, mirror, line, len, 1);
-}
-#endif
-
 static int dump_log(int in, int out, unsigned seconds, int durable, int *mirror,
 		    struct ramoops_sampler *sampler)
 {
@@ -731,10 +418,6 @@ static int dump_log(int in, int out, unsigned seconds, int durable, int *mirror,
 		/* ponytail: SD read/write/fsync makes 2s best-effort; use a
 		 * separate collector only if measured latency warrants it. */
 		ramoops_sampler_tick(sampler);
-		/* Only the durable writer probes: the USB child is a separate
-		 * process with its own copy of the state. */
-		if (sampler)
-			daemon_probe_tick(&daemon_probe_state, "/proc", out, mirror);
 #endif
 		got = read(in, buf, sizeof buf);
 		if (got > 0) {
@@ -751,12 +434,6 @@ static int dump_log(int in, int out, unsigned seconds, int durable, int *mirror,
 			usleep(200000);
 		}
 	} while (monotonic_seconds() <= deadline);
-#ifdef ANDROID_CAPTURE
-	/* Last words: if Android's pids were invisible for the whole run, the
-	 * final ns_last_pid says whether the view ever moved. */
-	if (sampler)
-		daemon_pidns_report(&daemon_probe_state, out, mirror);
-#endif
 	return 0;
 }
 
@@ -912,171 +589,6 @@ static int ramoops_selftest(void)
 	close(dir);
 	assert(!rmdir(directory));
 	puts("Ramoops alternating snapshot and capture continuation checks PASS");
-	return 0;
-}
-#endif
-
-#ifdef ANDROID_DAEMON_TEST
-/* Catch prefix misses, the last-')' stat split, and a heartbeat that would
- * flood the capture with an unchanged tree. */
-static void daemon_test_write(int dir, const char *path, const char *data)
-{
-	int fd = openat(dir, path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-
-	assert(fd >= 0);
-	assert(!write_all(fd, data, strlen(data)));
-	close(fd);
-}
-
-static int count_lines(const char *text, const char *needle)
-{
-	int seen = 0;
-	const char *at = text;
-
-	while ((at = strstr(at, needle))) {
-		seen++;
-		at += strlen(needle);
-	}
-	return seen;
-}
-
-static int daemon_probe_selftest(void)
-{
-	char directory[] = "/tmp/ack-daemon-check-XXXXXX";
-	char root[256];
-	char captured[8192];
-	/* comm carries a space and the field count is exactly 19 after ')'. */
-	static const char keystore_stat[] =
-		"100 (key store 2) S 1 100 100 0 -1 4194560 1234 5 0 0 20 3 0 0 20 0 4 0 987654 1234567 42\n";
-	static const char keymaster_stat[] =
-		"101 (keymaster@3.0-s) R 1 100 100 0 -1 4194560 1 0 0 0 7 1 0 0 20 0 2 0 111 222 7\n";
-	static const char unrelated_stat[] =
-		"102 (unrelated) D 1 100 100 0 -1 4194560 9 0 0 0 1 2 0 0 20 0 1 0 5 6 1\n";
-	static const char truncated_stat[] = "103 (vdc) S 1 100\n";
-	struct daemon_probe p;
-	struct stat before, after;
-	off_t size;
-	int dir, out;
-	ssize_t got;
-
-	assert(mkdtemp(directory));
-	dir = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-	assert(dir >= 0);
-	assert((size_t)snprintf(root, sizeof root, "%s/root", directory) < sizeof root);
-	assert(!mkdirat(dir, "root", 0700));
-	{
-		int root_fd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-		assert(root_fd >= 0);
-		assert(!mkdirat(root_fd, "100", 0700));
-		assert(!mkdirat(root_fd, "101", 0700));
-		assert(!mkdirat(root_fd, "102", 0700));
-		assert(!mkdirat(root_fd, "103", 0700));
-		daemon_test_write(root_fd, "100/comm", "keystore2\n");
-		daemon_test_write(root_fd, "100/stat", keystore_stat);
-		daemon_test_write(root_fd, "100/wchan", "binder_ioctl_write_read\n");
-		daemon_test_write(root_fd, "101/comm", "keymaster@3.0-s\n");
-		daemon_test_write(root_fd, "101/stat", keymaster_stat);
-		daemon_test_write(root_fd, "102/comm", "unrelated\n");
-		daemon_test_write(root_fd, "102/stat", unrelated_stat);
-		daemon_test_write(root_fd, "103/comm", "vdc\n");
-		daemon_test_write(root_fd, "103/stat", truncated_stat);
-		close(root_fd);
-	}
-	out = openat(dir, "capture", O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-	assert(out >= 0);
-	daemon_probe_init(&p);
-	daemon_probe_tick(&p, root, out, NULL);
-	assert(!fsync(out));
-	assert(!fstat(out, &before));
-	size = before.st_size;
-	assert(size > 0);
-	assert(pread(out, captured, (size_t)size, 0) == size);
-	captured[size] = '\0';
-
-	assert(strstr(captured, "DIAG: procdir path=") &&
-	       strstr(captured, " entries=4 comm_errno=0\n"));
-	/* The /proc ceiling question: highest pid in the fixture must reach the
-	 * report, and every namespace field must be present even when the
-	 * kernel refuses the read. */
-	assert(strstr(captured, "DIAG: pidns entries=4 highest=103 ns_last_pid="));
-	assert(strstr(captured, " ns_pid_1=") && strstr(captured, " ns_self=") &&
-	       strstr(captured, " ns_open_errno="));
-	/* The one-shot comm census must land, or a watch name that can never match
-	 * on this kernel stays invisible. readdir order is not stable. */
-	assert(strstr(captured, "DIAG: proccomm "));
-	assert(strstr(captured, " pid=100 comm=keystore2") &&
-	       strstr(captured, " pid=101 comm=keymaster@3.0-s") &&
-	       strstr(captured, " pid=102 comm=unrelated") &&
-	       strstr(captured, " pid=103 comm=vdc"));
-
-	assert(count_lines(captured, "name=keystore2 ") == 1);
-	assert(count_lines(captured, "name=keymaster@3.0-s ") == 1);
-	/* The census legitimately names every process; only watch lines must skip it. */
-	assert(!strstr(captured, "name=unrelated"));
-	assert(strstr(captured,
-		      "DIAG: daemon name=keystore2 pid=100 state=S ppid=1 threads=4 utime=20 stime=3 wchan=binder_ioctl_wr\n"));
-	assert(strstr(captured,
-		      "DIAG: daemon name=keymaster@3.0-s pid=101 state=R ppid=1 threads=2 utime=7 stime=1 wchan=-\n"));
-	assert(strstr(captured, "DIAG: daemon name=vdc pid=103 state=- ppid=0 threads=0"));
-	assert(strstr(captured, "DIAG: daemon name=logd pid=0 state=-"));
-
-	/* Unchanged tree, inside the heartbeat: the probe must stay silent. */
-	daemon_probe_tick(&p, root, out, NULL);
-	assert(!fstat(out, &after));
-	assert(after.st_size == size);
-
-	/* Past the heartbeat the same tree must still emit: a cadence that never
-	 * fires leaves a short stall window unobserved. */
-	{
-		unsigned slot;
-
-		for (slot = 0; slot < DAEMON_WATCH_COUNT; slot++)
-			p.emitted[slot] -= 2;
-	}
-	daemon_probe_tick(&p, root, out, NULL);
-	assert(!fstat(out, &after));
-	assert(after.st_size > size);
-
-	/* An unreadable proc root must report the errno instead of going quiet. */
-	{
-		struct daemon_probe missing;
-		char missing_root[sizeof root + 8];
-
-		snprintf(missing_root, sizeof missing_root, "%s/absent", root);
-		daemon_probe_init(&missing);
-		daemon_probe_tick(&missing, missing_root, out, NULL);
-		assert(!fsync(out));
-		got = pread(out, captured, sizeof captured - 1, 0);
-		assert(got > (ssize_t)size);
-		captured[got] = '\0';
-		assert(strstr(captured, " entries=0 comm_errno=2\n"));
-	}
-
-	close(out);
-	assert(!unlinkat(dir, "capture", 0));
-	{
-		int root_fd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-		unsigned pid;
-
-		assert(root_fd >= 0);
-		for (pid = 100; pid < 104; pid++) {
-			char leaf[16];
-
-			snprintf(leaf, sizeof leaf, "%u/comm", pid);
-			assert(!unlinkat(root_fd, leaf, 0));
-			snprintf(leaf, sizeof leaf, "%u/stat", pid);
-			assert(!unlinkat(root_fd, leaf, 0));
-			if (pid == 100)
-				assert(!unlinkat(root_fd, "100/wchan", 0));
-			snprintf(leaf, sizeof leaf, "%u", pid);
-			assert(!unlinkat(root_fd, leaf, AT_REMOVEDIR));
-		}
-		close(root_fd);
-	}
-	assert(!rmdir(root));
-	close(dir);
-	assert(!rmdir(directory));
-	puts("Daemon probe prefix, stat split, dedup and heartbeat checks PASS");
 	return 0;
 }
 #endif
@@ -1279,39 +791,6 @@ static int guard_bootdevice(int proc)
 	return 0;
 }
 
-/* Report what /proc looks like from the namespace this process is in. Runs in
- * a short-lived child so the recorder keeps its single-writer invariant. */
-static void guardns_census(int log, const char *vantage)
-{
-	struct daemon_status seen[DAEMON_WATCH_COUNT];
-	char done[80];
-	time_t stop = monotonic_seconds() + 150;
-
-	while (monotonic_seconds() < stop) {
-		unsigned long entries, highest;
-		char line[320];
-		size_t len;
-		int err;
-		unsigned i;
-
-		daemon_probe_collect("/proc", seen, &entries, &err, &highest,
-				     NULL, 0);
-		len = (size_t)snprintf(line, sizeof line,
-			"DIAG: guardns vantage=%s entries=%lu comm_errno=%d",
-			vantage, entries, err);
-		for (i = 0; i < DAEMON_WATCH_COUNT && len < sizeof line; i++)
-			len += (size_t)snprintf(line + len, sizeof line - len,
-				" %s=%d/%c", seen[i].comm, seen[i].pid, seen[i].state);
-		if (len < sizeof line)
-			snprintf(line + len, sizeof line - len, "\n");
-		say(log, line);
-		usleep(1000000);
-	}
-	snprintf(done, sizeof done,
-		 "DIAG: guardns vantage=%s census complete\n", vantage);
-	say(log, done);
-}
-
 static void install_android_guard(int proc, int fstab, int contexts, int log)
 {
 	time_t deadline = monotonic_seconds() + 60;
@@ -1359,27 +838,6 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	say(log, "DIAG: bootdevice guard installed read-only f2fs-only fstab"
 		 " and vendor contexts before policy load\n");
 	say(log, "DIAG: bootdevice canonical alias and legacy wait path ready\n");
-	/* The mount namespace does not cross the boundary: Android's services are
-	 * in a different PID namespace, visible only after setns(CLONE_NEWPID)
-	 * followed by a fork. Reap the child and keep the record either way. */
-	{
-		int pidns = openat(proc, "1/ns/pid", O_RDONLY | O_CLOEXEC);
-
-		if (pidns >= 0 && !setns(pidns, CLONE_NEWPID) && fork() == 0) {
-			close(pidns);
-			close(proc);
-			guardns_census(log, "pidns");
-			_exit(0);
-		}
-		snprintf(message, sizeof message,
-			 "DIAG: guardns pid namespace join failed errno=%d; "
-			 "mount namespace census follows\n", errno);
-		say(log, message);
-		if (pidns >= 0)
-			close(pidns);
-	}
-	/* Fallback vantage point: PID 1's mount namespace. */
-	guardns_census(log, "mntns");
 	_exit(0);
 failed:
 	snprintf(message, sizeof message,
@@ -1678,8 +1136,6 @@ static int launch_android(char **argv)
 		static const char marker[] =
 			"DIAG: Android capture ready; handing PID 1 to Android init\n";
 
-		/* The probe owns nothing: never closed, never freed. */
-		daemon_probe_init(&daemon_probe_state);
 		close(ready[0]);
 		/* Never expose the logger's mounts to Android's first-stage init. */
 		if (unshare(CLONE_NEWNS) ||
@@ -1843,9 +1299,6 @@ int main(int argc, char **argv)
 #endif
 #ifdef ANDROID_RAMOOPS_TEST
 	return ramoops_selftest();
-#endif
-#ifdef ANDROID_DAEMON_TEST
-	return daemon_probe_selftest();
 #endif
 	return launch_android(argv);
 #endif

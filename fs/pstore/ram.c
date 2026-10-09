@@ -794,9 +794,18 @@ static int ramoops_snap_thread(void *unused)
 #define RAMOOPS_WITNESS_OFFSET	0x3f00000ULL
 #define RAMOOPS_WITNESS_LEN	512
 
+/*
+ * QSEE trace ring (snapshot45 diagnostic): one FUA write per record so it
+ * survives a reset. The record format is defined in drivers/misc/qseecom.c.
+ */
+#define RAMOOPS_QTRACE_OFFSET	0x3f10000ULL
+#define RAMOOPS_QTRACE_SLOTS	128
+
 static struct file *ramoops_witness_file;
 static struct block_device *ramoops_witness_bdev;
 static void *ramoops_witness_buf;
+/* Serialises the lazy open and the shared ramoops_witness_buf. */
+static DEFINE_MUTEX(ramoops_witness_lock);
 
 static int ramoops_witness_open(void)
 {
@@ -825,7 +834,9 @@ static int ramoops_witness_open(void)
 	return 0;
 }
 
-int ramoops_witness_write(const void *data, size_t len)
+/* Caller holds ramoops_witness_lock. */
+static int ramoops_witness_write_at(u64 offset, blk_opf_t opf,
+				    const void *data, size_t len)
 {
 	struct bio *bio;
 	int err;
@@ -838,7 +849,7 @@ int ramoops_witness_write(const void *data, size_t len)
 	memset(ramoops_witness_buf, 0, RAMOOPS_WITNESS_LEN);
 	memcpy(ramoops_witness_buf, data, len);
 
-	bio = bio_alloc(ramoops_witness_bdev, 1, REQ_OP_WRITE,
+	bio = bio_alloc(ramoops_witness_bdev, 1, opf,
 			GFP_KERNEL | __GFP_NOFAIL);
 	if (!bio)
 		return -ENOMEM;
@@ -847,14 +858,38 @@ int ramoops_witness_write(const void *data, size_t len)
 		bio_put(bio);
 		return -EIO;
 	}
-	bio->bi_iter.bi_sector = RAMOOPS_WITNESS_OFFSET >> SECTOR_SHIFT;
+	bio->bi_iter.bi_sector = offset >> SECTOR_SHIFT;
 	bio->bi_iter.bi_size = RAMOOPS_WITNESS_LEN;
 	submit_bio_wait(bio);
 	err = blk_status_to_errno(bio->bi_status);
 	bio_put(bio);
 	return err;
 }
+
+int ramoops_witness_write(const void *data, size_t len)
+{
+	int err;
+
+	mutex_lock(&ramoops_witness_lock);
+	err = ramoops_witness_write_at(RAMOOPS_WITNESS_OFFSET, REQ_OP_WRITE,
+				       data, len);
+	mutex_unlock(&ramoops_witness_lock);
+	return err;
+}
 EXPORT_SYMBOL_GPL(ramoops_witness_write);
+
+int ramoops_qtrace_write(u64 seq, const void *data, size_t len)
+{
+	int err;
+
+	mutex_lock(&ramoops_witness_lock);
+	err = ramoops_witness_write_at(RAMOOPS_QTRACE_OFFSET +
+			(seq % RAMOOPS_QTRACE_SLOTS) * RAMOOPS_WITNESS_LEN,
+			REQ_OP_WRITE | REQ_SYNC | REQ_FUA, data, len);
+	mutex_unlock(&ramoops_witness_lock);
+	return err;
+}
+EXPORT_SYMBOL_GPL(ramoops_qtrace_write);
 
 int ramoops_witness_read(void *data, size_t len)
 {
@@ -863,19 +898,23 @@ int ramoops_witness_read(void *data, size_t len)
 
 	if (len > RAMOOPS_WITNESS_LEN)
 		return -EINVAL;
+	mutex_lock(&ramoops_witness_lock);
 	err = ramoops_witness_open();
 	if (err)
-		return err;
+		goto out;
 	memset(ramoops_witness_buf, 0, RAMOOPS_WITNESS_LEN);
 
 	bio = bio_alloc(ramoops_witness_bdev, 1, REQ_OP_READ,
 			GFP_KERNEL | __GFP_NOFAIL);
-	if (!bio)
-		return -ENOMEM;
+	if (!bio) {
+		err = -ENOMEM;
+		goto out;
+	}
 	if (bio_add_page(bio, vmalloc_to_page(ramoops_witness_buf),
 			 RAMOOPS_WITNESS_LEN, 0) != RAMOOPS_WITNESS_LEN) {
 		bio_put(bio);
-		return -EIO;
+		err = -EIO;
+		goto out;
 	}
 	bio->bi_iter.bi_sector = RAMOOPS_WITNESS_OFFSET >> SECTOR_SHIFT;
 	bio->bi_iter.bi_size = RAMOOPS_WITNESS_LEN;
@@ -884,6 +923,8 @@ int ramoops_witness_read(void *data, size_t len)
 	if (!err)
 		memcpy(data, ramoops_witness_buf, len);
 	bio_put(bio);
+out:
+	mutex_unlock(&ramoops_witness_lock);
 	return err;
 }
 EXPORT_SYMBOL_GPL(ramoops_witness_read);

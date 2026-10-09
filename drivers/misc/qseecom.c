@@ -38,9 +38,11 @@
 #include <linux/signal.h>
 #include <linux/dma-buf.h>
 #include <linux/iosys-map.h>
+#include <linux/random.h>
 #if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
 extern int ramoops_witness_write(const void *data, size_t len);
 extern int ramoops_witness_read(void *data, size_t len);
+extern int ramoops_qtrace_write(u64 seq, const void *data, size_t len);
 #endif
 
 #include <linux/smp.h>
@@ -461,8 +463,7 @@ static void qseecom_canary_fn(struct work_struct *work)
 	if (state != QSEECOM_STATE_READY)
 		return;
 
-	pr_info("snapshot35 qsee_canary tick=%llu state=%d\n", ++tick, state);
-	atomic64_set(&qseecom_canary_ticks, tick);
+	atomic64_set(&qseecom_canary_ticks, ++tick);
 	if (atomic_read(&qseecom.qseecom_state) == QSEECOM_STATE_READY)
 		schedule_delayed_work(&qseecom_canary_work, HZ);
 }
@@ -507,6 +508,77 @@ static void stall_witness_write(u64 canary, u32 quiet)
 	ramoops_witness_write(&w, sizeof(w));
 }
 #endif
+
+/*
+ * Durable QSEE trace (snapshot45 diagnostic). Every SMC and listener event
+ * is written with FUA to a ring in the logdump partition (fs/pstore/ram.c),
+ * so the last persisted record shows where a reset happened. Decoded by
+ * porting/logging/decode-qsee-trace.py; keep the layout in sync with it.
+ */
+#define QSEE_TRACE_MAGIC	0x3143525445455351ULL	/* "QSEETRC1" */
+
+enum {
+	QSEE_TRACE_SMC_SEND = 1,
+	QSEE_TRACE_SMC_RET = 2,
+	QSEE_TRACE_LISTENER_WAKE = 3,
+	QSEE_TRACE_LISTENER_RESP = 4,
+};
+
+struct qsee_trace_rec {
+	__le64 magic, seq, ktime_ns;
+	__le32 boot_id, event, pid, smc_id, arginfo, ret;
+	__le64 args[10];
+	__le64 rets[3];
+	__le64 extra[4];
+	char comm[16];
+};
+
+static_assert(sizeof(struct qsee_trace_rec) == 200);
+
+static atomic64_t qsee_trace_seq;
+static u32 qsee_trace_boot_id;
+
+static void qsee_trace(u32 event, u32 smc_id, const struct scm_desc *desc,
+		       int ret, u64 e0, u64 e1, u64 e2, u64 e3)
+{
+#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
+	struct qsee_trace_rec rec = {};
+	u64 seq = atomic64_inc_return(&qsee_trace_seq);
+	int i;
+
+	rec.magic = cpu_to_le64(QSEE_TRACE_MAGIC);
+	rec.seq = cpu_to_le64(seq);
+	rec.ktime_ns = cpu_to_le64(ktime_get_ns());
+	rec.boot_id = cpu_to_le32(qsee_trace_boot_id);
+	rec.event = cpu_to_le32(event);
+	rec.pid = cpu_to_le32(current->pid);
+	rec.smc_id = cpu_to_le32(smc_id);
+	rec.ret = cpu_to_le32((u32)ret);
+	if (desc) {
+		rec.arginfo = cpu_to_le32(desc->arginfo);
+		for (i = 0; i < ARRAY_SIZE(rec.args); i++)
+			rec.args[i] = cpu_to_le64(desc->args[i]);
+		for (i = 0; i < ARRAY_SIZE(rec.rets); i++)
+			rec.rets[i] = cpu_to_le64(desc->ret[i]);
+	}
+	rec.extra[0] = cpu_to_le64(e0);
+	rec.extra[1] = cpu_to_le64(e1);
+	rec.extra[2] = cpu_to_le64(e2);
+	rec.extra[3] = cpu_to_le64(e3);
+	memcpy(rec.comm, current->comm, sizeof(rec.comm));
+	/* -ENODEV before logdump appears is expected; the seq gap shows it. */
+	ramoops_qtrace_write(seq, &rec, sizeof(rec));
+#else
+	(void)event;
+	(void)smc_id;
+	(void)desc;
+	(void)ret;
+	(void)e0;
+	(void)e1;
+	(void)e2;
+	(void)e3;
+#endif
+}
 
 static void qseecom_stall_dump_cpu(void *info)
 {
@@ -719,13 +791,19 @@ static int __qseecom_scm_call2_locked(uint32_t smc_id, struct scm_desc *desc)
 
 	pr_info("qseecom: smc %08x argc %u call\n", smc_id, desc->arginfo & 0xf);
 	if (qseecom.support_bus_scaling) {
+		qsee_trace(QSEE_TRACE_SMC_SEND, smc_id, desc, 0, 0, 0, 0, 0);
 		ret = scm_call2(smc_id, desc);
+		qsee_trace(QSEE_TRACE_SMC_RET, smc_id, desc, ret, 0, 0, 0, 0);
 		pr_info("qseecom: smc %08x -> %d\n", smc_id, ret);
 		return ret;
 	}
 
 	do {
+		qsee_trace(QSEE_TRACE_SMC_SEND, smc_id, desc, 0,
+			   retry_count, 0, 0, 0);
 		ret = scm_call2_noretry(smc_id, desc);
+		qsee_trace(QSEE_TRACE_SMC_RET, smc_id, desc, ret,
+			   retry_count, 0, 0, 0);
 		if (ret == -EBUSY) {
 			mutex_unlock(&app_access_lock);
 			msleep(QSEECOM_SCM_EBUSY_WAIT_MS);
@@ -2296,6 +2374,8 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 		lstnr = resp->data;
 		pr_info("qseecom: app %u callback listener %u path legacy\n",
 			data->client.app_id, lstnr);
+		qsee_trace(QSEE_TRACE_LISTENER_WAKE, 0, NULL, 0, lstnr,
+			   data->client.app_id, 0, 0);
 		/*
 		 * Wake up blocking lsitener service with the lstnr id
 		 */
@@ -2434,6 +2514,8 @@ err_resp:
 				QSEOS_LISTENER_DATA_RSP_COMMAND_WHITELIST;
 		pr_info("qseecom: listener %u response status %u cmd %#x sglistinfo %pa\n",
 			lstnr, status, *(uint32_t *)cmd_buf, &table_pa);
+		qsee_trace(QSEE_TRACE_LISTENER_RESP, 0, NULL, 0, lstnr, status,
+			   table_pa, *(uint32_t *)cmd_buf);
 
 		if ((lstnr == RPMB_SERVICE) || (lstnr == SSD_SERVICE)) {
 			ret = __qseecom_enable_clk(CLK_QSEE);
@@ -2646,6 +2728,8 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 		lstnr = resp->data;
 		pr_info("qseecom: app %u callback listener %u path reentrant\n",
 			data->client.app_id, lstnr);
+		qsee_trace(QSEE_TRACE_LISTENER_WAKE, 0, NULL, 0, lstnr,
+			   data->client.app_id, 0, 0);
 		/*
 		 * Wake up blocking lsitener service with the lstnr id
 		 */
@@ -2777,6 +2861,8 @@ err_resp:
 				QSEOS_LISTENER_DATA_RSP_COMMAND_WHITELIST;
 		pr_info("qseecom: listener %u response status %u cmd %#x sglistinfo %pa\n",
 			lstnr, status, *(uint32_t *)cmd_buf, &table_pa);
+		qsee_trace(QSEE_TRACE_LISTENER_RESP, 0, NULL, 0, lstnr, status,
+			   table_pa, *(uint32_t *)cmd_buf);
 
 		if (lstnr == RPMB_SERVICE) {
 			ret = __qseecom_enable_clk(CLK_QSEE);
@@ -9936,6 +10022,7 @@ static int qseecom_probe(struct platform_device *pdev)
 {
 	int rc;
 
+	qsee_trace_boot_id = get_random_u32() | 1;
 	rc = qseecom_init_dev(pdev);
 	if (rc)
 		return rc;
