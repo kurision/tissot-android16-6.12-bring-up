@@ -1041,19 +1041,26 @@ static void harvest_modem_child(int log)
 	DIR *dir;
 	struct dirent *entry;
 
+	say(log, "DIAG: modem harvest: waiting for /firmware/image/adsp.mdt\n");
 	for (;;) {
 		struct stat st;
+		int look;
 
 		if (!stat("/firmware/image/adsp.mdt", &st) &&
 		    S_ISREG(st.st_mode))
 			break;
+		look = errno;
 		if (monotonic_seconds() >= deadline) {
-			say(log, "DIAG: modem harvest: adsp.mdt never appeared\n");
+			snprintf(message, sizeof(message),
+				 "DIAG: modem harvest: adsp.mdt never appeared last errno=%d\n",
+				 look);
+			say(log, message);
 			_exit(0);
 		}
 		sleep(2);
 	}
 	make_dir("/data/local/tmp/fwharvest");
+	make_dir("/sdlog/fwharvest");
 	dir = opendir("/firmware/image");
 	if (!dir) {
 		snprintf(message, sizeof(message),
@@ -1077,6 +1084,11 @@ static void harvest_modem_child(int log)
 		error = stage_firmware_file(src, dest, &bytes);
 		if (!error)
 			chmod(dest, 0644);
+		if (!error) {
+			snprintf(dest, sizeof(dest), "/sdlog/fwharvest/%s",
+				 entry->d_name);
+			error = stage_firmware_file(src, dest, &bytes);
+		}
 		snprintf(message, sizeof(message),
 			 "DIAG: modem harvest %s bytes=%ld errno=%d\n",
 			 entry->d_name, bytes, error);
