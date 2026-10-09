@@ -6,7 +6,9 @@
  * provides /dev/<device>, not Android's /dev/block hierarchy.
  * Default mode never returns after setup; recovery requires a reboot.
  * Build with -DANDROID_CAPTURE to exec the original /system/bin/init as
- * PID 1 while a child records for 900 seconds in a private mount namespace.
+ * PID 1 while a child records for 900 seconds in a private mount namespace,
+ * and a watchdog child reboots the phone if Android has not reached
+ * sys.boot_completed=1 within BOOT_DEADLINE_SECONDS of kernel start.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -15,8 +17,11 @@
 #include <poll.h>
 #include <stdio.h>
 #include <sched.h>
+#include <signal.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/mount.h>
+#include <sys/reboot.h>
 #include <sys/statvfs.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -39,6 +44,9 @@
 #else
 #define DUMP_SECONDS 45
 #define DURABLE_CAPTURE 0
+#endif
+#ifndef BOOT_DEADLINE_SECONDS
+#define BOOT_DEADLINE_SECONDS 360
 #endif
 static time_t monotonic_seconds(void);
 struct ramoops_sampler;
@@ -752,6 +760,44 @@ failed:
 	return -1;
 }
 
+#ifdef ANDROID_HEADLESS
+/*
+ * Headless probe: the vendor sdm HWC and LiveDisplay need the legacy MDSS
+ * fbdev driver (/dev/graphics/fb*, msm_fb_* sysfs), which 6.12 lacks, and
+ * crash in a loop that restarts surfaceflinger and zygote (snapshot46).
+ * Their rc files are replaced by a comment so init never defines them.
+ */
+static const char *const headless_rc[][2] = {
+	{ "/dev/block/ack-headless-composer.rc",
+	  "/vendor/etc/init/android.hardware.graphics.composer@2.1-service.rc" },
+	{ "/dev/block/ack-headless-livedisplay.rc",
+	  "/vendor/etc/init/vendor.lineage.livedisplay-service.sdm.rc" },
+};
+
+static void guard_headless(int proc, int log)
+{
+	static const char stub[] = "# disabled by ACK diag headless probe\n";
+	char message[256];
+	size_t i;
+
+	for (i = 0; i < sizeof(headless_rc) / sizeof(headless_rc[0]); i++) {
+		int fd = memfd_create("ack-headless-rc", MFD_CLOEXEC);
+		int error = 0;
+
+		if (fd < 0 || write_all(fd, stub, sizeof(stub) - 1) ||
+		    guard_bind_config(proc, fd, headless_rc[i][0],
+				      headless_rc[i][1]))
+			error = errno;
+		if (fd >= 0)
+			close(fd);
+		snprintf(message, sizeof(message),
+			 "DIAG: headless rc override %s errno=%d\n",
+			 headless_rc[i][1], error);
+		say(log, message);
+	}
+}
+#endif
+
 static int guard_bootdevice(int proc)
 {
 	struct stat st;
@@ -838,6 +884,10 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	say(log, "DIAG: bootdevice guard installed read-only f2fs-only fstab"
 		 " and vendor contexts before policy load\n");
 	say(log, "DIAG: bootdevice canonical alias and legacy wait path ready\n");
+#ifdef ANDROID_HEADLESS
+	/* After the alias release: a late override must never block boot. */
+	guard_headless(proc, log);
+#endif
 	_exit(0);
 failed:
 	snprintf(message, sizeof message,
@@ -1084,11 +1134,42 @@ failed:
 	_exit(1);
 }
 
+/*
+ * Android's USB setup reuses gadget g1, which the diag ACM function holds
+ * bound to the only UDC, so every adb bind fails with EBUSY. Once Android
+ * creates its configuration (configs/b.1, made in "on boot" before adbd
+ * starts), stop the serial stream and hand the controller over.
+ */
+static void usb_handoff(pid_t capture, int klog)
+{
+	char msg[160];
+	int error = 0;
+
+	while (access(G "/configs/b.1", F_OK)) {
+		if (monotonic_seconds() >= 900)
+			_exit(0);
+		usleep(200000);
+	}
+	say(klog, "DIAG: Android USB config appeared; ending USB serial capture for adb\n");
+	/* Let the serial stream carry the marker before it is cut. */
+	sleep(1);
+	kill(capture, SIGKILL);
+	if (attribute(G "/UDC", "none"))
+		error = errno;
+	unlink(G "/configs/c.1/f1");
+	rmdir(G "/configs/c.1");
+	snprintf(msg, sizeof(msg),
+		 "DIAG: diag gadget unbound (errno=%d); UDC free for adb\n", error);
+	say(klog, msg);
+	_exit(0);
+}
+
 /* kmsg fds are opened by the parent at t~=1s (pre-enforcing, where opens
  * provably succeed) and inherited across the fork; opening them here later
  * fails with ENOENT once Android init has switch-rooted around us. */
 static void capture_usb(int kin, int klog, int kerr)
 {
+	pid_t self = getpid();
 	int out;
 	char msg[160];
 
@@ -1104,6 +1185,12 @@ static void capture_usb(int kin, int klog, int kerr)
 	 * host attach still receives the whole boot log. */
 	if (klog >= 0)
 		say(klog, "DIAG: independent Android USB capture ready\n");
+	if (klog >= 0 && fork() == 0) {
+		close(out);
+		if (kin >= 0)
+			close(kin);
+		usb_handoff(self, klog);
+	}
 	if (kin < 0) {
 		snprintf(msg, sizeof msg,
 			 "DIAG: USB kmsg unavailable errno=%d\n", kerr);
@@ -1118,6 +1205,44 @@ static void capture_usb(int kin, int klog, int kerr)
 	_exit(0);
 }
 
+/*
+ * init logs every triggered action to kmsg (printk.devkmsg=on), so the
+ * on property:sys.boot_completed=1 action marks a completed boot.
+ */
+static void boot_deadline(int kin, int klog)
+{
+	static const char done[] = "processing action (sys.boot_completed=1";
+	char rec[1024], msg[128];
+	struct pollfd p = { .fd = kin, .events = POLLIN };
+	ssize_t got;
+
+	while (monotonic_seconds() < BOOT_DEADLINE_SECONDS) {
+		got = read(kin, rec, sizeof(rec) - 1);
+		if (got > 0) {
+			if (memmem(rec, (size_t)got, done, sizeof(done) - 1)) {
+				snprintf(msg, sizeof(msg),
+					 "DIAG: boot completed t=%ld; deadline reboot disarmed\n",
+					 (long)monotonic_seconds());
+				say(klog, msg);
+				_exit(0);
+			}
+		} else if (got < 0 && errno == EAGAIN) {
+			poll(&p, 1, 1000);
+		} else if (got == 0 || (errno != EINTR && errno != EPIPE)) {
+			sleep(1);
+		}
+	}
+	snprintf(msg, sizeof(msg),
+		 "DIAG: boot not completed within %d s; rebooting\n",
+		 BOOT_DEADLINE_SECONDS);
+	say(klog, msg);
+	/* Let the recorders copy the marker, then flush every sink. */
+	sleep(2);
+	sync();
+	reboot(RB_AUTOBOOT);
+	_exit(1);
+}
+
 static int launch_android(char **argv)
 {
 	int ready[2] = { -1, -1 };
@@ -1128,7 +1253,7 @@ static int launch_android(char **argv)
 		goto exec_init;
 	child = fork();
 	if (child == 0) {
-		int in = -1, out = -1, kin = -1, klog = -1, kerr = 0, n;
+		int in = -1, out = -1, kin = -1, klog = -1, kerr = 0, n, kdl;
 		int proc = -1, fstab = -1, contexts = -1, sd = -1;
 		struct ramoops_sampler sampler = {
 			.input = -1, .output = { -1, -1 }, .log = -1,
@@ -1151,6 +1276,7 @@ static int launch_android(char **argv)
 		 * late opens fail once init has switch-rooted around us. */
 		kin = open("/dev/kmsg", O_RDONLY | O_NONBLOCK);
 		kerr = kin < 0 ? errno : 0;
+		kdl = open("/dev/kmsg", O_RDONLY | O_NONBLOCK);
 		klog = open("/dev/kmsg", O_WRONLY);
 		if (klog < 0)
 			kerr = errno;
@@ -1200,6 +1326,16 @@ static int launch_android(char **argv)
 				close(kin);
 			capture_block_state(klog);
 		}
+		if (kdl >= 0 && klog >= 0 && fork() == 0) {
+			close(ready[1]);
+			close(in);
+			close(out);
+			if (kin >= 0)
+				close(kin);
+			boot_deadline(kdl, klog);
+		}
+		if (kdl >= 0)
+			close(kdl);
 		/* Open the card before Android loads SELinux policy. Forked USB
 		 * and guard children never inherit the SD fd: one writer only. */
 		sd = open_sdlog();
