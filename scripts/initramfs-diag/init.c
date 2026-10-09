@@ -1209,7 +1209,7 @@ static void adsprpc_compat_child(int log)
 	time_t deadline = monotonic_seconds() + 240;
 	char message[256], dev[32];
 	unsigned int maj, min;
-
+	ssize_t n;
 	say(log, "DIAG: adsprpc compat: waiting for fastrpc-adsp\n");
 	for (;;) {
 		if (!read_file("/sys/class/misc/fastrpc-adsp/dev", dev,
@@ -1229,9 +1229,16 @@ static void adsprpc_compat_child(int log)
 		say(log, message);
 		_exit(0);
 	}
-	chmod("/dev/adsprpc-smd", 0666);
+	/* Stock identity (read off live stock): 0664 system:system
+	 * u:object_r:qdsp_device:s0. Without the label the daemon gets
+	 * avc denied on the tmpfs default context. */
+	chmod("/dev/adsprpc-smd", 0664);
+	chown("/dev/adsprpc-smd", 1000, 1000);
+	n = setxattr("/dev/adsprpc-smd", "security.selinux",
+		     "u:object_r:qdsp_device:s0", 28, 0);
 	snprintf(message, sizeof(message),
-		 "DIAG: adsprpc compat: alias %u:%u ready\n", maj, min);
+		 "DIAG: adsprpc compat: alias %u:%u label ret=%d errno=%d\n",
+		 maj, min, (int)n, n ? errno : 0);
 	say(log, message);
 	_exit(0);
 }
