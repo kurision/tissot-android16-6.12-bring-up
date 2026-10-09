@@ -32,8 +32,12 @@ collects the big ones with their unblock plans.
 ## 3. DSI pixel clock (`pclk0 update_config` WARNING)
 - Symptom: `clk-rcg2.c:133` WARN ×2 per boot from
   `dsi_link_clk_set_rate_6g ← msm_dsi_host_power_on`; display still binds.
-- Display-path only, non-fatal for headless runs, unvalidatable without (1).
-  Parked with display.
+- Effectively persistent: ×2 in 12/16 runs (s48, s49 r4–r6, s51–s57 except
+  s55 r2), always before `clk_disable_unused`. Cause: RCG CMD_UPDATE cannot
+  latch while the DSI PLL is unprepared (rates set before
+  `dsi_link_clk_enable_6g`).
+- FIXING: `CLK_OPS_PARENT_ENABLE` on gcc-msm8953 byte0/byte1/pclk0/pclk1
+  RCGs (dispcc-qcm2290/sm6115 pattern); verify 0 WARNs over ≥3 boots.
 
 ## 4. Camera (msm_camera stack: CAMSS/VFE, VENUS, sensors, ISP)
 - Symptom: nothing probed — `CONFIG_VIDEO_QCOM_CAMSS`/`VENUS` unset, no DT
