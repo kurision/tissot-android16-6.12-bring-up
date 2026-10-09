@@ -1145,7 +1145,7 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	unsigned int val;
 	struct input_dev *input;
 	unsigned long irq_flags;
-	int error;
+	int error, attempt;
 	u32 report_rate;
 
 	dev_dbg(&client->dev, "probing for EDT FT5x06 I2C\n");
@@ -1258,10 +1258,6 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	if (tsdata->reset_gpio) {
 		usleep_range(5000, 6000);
 		gpiod_set_value_cansleep(tsdata->reset_gpio, 0);
-		/*
-		 * Identify fails with -110 at 300ms on the (tissot) panel;
-		 * allow 500ms for the controller to boot after release.
-		 */
 		msleep(500);
 	}
 
@@ -1277,10 +1273,21 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	tsdata->factory_mode = false;
 	i2c_set_clientdata(client, tsdata);
 
-	error = edt_ft5x06_ts_identify(client, tsdata);
-	if (error) {
-		dev_err(&client->dev, "touchscreen probe failed\n");
-		return error;
+	/* The (tissot) panel answers identify only after a second reset
+	 * cycle: 500ms alone still fails with -110. Retry twice with a
+	 * re-toggle; a truly absent chip fails out in ~1.7s. */
+	for (attempt = 0; ; attempt++) {
+		error = edt_ft5x06_ts_identify(client, tsdata);
+		if (!error)
+			break;
+		if (attempt >= 2 || !tsdata->reset_gpio) {
+			dev_err(&client->dev, "touchscreen probe failed\n");
+			return error;
+		}
+		gpiod_set_value_cansleep(tsdata->reset_gpio, 1);
+		msleep(100);
+		gpiod_set_value_cansleep(tsdata->reset_gpio, 0);
+		msleep(500);
 	}
 
 	/*
