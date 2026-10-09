@@ -444,3 +444,20 @@
 &gpu {
 	status = "okay";
 };
+
+/* WCN3680 (stock live DT iris compatible); supplies from the live DT:
+ * vddxo=l7, vddrfa=l19, vddpa=l9, vdddig=l5. wcnss.mdt/.bXX not yet
+ * harvested (modem partition) — pronto fails fast until staged. */
+&wcnss {
+	status = "okay";
+};
+
+&wcnss_iris {
+	compatible = "qcom,wcn3680";
+	vddxo-supply = <&pm8953_l7>;
+	vddrfa-supply = <&pm8953_l19>;
+	vddpa-supply = <&pm8953_l9>;
+	vdddig-supply = <&pm8953_l5>;
+
+	status = "okay";
+};
