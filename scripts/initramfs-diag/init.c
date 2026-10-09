@@ -1199,6 +1199,57 @@ static void harvest_modem_firmware(int log)
 	}
 }
 /*
+ * Downstream adsprpcd opens /dev/adsprpc-smd, but upstream FastRPC
+ * registers /dev/fastrpc-adsp (misc). Same device, different name:
+ * wait for the upstream node, then mknod the downstream alias with
+ * identical numbers (mode 0666 for the daemon). Detached fork.
+ */
+static void adsprpc_compat_child(int log)
+{
+	time_t deadline = monotonic_seconds() + 240;
+	char message[256], dev[32];
+	unsigned int maj, min;
+
+	say(log, "DIAG: adsprpc compat: waiting for fastrpc-adsp\n");
+	for (;;) {
+		if (!read_file("/sys/class/misc/fastrpc-adsp/dev", dev,
+			       sizeof(dev)) &&
+		    sscanf(dev, "%u:%u", &maj, &min) == 2)
+			break;
+		if (monotonic_seconds() >= deadline) {
+			say(log, "DIAG: adsprpc compat: fastrpc-adsp never appeared\n");
+			_exit(0);
+		}
+		sleep(2);
+	}
+	if (mknod("/dev/adsprpc-smd", 0600 | S_IFCHR, makedev(maj, min)) &&
+	    errno != EEXIST) {
+		snprintf(message, sizeof(message),
+			 "DIAG: adsprpc compat: mknod errno=%d\n", errno);
+		say(log, message);
+		_exit(0);
+	}
+	chmod("/dev/adsprpc-smd", 0666);
+	snprintf(message, sizeof(message),
+		 "DIAG: adsprpc compat: alias %u:%u ready\n", maj, min);
+	say(log, message);
+	_exit(0);
+}
+
+static void adsprpc_compat_fork(int log)
+{
+	pid_t pid = fork();
+
+	if (pid < 0) {
+		say(log, "DIAG: adsprpc compat: fork failed\n");
+		return;
+	}
+	if (!pid) {
+		setsid();
+		adsprpc_compat_child(log);
+	}
+}
+/*
  * Debuggable props. Our /init replaced first-stage init, so the ramdisk
  * prop.default is never loaded; second-stage init takes ro.secure=1 /
  * ro.debuggable=0 from the system/vendor partitions and adbd stays shell.
@@ -1410,6 +1461,7 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 #endif
 	guard_firmware(log);
 	harvest_modem_firmware(log);
+	adsprpc_compat_fork(log);
 	guard_debuggable(proc, log);
 	_exit(0);
 failed:
