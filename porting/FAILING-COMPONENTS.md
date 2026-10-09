@@ -15,10 +15,10 @@ Last update: 2026-10-09 (snapshot53 run1).
 
 | Component | Symptom (evidence) | Status | Next action |
 |---|---|---|---|
-| ADSP `qcom_q6v5_pas` probe | `Direct firmware load for adsp.mdt failed -2` (every run) | BLOCKED | Needs `adsp.mdt`+segments harvest (modem partition); driver ready |
+| ADSP `qcom_q6v5_pas` probe | `Direct firmware load for adsp.mdt failed -2` (every run) | FIXING | Modem harvester in tree (copies `/firmware/image/adsp.*`+`wcnss.*` to `/data` for adb pull); needs build + harvest boot. EvolutionX payload.bin has no modem partition (boot+system only) |
 | Touchscreen `edt-ft5406` probe | `-110` at 300/500 ms (s50/s52); re-toggle + 500 ms succeeds (s51); bounded retry probes first boot (s53: `input2` registered, no failure) | CLOSED | Retry-with-toggle fix verified s53; keep in tree |
 | `pclk0 update_config` WARN | `clk-rcg2.c:133` ×8 in s48/s52, ×0 in s49/s50/s51 — flickers run to run | WATCH | Parked with display; re-examine if it ever goes persistent |
-| WLAN `wcn36xx` + pronto PIL | Driver present s53 (`remoteproc1`, `wcnss.mdt -2` fast fail, no stall); stock `wcnss-service` starts, exits 255 without fw | BLOCKED | Harvest `wcnss.mdt`+`.bXX` (modem partition) + readable `wlan/prima/*` (`nv.bin` denied to shell); stage and re-boot |
+| WLAN `wcn36xx` + pronto PIL | Driver present s53 (`remoteproc1`, `wcnss.mdt -2` fast fail, no stall); stock `wcnss-service` starts, exits 255 without fw | FIXING | Same harvest boot stages `wcnss.mdt`+`.bXX`; `wlan/prima/nv.bin` denied to shell — harvester covers modem side, NV still open |
 | QSEE listener registration | SMC `0x32000206` `ret=-5` ×8/boot; 8 siblings succeed same path | CLOSED | TZ refuses those IDs; tolerated; no kernel fix applies |
 | `mdp5 INTF1_UNDER_RUN` | Single `errors: 04000000` at first modeset, panel healthy after | CLOSED | Benign bringup transient |
 | Coldboot time | 34.3 / 11.1 / 13.7 / 13.7 s vs stock 2.8 s (s50–s53); mounts at ~80 s | WATCH | s50 34 s looks outlier; stable ~12–14 s. Bisect if a run exceeds ~25 s |
