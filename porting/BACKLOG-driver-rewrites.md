@@ -35,6 +35,36 @@ collects the big ones with their unblock plans.
 - Display-path only, non-fatal for headless runs, unvalidatable without (1).
   Parked with display.
 
+## 4. Camera (msm_camera stack: CAMSS/VFE, VENUS, sensors, ISP)
+- Symptom: nothing probed — `CONFIG_VIDEO_QCOM_CAMSS`/`VENUS` unset, no DT
+  nodes; snapshot50 `kernel.config` + `msm8953-xiaomi-tissot.dts` confirm.
+- Kernel side is bounded: CAMSS already covers six SoCs (`camss.c:2447-52`,
+  up to sdm845) and Venus nine (`core.c:937-45`) — an 8953 variant follows
+  the sdm660 precedent (new compatible + data tables). The real project is
+  sensor/actuator drivers plus the Camera HAL.
+- Unblock: out of scope for boot bringup; park until display (1) is live,
+  then size the port (expect multi-week, phone-camera validation).
+
+## 5. WLAN (upstream wcn36xx candidate — NOT a Prima port, verify first)
+- Correction (2026-10-09): in-tree `drivers/net/wireless/ath/wcn36xx`
+  exists and `wcn36xx.h:33` references `wlan/prima/WCNSS_qcom_wlan_nv.bin`
+  — the exact file stock ships in `/vendor/firmware/wlan/prima/`. Path is
+  enablement (WCNSS PIL + pronto remoteproc + DT + `CONFIG_WCN36XX`),
+  per `porting/plan/04-phase4-wlan.md`. Not a rewrite unless the WCN rev
+  proves incompatible.
+- Caveat: that plan's config section names ATH10K/ATH10K_PCI — suspect on
+  a phone (no PCI WLAN); expect `WCN36XX`, verify at build time.
+
+## 6. Modem data path (IPA v2 backport + RMNET)
+- In-tree `drivers/net/ipa` starts at v3.1/msm8998 (`ipa_main.c:649-682`);
+  no 8953/IPA-v2 match, no DT nodes. QRTR signalling works; packet path
+  needs an IPA-v2 backport plus RMNET enablement. Port, not config.
+
+## 7. Fingerprint (Goodix, downstream `goodix_fp` port)
+- Stock exposes `/dev/goodix_fp`; no in-tree driver, no DT node. Needs the
+  downstream driver ported plus DT (SPI/platform wiring TBD). Small port,
+  blocked behind nothing kernel-side.
+
 ## Closed (not kernel bugs)
 - `dpmd` SIGABRT `ProcessState already initialized with a different mmap
   size`: vendor-userspace libbinder mismatch; kernel binder proven healthy
@@ -46,3 +76,8 @@ collects the big ones with their unblock plans.
   vendor/ROM mismatch, benign for capture.
 - `[Firmware Bug] Kernel image misaligned at boot`: bootloader load address,
   cosmetic.
+- QSEE listener `REGISTER_LISTENER` SMC `0x32000206` `ret=-5` (EIO) ×8 per
+  boot (snapshot50 `run1-logdump.bin`, same 8 since snapshot28): TZ refuses
+  those listener IDs while 8 sibling registrations through the identical
+  HLOS path succeed (`listener N registered sb 0xff0xxxxx`). Faithful
+  forward, tolerated by userspace — TZ-side, no kernel rewrite applies.
