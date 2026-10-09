@@ -1145,7 +1145,7 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	unsigned int val;
 	struct input_dev *input;
 	unsigned long irq_flags;
-	int error, attempt;
+	int error;
 	u32 report_rate;
 
 	dev_dbg(&client->dev, "probing for EDT FT5x06 I2C\n");
@@ -1258,9 +1258,12 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	if (tsdata->reset_gpio) {
 		usleep_range(5000, 6000);
 		gpiod_set_value_cansleep(tsdata->reset_gpio, 0);
-		msleep(300);
+		/*
+		 * Identify fails with -110 at 300ms on the (tissot) panel;
+		 * allow 500ms for the controller to boot after release.
+		 */
+		msleep(500);
 	}
-	dev_info(&client->dev, "snapshot51 diag: reset released, identifying\n");
 
 	input = devm_input_allocate_device(&client->dev);
 	if (!input) {
@@ -1274,25 +1277,10 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	tsdata->factory_mode = false;
 	i2c_set_clientdata(client, tsdata);
 
-	for (attempt = 0; ; attempt++) {
-		error = edt_ft5x06_ts_identify(client, tsdata);
-		if (!error)
-			break;
-		if (attempt >= 3) {
-			dev_err(&client->dev, "touchscreen probe failed\n");
-			return error;
-		}
-		dev_info(&client->dev,
-			 "identify attempt %d failed: %d, re-resetting\n",
-			 attempt, error);
-		if (tsdata->reset_gpio) {
-			gpiod_set_value_cansleep(tsdata->reset_gpio, 1);
-			msleep(100);
-			gpiod_set_value_cansleep(tsdata->reset_gpio, 0);
-			msleep(500);
-		} else {
-			msleep(500);
-		}
+	error = edt_ft5x06_ts_identify(client, tsdata);
+	if (error) {
+		dev_err(&client->dev, "touchscreen probe failed\n");
+		return error;
 	}
 
 	/*
