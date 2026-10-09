@@ -1275,7 +1275,8 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 
 	/* The (tissot) panel answers identify only after a second reset
 	 * cycle: 500ms alone still fails with -110. Retry twice with a
-	 * re-toggle; a truly absent chip fails out in ~1.7s. */
+	 * re-toggle; a truly absent chip fails out in ~1.7s.
+	 */
 	for (attempt = 0; ; attempt++) {
 		error = edt_ft5x06_ts_identify(client, tsdata);
 		if (!error)
