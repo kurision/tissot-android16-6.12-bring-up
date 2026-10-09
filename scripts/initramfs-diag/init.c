@@ -17,7 +17,6 @@
 #include <poll.h>
 #include <stdio.h>
 #include <sched.h>
-#include <signal.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
@@ -105,6 +104,11 @@ static int make_dir(const char *path)
 	return mkdir(path, 0755) == 0 || errno == EEXIST ? 0 : -1;
 }
 
+/*
+ * The diag configuration is c.2: configfs refuses a second configuration
+ * with the same bConfigurationValue (usb_add_config_only, -EBUSY), and
+ * Android creates b.1 in this same gadget (snapshot47 run1).
+ */
 static int setup_gadget(void)
 {
 	DIR *dir;
@@ -112,14 +116,14 @@ static int setup_gadget(void)
 	int ret = -1;
 
 	if (make_dir(G) || make_dir(G "/strings/0x409") ||
-	    make_dir(G "/configs/c.1") || make_dir(G "/functions/acm.gs0") ||
+	    make_dir(G "/configs/c.2") || make_dir(G "/functions/acm.gs0") ||
 	    attribute(G "/idVendor", "0x18d1") ||
 	    attribute(G "/idProduct", "0x9008") ||
 	    attribute(G "/strings/0x409/serialnumber", "tissot-diag") ||
 	    attribute(G "/strings/0x409/manufacturer", "Diagnostic") ||
 	    attribute(G "/strings/0x409/product", "ACK kernel log"))
 		return -1;
-	if (symlink(G "/functions/acm.gs0", G "/configs/c.1/f1") &&
+	if (symlink(G "/functions/acm.gs0", G "/configs/c.2/f1") &&
 	    errno != EEXIST)
 		return -1;
 	dir = opendir("/sys/class/udc");
@@ -760,6 +764,59 @@ failed:
 	return -1;
 }
 
+/*
+ * USB handoff to adb. The diag ACM function holds gadget g1 bound to the
+ * only UDC, so Android's adb bind fails with EBUSY, and this process cannot
+ * unbind it after policy load (kernel domain has no configfs access). Append
+ * an action to the vendor USB rc so init itself releases the UDC when the
+ * vendor stack switches to configfs ("on boot", before adbd starts). SD
+ * and logdump capture are unaffected; the USB serial stream ends there.
+ */
+#define USB_RC "/vendor/etc/init/hw/init.qcom.usb.rc"
+
+static void guard_usb_handoff(int proc, int log)
+{
+	static const char action[] =
+		"\n# ACK diag: hand the UDC from the diag ACM gadget to adb.\n"
+		"on property:sys.usb.configfs=1\n"
+		"    write /config/usb_gadget/g1/UDC \"none\"\n"
+		"    rm /config/usb_gadget/g1/configs/c.2/f1\n"
+		"    rmdir /config/usb_gadget/g1/configs/c.2\n";
+	char buf[8192], message[160];
+	int in = open(USB_RC, O_RDONLY | O_CLOEXEC);
+	int fd = memfd_create("ack-usb-rc", MFD_CLOEXEC);
+	int error = 0;
+	ssize_t n;
+
+	if (in < 0 || fd < 0)
+		goto failed;
+	for (;;) {
+		n = read(in, buf, sizeof(buf));
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n < 0)
+			goto failed;
+		if (!n)
+			break;
+		if (write_all(fd, buf, (size_t)n))
+			goto failed;
+	}
+	if (write_all(fd, action, sizeof(action) - 1) ||
+	    guard_bind_config(proc, fd, "/dev/block/ack-usb-handoff.rc", USB_RC))
+		goto failed;
+	goto done;
+failed:
+	error = errno;
+done:
+	if (in >= 0)
+		close(in);
+	if (fd >= 0)
+		close(fd);
+	snprintf(message, sizeof(message),
+		 "DIAG: USB handoff rc appended to %s errno=%d\n", USB_RC, error);
+	say(log, message);
+}
+
 #ifdef ANDROID_HEADLESS
 /*
  * Headless probe: the vendor sdm HWC and LiveDisplay need the legacy MDSS
@@ -884,8 +941,9 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	say(log, "DIAG: bootdevice guard installed read-only f2fs-only fstab"
 		 " and vendor contexts before policy load\n");
 	say(log, "DIAG: bootdevice canonical alias and legacy wait path ready\n");
-#ifdef ANDROID_HEADLESS
 	/* After the alias release: a late override must never block boot. */
+	guard_usb_handoff(proc, log);
+#ifdef ANDROID_HEADLESS
 	guard_headless(proc, log);
 #endif
 	_exit(0);
@@ -1134,42 +1192,11 @@ failed:
 	_exit(1);
 }
 
-/*
- * Android's USB setup reuses gadget g1, which the diag ACM function holds
- * bound to the only UDC, so every adb bind fails with EBUSY. Once Android
- * creates its configuration (configs/b.1, made in "on boot" before adbd
- * starts), stop the serial stream and hand the controller over.
- */
-static void usb_handoff(pid_t capture, int klog)
-{
-	char msg[160];
-	int error = 0;
-
-	while (access(G "/configs/b.1", F_OK)) {
-		if (monotonic_seconds() >= 900)
-			_exit(0);
-		usleep(200000);
-	}
-	say(klog, "DIAG: Android USB config appeared; ending USB serial capture for adb\n");
-	/* Let the serial stream carry the marker before it is cut. */
-	sleep(1);
-	kill(capture, SIGKILL);
-	if (attribute(G "/UDC", "none"))
-		error = errno;
-	unlink(G "/configs/c.1/f1");
-	rmdir(G "/configs/c.1");
-	snprintf(msg, sizeof(msg),
-		 "DIAG: diag gadget unbound (errno=%d); UDC free for adb\n", error);
-	say(klog, msg);
-	_exit(0);
-}
-
 /* kmsg fds are opened by the parent at t~=1s (pre-enforcing, where opens
  * provably succeed) and inherited across the fork; opening them here later
  * fails with ENOENT once Android init has switch-rooted around us. */
 static void capture_usb(int kin, int klog, int kerr)
 {
-	pid_t self = getpid();
 	int out;
 	char msg[160];
 
@@ -1185,12 +1212,6 @@ static void capture_usb(int kin, int klog, int kerr)
 	 * host attach still receives the whole boot log. */
 	if (klog >= 0)
 		say(klog, "DIAG: independent Android USB capture ready\n");
-	if (klog >= 0 && fork() == 0) {
-		close(out);
-		if (kin >= 0)
-			close(kin);
-		usb_handoff(self, klog);
-	}
 	if (kin < 0) {
 		snprintf(msg, sizeof msg,
 			 "DIAG: USB kmsg unavailable errno=%d\n", kerr);
