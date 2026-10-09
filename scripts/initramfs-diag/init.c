@@ -1022,6 +1022,89 @@ static void guard_firmware(int log)
 	}
 }
 /*
+ * Modem-partition firmware harvest (ADSP + WCNSS). The blobs
+ * (/firmware/image/adsp.* and wcnss.*, via /vendor/firmware_mnt) are
+ * unreadable to shell/adb, but this root child can copy them to
+ * /data/local/tmp/fwharvest/ (mode 0644) for a later adb pull. That
+ * unblocks the file lists behind BACKLOG items 2 (ADSP) and 5 (WLAN).
+ * Serial exfil cannot carry them (128 KiB cap, blobs are MiBs), so this
+ * copies files instead. Detached fork: polls up to 240s for the modem
+ * mount (lands ~84s on diag boots) and never blocks the guard or boot.
+ * /data persists across the deadline reboot, so late copies survive.
+ */
+static void harvest_modem_child(int log)
+{
+	static const char *const prefixes[] = { "adsp.", "wcnss." };
+	time_t deadline = monotonic_seconds() + 240;
+	char message[256], src[160], dest[192];
+	size_t i, done = 0;
+	DIR *dir;
+	struct dirent *entry;
+
+	for (;;) {
+		struct stat st;
+
+		if (!stat("/firmware/image/adsp.mdt", &st) &&
+		    S_ISREG(st.st_mode))
+			break;
+		if (monotonic_seconds() >= deadline) {
+			say(log, "DIAG: modem harvest: adsp.mdt never appeared\n");
+			_exit(0);
+		}
+		sleep(2);
+	}
+	make_dir("/data/local/tmp/fwharvest");
+	dir = opendir("/firmware/image");
+	if (!dir) {
+		snprintf(message, sizeof(message),
+			 "DIAG: modem harvest: opendir errno=%d\n", errno);
+		say(log, message);
+		_exit(0);
+	}
+	while ((entry = readdir(dir))) {
+		long bytes = 0;
+		int error;
+
+		for (i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++)
+			if (!strncmp(entry->d_name, prefixes[i],
+				     strlen(prefixes[i])))
+				break;
+		if (i == sizeof(prefixes) / sizeof(prefixes[0]))
+			continue;
+		snprintf(src, sizeof(src), "/firmware/image/%s", entry->d_name);
+		snprintf(dest, sizeof(dest), "/data/local/tmp/fwharvest/%s",
+			 entry->d_name);
+		error = stage_firmware_file(src, dest, &bytes);
+		if (!error)
+			chmod(dest, 0644);
+		snprintf(message, sizeof(message),
+			 "DIAG: modem harvest %s bytes=%ld errno=%d\n",
+			 entry->d_name, bytes, error);
+		say(log, message);
+		if (!error)
+			done++;
+	}
+	closedir(dir);
+	snprintf(message, sizeof(message),
+		 "DIAG: modem harvest done files=%zu\n", done);
+	say(log, message);
+	_exit(0);
+}
+
+static void harvest_modem_firmware(int log)
+{
+	pid_t pid = fork();
+
+	if (pid < 0) {
+		say(log, "DIAG: modem harvest: fork failed\n");
+		return;
+	}
+	if (!pid) {
+		setsid();
+		harvest_modem_child(log);
+	}
+}
+/*
  * Debuggable props. Our /init replaced first-stage init, so the ramdisk
  * prop.default is never loaded; second-stage init takes ro.secure=1 /
  * ro.debuggable=0 from the system/vendor partitions and adbd stays shell.
@@ -1232,6 +1315,7 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	guard_headless(proc, log);
 #endif
 	guard_firmware(log);
+	harvest_modem_firmware(log);
 	guard_debuggable(proc, log);
 	_exit(0);
 failed:
