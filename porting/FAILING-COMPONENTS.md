@@ -15,7 +15,7 @@ Last update: 2026-10-09 (snapshot53 run1).
 
 | Component | Symptom (evidence) | Status | Next action |
 |---|---|---|---|
-| ADSP FastRPC channel | FW boots + APR live (s55-run2); rpmsg channel binds `qcom,fastrpc`, `/dev/fastrpc-adsp` exists — but stock adsprpcd opens `/dev/adsprpc-smd` | FIXING | mknod-alias fork pushed; needs build + boot to watch adsprpcd proceed |
+| ADSP FastRPC channel | FW boots + APR live; channel binds, `/dev/fastrpc-adsp` live; alias `/dev/adsprpc-smd` created (s57) but daemon avc-denied it (tmpfs context) | FIXING | Stock identity (`0664 system:system qdsp_device`) now applied in-tree; needs build + boot |
 | Touchscreen `edt-ft5406` probe | `-110` at 300/500 ms (s50/s52); re-toggle + 500 ms succeeds (s51); bounded retry clean s53–s56 | CLOSED | Fix verified 4 boots; keep in tree |
 | `pclk0 update_config` WARN | `clk-rcg2.c:133` ×8 in s48/s52, ×0 in s49/s50/s51 — flickers run to run | WATCH | Parked with display; re-examine if it ever goes persistent |
 | WLAN `wcn36xx` + pronto PIL | Pronto boots, NV acked, `WCNSS Version 1.5 1.2`, cold boot never completes; sysmon enabled s56, still silent (no crash — FW waiting, not dead) | FIXING | Next suspects: iris/RF power evidence, caldata; wcn36xx still channel-starved |
