@@ -1231,7 +1231,8 @@ static void adsprpc_compat_child(int log)
 	}
 	/* Stock identity (read off live stock): 0664 system:system
 	 * u:object_r:qdsp_device:s0. Without the label the daemon gets
-	 * avc denied on the tmpfs default context. */
+	 * avc denied on the tmpfs default context.
+	 */
 	chmod("/dev/adsprpc-smd", 0664);
 	chown("/dev/adsprpc-smd", 1000, 1000);
 	n = setxattr("/dev/adsprpc-smd", "security.selinux",
