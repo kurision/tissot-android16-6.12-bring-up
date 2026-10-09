@@ -1022,84 +1022,138 @@ static void guard_firmware(int log)
 	}
 }
 /*
- * Modem-partition firmware harvest (ADSP + WCNSS). The blobs
- * (/firmware/image/adsp.* and wcnss.*, via /vendor/firmware_mnt) are
- * unreadable to shell/adb, but this root child can copy them to
- * /data/local/tmp/fwharvest/ (mode 0644) for a later adb pull. That
- * unblocks the file lists behind BACKLOG items 2 (ADSP) and 5 (WLAN).
- * Serial exfil cannot carry them (128 KiB cap, blobs are MiBs), so this
- * copies files instead. Detached fork: polls up to 240s for the modem
- * mount (lands ~84s on diag boots) and never blocks the guard or boot.
- * /data persists across the deadline reboot, so late copies survive.
+ * Late firmware bind for ADSP + WCNSS. Their blobs live on the modem
+ * partition (/vendor/firmware_mnt/image, via /firmware), which mounts
+ * around 66-84s — long after both drivers probe and fail fast (-2).
+ * Copying is out (this context is DAC-denied on those files, and serial
+ * exfil caps at 128 KiB against MiB blobs), so instead: point the kernel
+ * firmware loader's custom search path (higher priority than
+ * /lib/firmware) at the modem image dir, then unbind/bind the two
+ * remoteproc devices so their direct loads hit. Detached fork, never
+ * blocks the guard or boot.
  */
+static int read_file(const char *path, char *buf, size_t len)
+{
+	int fd = open(path, O_RDONLY | O_CLOEXEC);
+	ssize_t n;
+
+	if (fd < 0)
+		return -1;
+	n = read(fd, buf, len - 1);
+	close(fd);
+	if (n < 0)
+		return -1;
+	buf[n] = '\0';
+	return 0;
+}
+
+static int mounts_contain(const char *word)
+{
+	static char buf[8192];
+	int fd = open("/proc/mounts", O_RDONLY | O_CLOEXEC);
+	ssize_t n, total = 0;
+
+	if (fd < 0)
+		return 0;
+	for (;;) {
+		n = read(fd, buf + total, sizeof(buf) - 1 - (size_t)total);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			break;
+		total += n;
+		if (total >= (ssize_t)sizeof(buf) - 1)
+			break;
+	}
+	close(fd);
+	buf[total] = '\0';
+	return strstr(buf, word) != NULL;
+}
+
+static void rebind_remoteproc(const char *match, int log)
+{
+	char message[256], dirpath[128], name[64], link[256], dev[64];
+	const char *base;
+	DIR *rp;
+	struct dirent *entry;
+	ssize_t n;
+
+	rp = opendir("/sys/class/remoteproc");
+	if (!rp) {
+		snprintf(message, sizeof(message),
+			 "DIAG: fwlate %s: remoteproc class errno=%d\n",
+			 match, errno);
+		say(log, message);
+		return;
+	}
+	while ((entry = readdir(rp))) {
+		if (strncmp(entry->d_name, "remoteproc", 10))
+			continue;
+		snprintf(dirpath, sizeof(dirpath),
+			 "/sys/class/remoteproc/%s/firmware", entry->d_name);
+		if (read_file(dirpath, name, sizeof(name)))
+			continue;
+		if (!strstr(name, match))
+			continue;
+		snprintf(dirpath, sizeof(dirpath),
+			 "/sys/class/remoteproc/%s/device", entry->d_name);
+		n = readlink(dirpath, link, sizeof(link) - 1);
+		if (n <= 0)
+			continue;
+		link[n] = '\0';
+		base = strrchr(link, '/');
+		base = base ? base + 1 : link;
+		snprintf(dev, sizeof(dev), "%s", base);
+		snprintf(dirpath, sizeof(dirpath),
+			 "/sys/class/remoteproc/%s/device/driver/unbind",
+			 entry->d_name);
+		n = attribute(dirpath, dev);
+		snprintf(message, sizeof(message),
+			 "DIAG: fwlate %s unbind %s ret=%d errno=%d\n",
+			 match, dev, (int)n, n ? errno : 0);
+		say(log, message);
+		sleep(2);
+		snprintf(dirpath, sizeof(dirpath),
+			 "/sys/class/remoteproc/%s/device/driver/bind",
+			 entry->d_name);
+		n = attribute(dirpath, dev);
+		snprintf(message, sizeof(message),
+			 "DIAG: fwlate %s bind %s ret=%d errno=%d\n",
+			 match, dev, (int)n, n ? errno : 0);
+		say(log, message);
+	}
+	closedir(rp);
+}
+
 static void harvest_modem_child(int log)
 {
-	static const char *const prefixes[] = { "adsp.", "wcnss." };
 	time_t deadline = monotonic_seconds() + 240;
-	char message[256], src[160], dest[192];
-	size_t i, done = 0;
-	DIR *dir;
-	struct dirent *entry;
+	char message[256];
+	int pathset = 0;
 
-	say(log, "DIAG: modem harvest: waiting for /firmware/image/adsp.mdt\n");
+	say(log, "DIAG: fwlate: waiting for modem mount\n");
 	for (;;) {
-		struct stat st;
-		int look;
-
-		if (!stat("/firmware/image/adsp.mdt", &st) &&
-		    S_ISREG(st.st_mode))
+		if (mounts_contain("firmware_mnt"))
 			break;
-		look = errno;
 		if (monotonic_seconds() >= deadline) {
-			snprintf(message, sizeof(message),
-				 "DIAG: modem harvest: adsp.mdt never appeared last errno=%d\n",
-				 look);
-			say(log, message);
+			say(log, "DIAG: fwlate: modem never mounted\n");
 			_exit(0);
 		}
 		sleep(2);
 	}
-	make_dir("/data/local/tmp/fwharvest");
-	make_dir("/sdlog/fwharvest");
-	dir = opendir("/firmware/image");
-	if (!dir) {
-		snprintf(message, sizeof(message),
-			 "DIAG: modem harvest: opendir errno=%d\n", errno);
-		say(log, message);
-		_exit(0);
-	}
-	while ((entry = readdir(dir))) {
-		long bytes = 0;
-		int error;
-
-		for (i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++)
-			if (!strncmp(entry->d_name, prefixes[i],
-				     strlen(prefixes[i])))
-				break;
-		if (i == sizeof(prefixes) / sizeof(prefixes[0]))
-			continue;
-		snprintf(src, sizeof(src), "/firmware/image/%s", entry->d_name);
-		snprintf(dest, sizeof(dest), "/data/local/tmp/fwharvest/%s",
-			 entry->d_name);
-		error = stage_firmware_file(src, dest, &bytes);
-		if (!error)
-			chmod(dest, 0644);
-		if (!error) {
-			snprintf(dest, sizeof(dest), "/sdlog/fwharvest/%s",
-				 entry->d_name);
-			error = stage_firmware_file(src, dest, &bytes);
-		}
-		snprintf(message, sizeof(message),
-			 "DIAG: modem harvest %s bytes=%ld errno=%d\n",
-			 entry->d_name, bytes, error);
-		say(log, message);
-		if (!error)
-			done++;
-	}
-	closedir(dir);
+	if (!attribute("/sys/module/firmware_class/parameters/path",
+		       "/vendor/firmware_mnt/image"))
+		pathset = 1;
 	snprintf(message, sizeof(message),
-		 "DIAG: modem harvest done files=%zu\n", done);
+		 "DIAG: fwlate: custom path set=%d errno=%d\n",
+		 pathset, pathset ? 0 : errno);
 	say(log, message);
+	if (!pathset)
+		_exit(0);
+	sleep(2);
+	rebind_remoteproc("adsp", log);
+	rebind_remoteproc("wcnss", log);
+	say(log, "DIAG: fwlate done\n");
 	_exit(0);
 }
 
