@@ -71,6 +71,11 @@ required=(
     CONFIG_DRM_PANEL_OTM1911  # tissot's preferred-primary panel (downstream dsi-pref-prim-pan)
     CONFIG_SECURITY_SELINUX          # enforcing mode is proven not to block Android init
     CONFIG_SECURITY_SELINUX_BOOTPARAM # selinux=0 on the cmdline; without it the token is inert
+    CONFIG_RFKILL             # gki baseline is =m, and CFG80211's
+                              # "depends on RFKILL || !RFKILL" then evaluates
+                              # to m, capping CFG80211/MAC80211/WCN36XX
+    CONFIG_WLAN_VENDOR_ATH    # n hides the whole "if WLAN_VENDOR_ATH" block
+                              # in ath/Kconfig, so WCN36XX is not even visible
     CONFIG_CFG80211           # snapshot52 shipped =m and dropped WCN36XX
     CONFIG_MAC80211           # silently: wireless must be asserted like the rest
     CONFIG_WCN36XX            # WCN3680 WLAN (wcn36xx); deps MAC80211/HAS_DMA
