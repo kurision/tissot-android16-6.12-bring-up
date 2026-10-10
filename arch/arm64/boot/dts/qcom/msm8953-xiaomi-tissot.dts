@@ -457,6 +457,7 @@
 };
 
 &gpu {
+	compatible = "qcom,kgsl-3d0", "qcom,adreno-506.0";
 	status = "okay";
 };
 
