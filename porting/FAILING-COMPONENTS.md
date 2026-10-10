@@ -82,6 +82,38 @@ the next thing to close. Non-fatal exits remaining: `vendor.qrtr-ns` status
 1, `vendor.per_mgr` status 255, `misctrl` status 1, matching the QRTR
 findings in `86cf5e369`.
 
+## Snapshot58 run5 — adb on the port kernel; boot_completed cause found
+
+`BOOT_DEADLINE_SECONDS` is `#ifndef`-guarded (`init.c:47`), so the watchdog
+was raised to 1800 s with `-DBOOT_DEADLINE_SECONDS=1800`. Detection is
+unchanged: the watchdog still reads `/dev/kmsg` for the
+`processing action (sys.boot_completed=1` line (`init.c:1760`).
+
+This is what closed the post-handoff evidence gap. With the phone held up,
+adb is reachable **on the port kernel itself** — `uname -r` reports
+`6.12.93-4k-gf6c975d4f141-dirty`, not the CAF 4.19 ROM. USB capture
+440942 bytes, handoff at ~144 s.
+
+**`sys.boot_completed` never fires because surfaceflinger aborts in a
+loop**, visible only now that adb works on the port kernel:
+
+```
+Fatal signal 6 (SIGABRT) in tid 675 (surfaceflinger), pid 648
+>>> /system/bin/surfaceflinger <<<
+Abort message: 'no suitable EGLConfig found, giving up (format: 1, vendor:
+Android, version: 1.4 Android META-EGL, ... Client API: OpenGL_ES)'
+```
+
+Four occurrences in the crash buffer, three distinct pids. SF never stays
+up, so the boot never finishes and the property is never set. This is the
+`kgsl` PARKED row below, now confirmed as the single blocker standing
+between the port and a completed boot — the EGL blob needs
+`/dev/kgsl-3d0`, which needs the kgsl rewrite.
+
+Secondary: `dpmd` also aborts, in
+`android::hardware::ProcessState::init` — it dies setting up its scheduler
+state, not a display issue. Not yet triaged.
+
 ## Status key
 - FIXING — patch in tree, awaiting build/boot verdict.
 - BLOCKED — needs something external (rebuild, firmware harvest).
@@ -105,7 +137,7 @@ findings in `86cf5e369`.
 
 | Component | Symptom (evidence) | Status | Next action |
 |---|---|---|---|
-| GPU 3D (`kgsl`, EGL blob `libGLESv2_adreno.so`) | SF fatal `no suitable EGLConfig`, tombstones (every run) | PARKED | kgsl rewrite, backlog #1 |
+| GPU 3D (`kgsl`, EGL blob `libGLESv2_adreno.so`) | s58 run5: `surfaceflinger` SIGABRT ×4, 3 pids, `no suitable EGLConfig found` — **the confirmed reason `sys.boot_completed` never fires** | PARKED (blocker) | kgsl rewrite, backlog #1. Confirmed reachable via adb on the port kernel; no longer a guess |
 | ADSP firmware (`adsp.mdt`+segs) | remoteproc `-2`; absent from `/vendor/firmware` (18 files, no adsp) | BLOCKED | Harvest from modem partition or payload.bin (backlog #2 pattern) |
 | WCNSS firmware (`wcnss.mdt`+`.bXX`) | Not in vendor; stock serves from `/firmware/image` (modem partition) | BLOCKED | Same harvest as ADSP; pronto fails fast until staged |
 | Camera stack (`msm_camera`, CPP, sensors, HAL) | Nothing probed; blobs (`cpp_firmware_*`) present but no kernel side | PARKED | CAMSS/Venus 8953 variant + sensor/HAL project (backlog #4) |
