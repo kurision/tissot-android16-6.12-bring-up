@@ -57,6 +57,31 @@ logdump/SD pulls for run3 returned 0 bytes: the collector ran before the
 stock ROM finished coming back after the 360 s watchdog reboot. USB is the
 better channel here anyway and captured 463746 bytes.
 
+## Snapshot58 run4 — headless stubs remove the crash loop
+
+Same base and kernel as run3; only the init changed. Built with
+`-DANDROID_HEADLESS` alongside `-DANDROID_CAPTURE`
+(`init_sha256 a2a6326e…`), which binds comment-only stubs over
+`android.hardware.graphics.composer@2.1-service.rc` and
+`vendor.lineage.livedisplay-service.sdm.rc` before policy load
+(`init.c:820`). Both report `errno=0`.
+
+| | run3 | run4 |
+|---|---|---|
+| SIGSEGV / SIGABRT | 6 (`vendor.hwcomposer-2-1`) | **0** |
+| `vendor.hwcomposer-2-1` | started, crashed | never defined |
+| services started | — | 73 |
+| init stages | to `zygote-start` | to `zygote-start` |
+| USB bytes | 463746 | 417507 |
+| adb | `18d1:4ee7` | `18d1:4ee7` |
+
+`sys.boot_completed=1` is still never logged, so the 360 s watchdog still
+reboots. The USB stream ends at the adbd handoff, so everything after that
+point is invisible to the current evidence channels — that, not a crash, is
+the next thing to close. Non-fatal exits remaining: `vendor.qrtr-ns` status
+1, `vendor.per_mgr` status 255, `misctrl` status 1, matching the QRTR
+findings in `86cf5e369`.
+
 ## Status key
 - FIXING — patch in tree, awaiting build/boot verdict.
 - BLOCKED — needs something external (rebuild, firmware harvest).
