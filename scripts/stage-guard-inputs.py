@@ -28,23 +28,21 @@ import sys
 from pathlib import Path
 
 PAGE = 2048
-CMDLINE_OFF, CMDLINE_LEN = 64, 512
 CPIO_MAGIC = b"070701"
 CPIO_FIELDS = 13
 CPIO_HDR = 6 + 8 * CPIO_FIELDS
 FILESIZE_FIELD, MODE_FIELD, NAMESIZE_FIELD = 6, 1, 11
 NLINK_FIELD = 4
 S_IFREG = 0o100000
-S_IFDIR = 0o040000
-S_IFLNK = 0o120000
 
-REPO = Path(__file__).resolve().parent.parent
-FSTAB_SRC = REPO / "evidence/capture/fstab.qcom"
-CONTEXTS_SRC = REPO / "porting/drafts/vendor_file_contexts.ack"
 
+# Both files are taken verbatim from a base image known to boot, never
+# derived. Deriving the fstab from evidence/capture/fstab.qcom loses the
+# comment header and tab-padded columns and produced a file that validated
+# but was not the one that worked.
 STAGED = (
-    ("ack-protected-fstab.qcom", None, 0o100644),  # None: derived below
-    ("ack-vendor-file-contexts", CONTEXTS_SRC, 0o100444),
+    ("ack-protected-fstab.qcom", 0o100644),
+    ("ack-vendor-file-contexts", 0o100444),
 )
 
 
@@ -54,34 +52,6 @@ def die(msg):
 
 def align4(n):
     return (n + 3) & ~3
-
-
-def derive_fstab(raw: bytes) -> bytes:
-    """Drop every line validate_guard_fstab() would reject; keep the rest."""
-    if b"\0" in raw:
-        die("fstab source contains a NUL byte")
-    keep, userdata = [], 0
-    for line in raw.decode().split("\n"):
-        fields = line.split("#")[0].split()
-        if not fields:
-            continue
-        if len(fields) != 5:
-            die(f"fstab line is not 5 fields: {line!r}")
-        opts = fields[4].split(",")
-        if any(o == "formattable" or o.startswith("formattable=") for o in opts):
-            continue  # the exact hazard this guard exists to block
-        if fields[1] == "/data":
-            userdata += 1
-            if userdata > 1:
-                continue
-            if fields[0] != "/dev/block/bootdevice/by-name/userdata":
-                die(f"unexpected /data source: {fields[0]!r}")
-            if fields[2] != "f2fs":
-                die(f"unexpected /data fs: {fields[2]!r}")
-        keep.append("\t".join(fields))
-    if userdata != 1:
-        die(f"expected exactly one /data entry, found {userdata}")
-    return ("\n".join(keep) + "\n").encode()
 
 
 def parse_cpio(data: bytes):
@@ -117,6 +87,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--base-image", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--donor", default=None,
+                    help="image to copy the guard files from verbatim; "
+                         "required unless the base already carries them")
     ap.add_argument("--report", default=None)
     args = ap.parse_args()
     out = Path(args.out)
@@ -136,17 +109,28 @@ def main():
     fmt = "%08X" if all(c in "0123456789ABCDEF" for r in records
                         for c in "".join(r["fields"])) else "%08x"
 
+    donor_records = {}
+    if args.donor:
+        donor = bytearray(Path(args.donor).read_bytes())
+        if donor[:8] != b"ANDROID!":
+            die("donor image magic is not ANDROID!")
+        dks, _dka, drs, _dra, dss, _dsa, _dtags, dpage, dver = struct.unpack_from("<9I", donor, 8)
+        if dpage != PAGE or dver != 0 or dss != 0:
+            die(f"unsupported donor header page={dpage} version={dver} second={dss}")
+        doff = PAGE + ((dks + PAGE - 1) // PAGE * PAGE)
+        drecs, _dtail = parse_cpio(gzip.decompress(bytes(donor[doff:doff + drs])))
+        donor_records = {r["name"]: r["data"] for r in drecs}
+
     payloads, added, replaced = [], [], []
-    for name, src, mode in STAGED:
+    for name, mode in STAGED:
         if name in existing:
             replaced.append(name)
             continue
-        if src is None:
-            data = derive_fstab(FSTAB_SRC.read_bytes())
-        else:
-            data = src.read_bytes()
-            if b"\0" in data:
-                die(f"{name} contains a NUL byte")
+        if name not in donor_records:
+            die(f"donor image has no {name}; point --donor at a base that boots")
+        data = donor_records[name]
+        if b"\0" in data:
+            die(f"{name} contains a NUL byte")
         payloads.append((name, data, mode))
 
     for name, data, mode in payloads:
@@ -167,7 +151,6 @@ def main():
                                  stdout=subprocess.PIPE, check=True).stdout
     base[ramdisk_off:ramdisk_off + rsize] = new_ramdisk.ljust(rsize, b"\0")
     struct.pack_into("<I", base, 16, len(new_ramdisk))
-    payload = bytes(base[PAGE:]) + struct.pack("<I", len(new_ramdisk))
     digest = hashlib.sha1(bytes(base[PAGE:ramdisk_off]) + struct.pack("<I", ksize) +
                           new_ramdisk + struct.pack("<I", len(new_ramdisk)) +
                           struct.pack("<I", 0)).digest()

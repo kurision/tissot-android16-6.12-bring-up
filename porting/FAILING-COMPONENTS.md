@@ -22,6 +22,41 @@ so `WCN36XX` was not a visible symbol at all. Fixed by adding
 the same class of failure `BUILD-snapshot42.md` documents for the other 17
 symbols, and `merge_config.sh` reports success while it happens.
 
+## Snapshot58 runs 2–3 — adb over the 6.12 kernel
+
+run2 (base: stock `boot_a` ramdisk + guard files staged by
+`scripts/stage-guard-inputs.py`) recovered the guard chain and the USB
+capture: `bootdevice guard installed`, `USB handoff rc appended to
+/vendor/etc/init/hw/init.qcom.usb.rc errno=0`, 138256 bytes. Boot still
+died at ~37 s, right after `init: Loading SELinux policy`.
+
+run3 (base: `boot-ack-snapshot32-spill-carveout-tail-sd-screen.img` from
+git, 665 cpio records, SHA256 `ef6c5400…9da06`) is the fix. The difference
+is not any kernel change: the port's ramdisk carries a **patched SELinux
+policy** — `userdebug_plat_sepolicy.cil`, 3304221 bytes — plus a
+`force_debuggable` trigger. Neither exists in the stock ROM ramdisk and
+nothing in the tree regenerates them.
+
+**adb works.** Evidence, in order:
+- init reaches `processing action (zygote-start)`; run1/2 never got past
+  `post-fs`.
+- `apexd: Parsing file /apex/com.android.adbd.capex/etc/init.rc` — the adbd
+  APEX is installed and its rc parsed.
+- The USB ACM stream ends at 463746 bytes with
+  `reader-error: ... returned no data`. That is the handoff, not a fault:
+  the diag ACM function releases the UDC and adbd claims it. The host then
+  enumerates `18d1:4ee7 Google Inc. Nexus/Pixel Device (charging + debug)`
+  and `adb devices` reports `device`.
+
+Remaining crash is the one `86cf5e369` already predicted: `Service
+'vendor.hwcomposer-2-1' received SIGSEGV` (6 occurrences). The vendor sdm
+HWC needs the legacy MDSS fbdev interface; `init.c` has a
+`-DANDROID_HEADLESS` stub for it that is not enabled in this build.
+
+logdump/SD pulls for run3 returned 0 bytes: the collector ran before the
+stock ROM finished coming back after the 360 s watchdog reboot. USB is the
+better channel here anyway and captured 463746 bytes.
+
 ## Status key
 - FIXING — patch in tree, awaiting build/boot verdict.
 - BLOCKED — needs something external (rebuild, firmware harvest).
