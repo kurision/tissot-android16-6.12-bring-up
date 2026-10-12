@@ -17,7 +17,7 @@
 #include <linux/fs.h>
 #include <linux/file.h>
 #include <linux/init_syscalls.h>
-#include <linux/mount.h>
+#include <linux/kmsg_dump.h>
 
 static long kmsg_size = CONFIG_PSTORE_BLK_KMSG_SIZE;
 module_param(kmsg_size, long, 0400);
@@ -284,16 +284,39 @@ static inline const char *early_boot_devpath(const char *initial_devname)
 
 /*
  * The logdump eMMC appears ~1 s after this late initcall runs, so the
- * first PARTLABEL resolution always fails with -ENOENT on this device.
- * Retry a bounded number of times; panics before the backend attaches
- * behave exactly as before (no backend), panics after get eMMC
- * persistence that survives any later fallback-ROM boot.
+ * first attach always fails with -ENOENT on this device. Retry a bounded
+ * number of times; panics before the backend attaches behave exactly as
+ * before (no backend), panics after get eMMC persistence that survives
+ * any later fallback-ROM boot.
  */
-#define PSTORE_BLK_RETRY_DELAY	(10 * HZ)
-#define PSTORE_BLK_RETRY_MAX	3
+#define PSTORE_BLK_RETRY_DELAY	(4 * HZ)
+#define PSTORE_BLK_RETRY_MAX	5
 
 static struct delayed_work pstore_blk_retry_work;
 static int pstore_blk_retry_count;
+
+/* Attach without touching __init memory; safe to call at any time. */
+static int best_effort_attach(const char *devpath)
+{
+	struct pstore_device_info *best_effort_dev;
+	int ret;
+
+	best_effort_dev = kzalloc(sizeof(*best_effort_dev), GFP_KERNEL);
+	if (!best_effort_dev)
+		return -ENOMEM;
+
+	best_effort_dev->zone.read = psblk_generic_blk_read;
+	best_effort_dev->zone.write = psblk_generic_blk_write;
+
+	ret = __register_pstore_blk(best_effort_dev, devpath);
+	if (ret)
+		kfree(best_effort_dev);
+	else
+		pr_info("attached %s (%lu) (no dedicated panic_write!)\n",
+			devpath, best_effort_dev->zone.total_size);
+
+	return ret;
+}
 
 static void pstore_blk_retry_fn(struct work_struct *work)
 {
@@ -301,19 +324,24 @@ static void pstore_blk_retry_fn(struct work_struct *work)
 
 	mutex_lock(&pstore_blk_lock);
 	/* Another path may have attached meanwhile (unload/reload). */
-	if (psblk_file) {
-		mutex_unlock(&pstore_blk_lock);
-		return;
+	if (!psblk_file) {
+		ret = best_effort_attach(blkdev);
+		if (!ret) {
+			/* Prove the attach on eMMC: a later panic appends
+			 * its own record; marker alone means no panic after
+			 * attach (hang) or death before the first retry. */
+			pr_info("pstore_blk retry attached, dumping dmesg\n");
+			kmsg_dump_desc(KMSG_DUMP_PANIC,
+				       "pstore-blk retry attach");
+		} else if (++pstore_blk_retry_count < PSTORE_BLK_RETRY_MAX)
+			schedule_delayed_work(&pstore_blk_retry_work,
+					      PSTORE_BLK_RETRY_DELAY);
 	}
-	ret = __best_effort_init();
-	if (ret && ++pstore_blk_retry_count < PSTORE_BLK_RETRY_MAX)
-		schedule_delayed_work(&pstore_blk_retry_work,
-				      PSTORE_BLK_RETRY_DELAY);
 	mutex_unlock(&pstore_blk_lock);
 }
 
+static int __init __best_effort_init(void)
 {
-	struct pstore_device_info *best_effort_dev;
 	int ret;
 
 	/* No best-effort mode requested. */
@@ -326,28 +354,14 @@ static void pstore_blk_retry_fn(struct work_struct *work)
 		return -EINVAL;
 	}
 
-	best_effort_dev = kzalloc(sizeof(*best_effort_dev), GFP_KERNEL);
-	if (!best_effort_dev)
-		return -ENOMEM;
-
-	best_effort_dev->zone.read = psblk_generic_blk_read;
-	best_effort_dev->zone.write = psblk_generic_blk_write;
-
-	ret = __register_pstore_blk(best_effort_dev,
-				    early_boot_devpath(blkdev));
-	if (ret) {
-		kfree(best_effort_dev);
-		/* eMMC may simply not be probed yet; retry a few times. */
-		if (ret == -ENODEV || ret == -ENOENT) {
-			pstore_blk_retry_count = 0;
-			INIT_DELAYED_WORK(&pstore_blk_retry_work,
-					  pstore_blk_retry_fn);
-			schedule_delayed_work(&pstore_blk_retry_work,
-					      PSTORE_BLK_RETRY_DELAY);
-		}
-	} else
-		pr_info("attached %s (%lu) (no dedicated panic_write!)\n",
-			blkdev, best_effort_dev->zone.total_size);
+	ret = best_effort_attach(early_boot_devpath(blkdev));
+	/* eMMC may simply not be probed yet; retry a few times. */
+	if (ret == -ENODEV || ret == -ENOENT) {
+		pstore_blk_retry_count = 0;
+		INIT_DELAYED_WORK(&pstore_blk_retry_work, pstore_blk_retry_fn);
+		schedule_delayed_work(&pstore_blk_retry_work,
+				      PSTORE_BLK_RETRY_DELAY);
+	}
 
 	return ret;
 }

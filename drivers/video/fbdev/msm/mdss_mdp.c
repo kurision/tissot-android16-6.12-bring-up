@@ -1430,34 +1430,22 @@ static inline void __mdss_mdp_reg_access_clk_enable(
  */
 static void __mdss_mdp_clk_control(struct mdss_data_type *mdata, bool enable)
 {
-	int rc = 0;
 	unsigned long flags;
 
 	if (enable) {
-		pm_runtime_get_sync(&mdata->pdev->dev);
-
-		mdss_update_reg_bus_vote(mdata->reg_bus_clt,
-			VOTE_INDEX_LOW);
-
-		rc = mdss_iommu_ctrl(1);
-		if (IS_ERR_VALUE((unsigned long) rc))
-			pr_err("IOMMU attach failed\n");
-
-		/* Active+Sleep */
-		msm_bus_scale_client_update_context(mdata->bus_hdl,
-			false, mdata->curr_bw_uc_idx);
+	/* BISECT run61: only vote+spinlock remain of clk_ctrl(ON).
+	 * Boots => killer in {iommu_ctrl, bus_update_context}.
+	 * Dies => killer is vote/spinlock (absurd) or a state/timing
+	 * effect of executing clk_ctrl at all. */
 
 		spin_lock_irqsave(&mdp_lock, flags);
 		mdata->clk_ena = enable;
 		spin_unlock_irqrestore(&mdp_lock, flags);
 
-		mdss_mdp_clk_update(MDSS_CLK_MNOC_AHB, 1);
-		mdss_mdp_clk_update(MDSS_CLK_AHB, 1);
-		mdss_mdp_clk_update(MDSS_CLK_AXI, 1);
-		mdss_mdp_clk_update(MDSS_CLK_MDP_CORE, 1);
-		mdss_mdp_clk_update(MDSS_CLK_MDP_LUT, 1);
-		mdss_mdp_clk_update(MDSS_CLK_THROTTLE_AXI, 1);
-		mdss_mdp_clk_update(MDSS_CLK_BIMC, 1);
+	/* BISECT run59: skip all enables, keep pm/bus/iommu.
+	 * Boots => killer in one of the 7 clk_prepare_enables.
+	 * Dies => killer in {pm_get_sync, reg_vote, iommu_ctrl,
+	 * bus_update_context}. */
 		if (mdata->vsync_ena)
 			mdss_mdp_clk_update(MDSS_CLK_MDP_VSYNC, 1);
 	} else {
@@ -1809,8 +1797,8 @@ void mdss_mdp_clk_ctrl(int enable)
 	if (changed)
 		__mdss_mdp_clk_control(mdata, enable);
 
-	if (enable && changed)
-		mdss_mdp_idle_pc_restore();
+	/* BISECT run62: skip idle_pc_restore (hw_init register writes).
+	 * Boots => hw_init with clocks/GDSC off hangs the bus. */
 
 	mutex_unlock(&mdp_clk_lock);
 }
@@ -2483,8 +2471,10 @@ void mdss_mdp_footswitch_ctrl_splash(int on)
 				pr_err("Footswitch failed to enable: %d\n",
 					ret);
 
-			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
-			mdss_bus_bandwidth_ctrl(true);
+	/* BISECT run57: clocks on, bus vote still skipped.
+	 * Dies => mdss_mdp_clk_ctrl(POWER_ON) hangs/crashes.
+	 * Boots => mdss_bus_bandwidth_ctrl(true). */
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
 		} else {
 			pr_debug("Disable MDP FS for splash.\n");
 			mdss_bus_bandwidth_ctrl(false);
@@ -2921,9 +2911,9 @@ int mdss_panel_get_intf_status(u32 disp_num, u32 intf_type)
 
 	return rc;
 }
+
 static int mdss_mdp_probe(struct platform_device *pdev)
 {
-	struct resource *res;
 	int rc;
 	struct mdss_data_type *mdata;
 	uint32_t intf_sel = 0;
@@ -2999,10 +2989,10 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 		pr_debug("MDSS VBIF NRT HW Base addr=%pK len=0x%x\n",
 			mdata->vbif_nrt_io.base, mdata->vbif_nrt_io.len);
 
-	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
-	if (!res) {
-		pr_err("unable to get MDSS irq\n");
-		rc = -ENOMEM;
+	rc = platform_get_irq(pdev, 0);
+	if (rc < 0) {
+		if (rc != -EPROBE_DEFER)
+			pr_err("unable to get MDSS irq: %d\n", rc);
 		goto probe_done;
 	}
 
@@ -3010,7 +3000,8 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 	if (!mdss_mdp_hw.irq_info)
 		return -ENOMEM;
 
-	mdss_mdp_hw.irq_info->irq = res->start;
+	mdss_mdp_hw.irq_info->irq = rc;
+	mdss_mdp_hw.ptr = mdata;
 
 	/* export misc. interrupts to external driver */
 	mdata->irq_domain = irq_domain_add_linear(pdev->dev.of_node, 64,
@@ -3057,8 +3048,11 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 	 * kernel is up.
 	 */
 	mdss_mdp_footswitch_ctrl_splash(true);
-	mdss_hw_rev_init(mdata);
-
+	/* BISECT run55: bail between splash(true) and hw_rev_init.
+	 * Dies => hw_rev_init (unclocked MDP rev read hangs the bus).
+	 * Boots => footswitch_ctrl_splash(true) path. */
+	rc = -ENOMEM;
+	goto probe_done;
 	/*populate hw iomem base info from device tree*/
 	rc = mdss_mdp_parse_dt(pdev);
 	if (rc) {
@@ -3077,10 +3071,6 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 		pr_err("unable to initialize mdp debugging\n");
 		goto probe_done;
 	}
-	rc = mdss_mdp_scaler_init(mdata, &pdev->dev);
-	if (rc)
-		goto probe_done;
-
 	rc = mdss_mdp_register_sysfs(mdata);
 	if (rc)
 		pr_err("unable to register mdp sysfs nodes\n");
@@ -3201,7 +3191,7 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 
 probe_done:
 	if (IS_ERR_VALUE((unsigned long) rc)) {
-		if (!num_of_display_on)
+		if (!num_of_display_on && mdata->handoff_pending)
 			mdss_mdp_footswitch_ctrl_splash(false);
 
 		/* No GDSC regulator/notifier under genpd. */
