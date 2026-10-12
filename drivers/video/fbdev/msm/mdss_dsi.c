@@ -4228,17 +4228,6 @@ static int mdss_dsi_probe(struct platform_device *pdev)
 
 	mdss_dsi_config_clk_src(pdev);
 
-	/*
-	 * ponytail: permanent MDSS_GDSC hold; the donor DSI has no runtime
-	 * PM and touches registers outside MDP commits (probe, panel
-	 * on/off, ULPS). Per-transaction refs if display power matters.
-	 */
-	pm_runtime_enable(&pdev->dev);
-	rc = pm_runtime_resume_and_get(&pdev->dev);
-	if (rc < 0)
-		pr_err("%s: failed to hold power domain: %d\n",
-			__func__, rc);
-
 error:
 	return rc;
 }
@@ -4246,8 +4235,6 @@ error:
 static void mdss_dsi_remove(struct platform_device *pdev)
 {
 	mdss_dsi_res_deinit(pdev);
-	pm_runtime_put(&pdev->dev);
-	pm_runtime_disable(&pdev->dev);
 }
 
 static void mdss_dsi_ctrl_remove(struct platform_device *pdev)

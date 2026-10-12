@@ -2921,9 +2921,9 @@ int mdss_panel_get_intf_status(u32 disp_num, u32 intf_type)
 
 	return rc;
 }
-
 static int mdss_mdp_probe(struct platform_device *pdev)
 {
+	struct resource *res;
 	int rc;
 	struct mdss_data_type *mdata;
 	uint32_t intf_sel = 0;
@@ -2999,10 +2999,10 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 		pr_debug("MDSS VBIF NRT HW Base addr=%pK len=0x%x\n",
 			mdata->vbif_nrt_io.base, mdata->vbif_nrt_io.len);
 
-	rc = platform_get_irq(pdev, 0);
-	if (rc < 0) {
-		if (rc != -EPROBE_DEFER)
-			pr_err("unable to get MDSS irq: %d\n", rc);
+	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+	if (!res) {
+		pr_err("unable to get MDSS irq\n");
+		rc = -ENOMEM;
 		goto probe_done;
 	}
 
@@ -3010,8 +3010,7 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 	if (!mdss_mdp_hw.irq_info)
 		return -ENOMEM;
 
-	mdss_mdp_hw.irq_info->irq = rc;
-	mdss_mdp_hw.ptr = mdata;
+	mdss_mdp_hw.irq_info->irq = res->start;
 
 	/* export misc. interrupts to external driver */
 	mdata->irq_domain = irq_domain_add_linear(pdev->dev.of_node, 64,
@@ -3202,7 +3201,7 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 
 probe_done:
 	if (IS_ERR_VALUE((unsigned long) rc)) {
-		if (!num_of_display_on && mdata->handoff_pending)
+		if (!num_of_display_on)
 			mdss_mdp_footswitch_ctrl_splash(false);
 
 		/* No GDSC regulator/notifier under genpd. */

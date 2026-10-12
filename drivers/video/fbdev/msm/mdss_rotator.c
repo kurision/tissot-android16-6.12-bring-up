@@ -2921,14 +2921,6 @@ static int mdss_rotator_probe(struct platform_device *pdev)
 		pr_err("res_init failed %d\n", ret);
 		goto error_res_init;
 	}
-	/*
-	 * ponytail: permanent MDSS_GDSC hold; the donor rotator has no
-	 * runtime PM. Per-transaction refs if display power matters.
-	 */
-	pm_runtime_enable(&pdev->dev);
-	ret = pm_runtime_resume_and_get(&pdev->dev);
-	if (ret < 0)
-		pr_err("failed to hold power domain: %d\n", ret);
 	return 0;
 
 error_res_init:
@@ -2965,8 +2957,6 @@ static void mdss_rotator_remove(struct platform_device *dev)
 	unregister_chrdev_region(rot_mgr->dev_num, 1);
 
 	mdss_rotator_deinit_queue(rot_mgr);
-	pm_runtime_put(&dev->dev);
-	pm_runtime_disable(&dev->dev);
 }
 
 static void mdss_rotator_suspend_cancel_rot_work(struct mdss_rot_mgr *mgr)

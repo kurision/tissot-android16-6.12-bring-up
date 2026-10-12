@@ -2495,8 +2495,8 @@ static int dsi_panel_wled_register(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 
 	bd = backlight_device_get_by_type(BACKLIGHT_RAW);
 	if (!bd) {
-		pr_debug("raw backlight not yet probed, deferring\n");
-		return -EPROBE_DEFER;
+		pr_err("fail raw backlight register\n");
+		rc = -EINVAL;
 	}
 	ctrl_pdata->raw_bd = bd;
 	return rc;

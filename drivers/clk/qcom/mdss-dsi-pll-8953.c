@@ -970,42 +970,9 @@ static int mdss_8953_pll_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, pll);
 
 	/*
-	 * Bootloader-handoff: if the PLL block is already locked (splash),
-	 * hold the domain and the VCO across probe so scanout survives until
-	 * the DSI driver takes over rates. Matches the bootloader state, so
-	 * no behavior change when display never probes.
+	 * BISECT: handoff claim disabled; the unused-clock cleanup will
+	 * warn but the PLL stays as the bootloader left it.
 	 */
-	rc = mdss_8953_pll_power_get(pll);
-	if (!rc) {
-		u32 cntrl = MDSS_PLL_REG_R(pll->pll_base,
-					    DSIPHY_CMN_PLL_CNTRL);
-
-		if ((cntrl & BIT(0)) && mdss_8953_pll_locked(pll)) {
-			pll->pll_on = true;
-			/*
-			 * Claim the VCO in CCF too: otherwise the
-			 * unused-clock cleanup sees a running clock with
-			 * zero enable count and only warns, while the real
-			 * consumer (DSI) later drives it blind. The extra
-			 * runtime-PM ref keeps the domain with the clock.
-			 */
-			pll->handoff_clk = clk_hw_get_clk(&pll->vco_hw, NULL);
-			if (!IS_ERR(pll->handoff_clk)) {
-				pm_runtime_get(&pdev->dev);
-				if (clk_prepare_enable(pll->handoff_clk)) {
-					pm_runtime_put(&pdev->dev);
-					clk_put(pll->handoff_clk);
-					pll->handoff_clk = NULL;
-				} else {
-					dev_info(&pdev->dev,
-						 "PLL%u handed off locked\n",
-						 pll->index);
-				}
-			} else {
-				pll->handoff_clk = NULL;
-			}
-		}
-	}
 
 	dev_info(&pdev->dev, "Registered DSI PLL ndx=%u clocks\n", pll->index);
 	return 0;
