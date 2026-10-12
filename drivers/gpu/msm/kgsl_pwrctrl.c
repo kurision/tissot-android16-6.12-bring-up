@@ -2021,13 +2021,27 @@ static int _get_regulator(struct kgsl_device *device,
 	return 0;
 }
 
+/*
+ * The 6.12 msm8953 tree has no discrete GPU rail: the gpu node carries only
+ * power-domains = <&gcc OXILI_GX_GDSC>, and the stock live DT has no
+ * vdd-supply on it either. The 4.19 donor's vddcx-supply/vdd-supply pointed
+ * at gdsc regulators that no longer exist here.
+ *
+ * devm_regulator_get() on a missing supply returns the dummy regulator, which
+ * always reports itself enabled. _regulator_disable() then polls for the full
+ * timeout and logs "regulator 'vdd' disable timed out" on every GPU
+ * power-down, stalling it for 5 s each time. So do not ask for a supply the
+ * DT does not describe: leaving reg NULL makes every enable/disable path
+ * short-circuit on its existing IS_ERR_OR_NULL guard.
+ */
 static int get_legacy_regulators(struct kgsl_device *device)
 {
 	struct device *dev = &device->pdev->dev;
 	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
-	int ret;
+	int ret = 0;
 
-	ret = _get_regulator(device, &pwr->regulators[0], "vdd");
+	if (of_find_property(dev->of_node, "vdd-supply", NULL))
+		ret = _get_regulator(device, &pwr->regulators[0], "vdd");
 
 	/* Use vddcx only on targets that have it. */
 	if (ret == 0 && of_find_property(dev->of_node, "vddcx-supply", NULL))
@@ -2096,6 +2110,14 @@ static int _get_clocks(struct kgsl_device *device)
 			break;
 		}
 	}
+
+	/*
+	 * Slot 0 is src_clk, which most targets do not provide; the caller
+	 * falls back to core_clk (slot 1) for frequency setting, so that is
+	 * the clock that must exist.
+	 */
+	if (!pwr->grp_clks[0] && !pwr->grp_clks[1])
+		dev_err(dev, "No GPU clocks matched DT clock-names\n");
 
 	if (pwr->isense_clk_indx && of_property_read_u32(dev->of_node,
 		"qcom,isense-clk-on-level", &pwr->isense_clk_on_level)) {

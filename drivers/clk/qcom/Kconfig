@@ -357,6 +357,16 @@ config MSM_GCC_8953
 	  Say Y if you want to use devices such as UART, SPI i2c, USB,
 	  SD/eMMC, display, graphics, camera etc.
 
+config MDSS_DSI_PLL_8953
+	tristate "MSM8953 MDSS DSI PLL provider"
+	depends on ARCH_QCOM || COMPILE_TEST
+	select QCOM_GDSC
+	help
+	  CCF provider for the 8996-family DSI PLL on MSM8953, replacing
+	  the downstream private clock framework for the MDSS fbdev port.
+	  Supplies DSI byte/pixel clocks; static panel only, no shadow
+	  dynamic-refresh clocks.
+
 config MSM_GCC_8974
 	tristate "MSM8974 Global Clock Controller"
 	depends on ARM || COMPILE_TEST

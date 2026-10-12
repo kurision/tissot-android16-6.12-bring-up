@@ -14,6 +14,7 @@
 #include <soc/qcom/secure_buffer.h>
 
 #include "adreno.h"
+#include "gmu-iommu-compat.h"
 #include "kgsl_device.h"
 #include "kgsl_iommu.h"
 #include "kgsl_mmu.h"
@@ -34,6 +35,9 @@
  */
 #ifndef IOMMU_USE_UPSTREAM_HINT
 #define IOMMU_USE_UPSTREAM_HINT 0
+#endif
+#ifndef IOMMU_USE_LLC_NWA
+#define IOMMU_USE_LLC_NWA 0
 #endif
 
 static struct kgsl_mmu_pt_ops iommu_pt_ops;
@@ -227,7 +231,7 @@ static void kgsl_iommu_add_global(struct kgsl_mmu *mmu,
 	if (memdesc->priv & KGSL_MEMDESC_RANDOM) {
 		u32 range = GLOBAL_MAP_PAGES - (size >> PAGE_SHIFT);
 
-		start = get_random_int() % range;
+		start = get_random_u32() % range;
 	}
 
 	while (start >= 0) {
@@ -251,7 +255,7 @@ static void kgsl_iommu_add_global(struct kgsl_mmu *mmu,
 	memdesc->priv |= KGSL_MEMDESC_GLOBAL;
 
 	global_pt_entries[global_pt_count].memdesc = memdesc;
-	strlcpy(global_pt_entries[global_pt_count].name, name,
+	strscpy(global_pt_entries[global_pt_count].name, name,
 			sizeof(global_pt_entries[global_pt_count].name));
 	global_pt_count++;
 }
@@ -398,7 +402,7 @@ static int _iommu_map_single_page_sync_pc(struct kgsl_pagetable *pt,
 
 	for (i = 0; i < times; i++) {
 		ret = iommu_map(iommu_pt->domain, gpuaddr + mapped,
-				physaddr, PAGE_SIZE, flags);
+				physaddr, PAGE_SIZE, flags, GFP_ATOMIC);
 		if (ret)
 			break;
 		mapped += PAGE_SIZE;
@@ -480,7 +484,7 @@ static int _iommu_map_sg_offset_sync_pc(struct kgsl_pagetable *pt,
 
 		/* Do the map for this sg */
 		ret = iommu_map(iommu_pt->domain, addr + mapped,
-				physaddr, size_tmp, flags);
+				physaddr, size_tmp, flags, GFP_ATOMIC);
 		if (ret)
 			break;
 
@@ -511,15 +515,16 @@ static int _iommu_map_sg_sync_pc(struct kgsl_pagetable *pt,
 {
 	struct kgsl_device *device = KGSL_MMU_DEVICE(pt->mmu);
 	struct kgsl_iommu_pt *iommu_pt = pt->priv;
-	size_t mapped;
+	ssize_t mapped;
 
 	_iommu_sync_mmu_pc(true);
 
-	mapped = iommu_map_sg(iommu_pt->domain, addr, sg, nents, flags);
+        mapped = iommu_map_sg(iommu_pt->domain, addr, sg, nents, flags,
+			GFP_ATOMIC);
 
 	_iommu_sync_mmu_pc(false);
 
-	if (mapped == 0) {
+	if (mapped <= 0) {
 		dev_err(device->dev, "map sg err: 0x%016llX, %d, %x, %zd\n",
 			addr, nents, flags, mapped);
 		return  -ENODEV;
@@ -599,7 +604,7 @@ static void _get_global_entries(uint64_t faultaddr,
 		prev->flags = p->memdesc->flags;
 		prev->priv = p->memdesc->priv;
 		prev->pid = 0;
-		strlcpy(prev->name, p->name, sizeof(prev->name));
+		strscpy(prev->name, p->name, sizeof(prev->name));
 	}
 
 	if (n != NULL) {
@@ -608,7 +613,7 @@ static void _get_global_entries(uint64_t faultaddr,
 		next->flags = n->memdesc->flags;
 		next->priv = n->memdesc->priv;
 		next->pid = 0;
-		strlcpy(next->name, n->name, sizeof(next->name));
+		strscpy(next->name, n->name, sizeof(next->name));
 	}
 }
 
@@ -1095,7 +1100,7 @@ static struct kgsl_iommu_pt *
 _alloc_pt(struct device *dev, struct kgsl_mmu *mmu, struct kgsl_pagetable *pt)
 {
 	struct kgsl_iommu_pt *iommu_pt;
-	struct bus_type *bus = kgsl_mmu_get_bus(dev);
+	const struct bus_type *bus = kgsl_mmu_get_bus(dev);
 
 	if (bus == NULL)
 		return ERR_PTR(-ENODEV);
@@ -1168,6 +1173,24 @@ void _enable_gpuhtw_llc(struct kgsl_mmu *mmu, struct kgsl_iommu_pt *iommu_pt)
 		"System cache not enabled for GPU pagetable walks: %d\n", ret);
 }
 
+static int kgsl_iommu_get_pt_regs(struct kgsl_device *device,
+		struct kgsl_iommu_pt *iommu_pt)
+{
+	struct kgsl_mmu *mmu = &device->mmu;
+	struct kgsl_iommu *iommu = _IOMMU_PRIV(mmu);
+	struct kgsl_iommu_context *ctx = &iommu->ctx[KGSL_IOMMU_CONTEXT_USER];
+
+	/*
+	 * 6.12 removed the vendor domain attributes and msm8953 binds
+	 * qcom_iommu (not arm-smmu), so read the architected CB registers
+	 * directly — the same reads the kgsl fault handler performs.
+	 */
+	iommu_pt->ttbr0 = KGSL_IOMMU_GET_CTX_REG_Q(ctx, TTBR0);
+	iommu_pt->contextidr = KGSL_IOMMU_GET_CTX_REG(ctx, CONTEXTIDR);
+
+	return 0;
+}
+
 static int _init_global_pt(struct kgsl_mmu *mmu, struct kgsl_pagetable *pt)
 {
 	struct kgsl_device *device = KGSL_MMU_DEVICE(mmu);
@@ -1202,14 +1225,12 @@ static int _init_global_pt(struct kgsl_mmu *mmu, struct kgsl_pagetable *pt)
 	iommu_set_fault_handler(iommu_pt->domain,
 				kgsl_iommu_fault_handler, pt);
 
-	ret = iommu_domain_get_attr(iommu_pt->domain,
-				DOMAIN_ATTR_CONTEXT_BANK, &cb_num);
-	if (ret) {
-		dev_err(device->dev,
-			"get DOMAIN_ATTR_CONTEXT_BANK failed: %d\n",
-			ret);
-		goto done;
-	}
+	/*
+	 * 6.12 removed DOMAIN_ATTR_CONTEXT_BANK. The GPU is always
+	 * allocated context bank 0 (qcom_adreno_smmu_alloc_context_bank,
+	 * drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c:179).
+	 */
+	cb_num = 0;
 
 	if (kgsl_mmu_is_perprocess(mmu) &&
 		MMU_FEATURE(mmu, KGSL_MMU_SMMU_APERTURE) &&
@@ -1240,16 +1261,15 @@ static int _init_global_pt(struct kgsl_mmu *mmu, struct kgsl_pagetable *pt)
 	ctx->regbase = iommu->regbase + KGSL_IOMMU_CB0_OFFSET
 			+ (cb_num << KGSL_IOMMU_CB_SHIFT);
 
-	ret = iommu_domain_get_attr(iommu_pt->domain,
-			DOMAIN_ATTR_TTBR0, &iommu_pt->ttbr0);
+	/*
+	 * 6.12: ttbr0/contextidr come back from the adreno-smmu private
+	 * interface (get_fault_info reads the same two CB registers the
+	 * removed vendor attrs did).
+	 */
+	ret = kgsl_iommu_get_pt_regs(device, iommu_pt);
 	if (ret) {
-		dev_err(device->dev, "get DOMAIN_ATTR_TTBR0 failed: %d\n", ret);
-		goto done;
-	}
-	ret = iommu_domain_get_attr(iommu_pt->domain,
-			DOMAIN_ATTR_CONTEXTIDR, &iommu_pt->contextidr);
-	if (ret) {
-		dev_err(device->dev, "get DOMAIN_ATTR_CONTEXTIDR failed: %d\n",
+		dev_err(device->dev,
+			"read ttbr0/contextidr via adreno-smmu failed: %d\n",
 			ret);
 		goto done;
 	}
@@ -2653,14 +2673,24 @@ static int _kgsl_iommu_cb_probe(struct kgsl_device *device,
 
 	ctx->kgsldev = device;
 
-	/* arm-smmu driver we'll have the right device pointer here. */
+	/*
+	 * arm-smmu driver we'll have the right device pointer here. */
 	if (of_find_property(node, "iommus", NULL)) {
-		ctx->dev = &pdev->dev;
+		/*
+		 * The kgsl-iommu node sits under &gpu, whose compatible
+		 * matches no OF bus, so no platform device is ever created
+		 * for it or its CB children. Fall back to the GPU device;
+		 * it carries the same iommus=<&gpu_iommu 0> stream id.
+		 */
+		ctx->dev = pdev ? &pdev->dev : &device->pdev->dev;
 	} else {
 		ctx->dev = kgsl_mmu_get_ctx(ctx->name);
 
-		if (IS_ERR(ctx->dev))
+		if (IS_ERR(ctx->dev)) {
+			dev_err(device->dev, "dt: no ctx device for %s: %ld\n",
+				ctx->name, PTR_ERR(ctx->dev));
 			return PTR_ERR(ctx->dev);
+		}
 	}
 
 	of_dma_configure(ctx->dev, node, true);
@@ -2687,6 +2717,9 @@ static int _kgsl_iommu_probe(struct kgsl_device *device,
 	struct kgsl_iommu *iommu = KGSL_IOMMU_PRIV(device);
 	struct device_node *child, *iommu_node = NULL;
 	struct platform_device *pdev = of_find_device_by_node(node);
+	/* Same bus-match fallback as _kgsl_iommu_cb_probe above: the node
+	 * nested under &gpu never gets its own platform device. */
+	struct device *iommu_dev = pdev ? &pdev->dev : &device->pdev->dev;
 
 	memset(iommu, 0, sizeof(*iommu));
 
@@ -2699,7 +2732,7 @@ static int _kgsl_iommu_probe(struct kgsl_device *device,
 	iommu->regsize = reg_val[1];
 
 	of_property_for_each_string(node, "clock-names", prop, cname) {
-		struct clk *c = devm_clk_get(&pdev->dev, cname);
+		struct clk *c = devm_clk_get(iommu_dev, cname);
 
 		if (IS_ERR(c)) {
 			dev_err(device->dev,
@@ -2725,7 +2758,7 @@ static int _kgsl_iommu_probe(struct kgsl_device *device,
 		device->mmu.secure_align_mask = 0xfff;
 
 	/* Fill out the rest of the devices in the node */
-	of_platform_populate(node, NULL, NULL, &pdev->dev);
+	of_platform_populate(node, NULL, NULL, iommu_dev);
 
 	for_each_child_of_node(node, child) {
 		int ret;
@@ -2734,8 +2767,11 @@ static int _kgsl_iommu_probe(struct kgsl_device *device,
 			continue;
 
 		ret = _kgsl_iommu_cb_probe(device, iommu, child);
-		if (ret)
+		if (ret) {
+			dev_err(device->dev, "dt: ctx probe %s failed: %d\n",
+				child->name, ret);
 			return ret;
+		}
 
 		if (!iommu_node)
 			iommu_node = of_parse_phandle(child, "iommus", 0);

@@ -5,9 +5,11 @@
  */
 
 #include <asm/cacheflush.h>
+#include <asm/memory.h>
 #include <linux/highmem.h>
 #include <linux/of.h>
 #include <linux/scatterlist.h>
+#include <linux/shrinker.h>
 #include <linux/swap.h>
 
 #include "kgsl_device.h"
@@ -215,7 +217,7 @@ void kgsl_pool_free_pages(struct page **pages, unsigned int pcount)
 	if (pages == NULL || pcount == 0)
 		return;
 
-	if (WARN(!kern_addr_valid((unsigned long)pages),
+	if (WARN(!virt_addr_valid(pages),
 		"Address of pages=%pK is not valid\n", pages))
 		return;
 
@@ -225,7 +227,7 @@ void kgsl_pool_free_pages(struct page **pages, unsigned int pcount)
 		 */
 		struct page *p = pages[i];
 
-		if (WARN(!kern_addr_valid((unsigned long)p),
+		if (WARN(!virt_addr_valid(p),
 			"Address of page=%pK is not valid\n", p))
 			return;
 
@@ -355,8 +357,8 @@ done:
 		pcount++;
 	}
 
-	mod_node_page_state(page_pgdat(page), NR_UNRECLAIMABLE_PAGES,
-					(1 << order));
+	mod_node_page_state(page_pgdat(page), NR_SLAB_UNRECLAIMABLE_B,
+				((size_t)1 << order) << PAGE_SHIFT);
 	return pcount;
 
 eagain:
@@ -376,8 +378,8 @@ void kgsl_pool_free_page(struct page *page)
 
 	page_order = compound_order(page);
 
-	mod_node_page_state(page_pgdat(page), NR_UNRECLAIMABLE_PAGES,
-					-(1 << page_order));
+	mod_node_page_state(page_pgdat(page), NR_SLAB_UNRECLAIMABLE_B,
+				-((size_t)1 << page_order) << PAGE_SHIFT);
 
 	if (!kgsl_pool_max_pages ||
 			(kgsl_pool_size_total() < kgsl_pool_max_pages)) {
@@ -459,13 +461,8 @@ kgsl_pool_shrink_count_objects(struct shrinker *shrinker,
 	return kgsl_pool_size_total();
 }
 
-/* Shrinker callback data*/
-static struct shrinker kgsl_pool_shrinker = {
-	.count_objects = kgsl_pool_shrink_count_objects,
-	.scan_objects = kgsl_pool_shrink_scan_objects,
-	.seeks = DEFAULT_SEEKS,
-	.batch = 0,
-};
+/* Shrinker callback data — 6.12 shrinkers are allocated, not declared */
+static struct shrinker *kgsl_pool_shrinker;
 
 static void kgsl_pool_config(unsigned int order, unsigned int reserved_pages,
 		bool allocation_allowed, unsigned int max_pages)
@@ -532,7 +529,7 @@ static void kgsl_of_get_mempools(struct device_node *parent)
 	 * low memory configuration is not specified
 	 * then fallback to default pool configuration.
 	 */
-	if (totalram_pages < (SZ_2G >> PAGE_SHIFT))
+	if (totalram_pages() < (SZ_2G >> PAGE_SHIFT))
 		node = of_find_compatible_node(parent, NULL,
 				"qcom,gpu-mempools-lowmem");
 
@@ -560,7 +557,15 @@ void kgsl_init_page_pools(struct kgsl_device *device)
 	kgsl_pool_reserve_pages();
 
 	/* Initialize shrinker */
-	register_shrinker(&kgsl_pool_shrinker);
+	kgsl_pool_shrinker = shrinker_alloc(0, "kgsl-pool");
+	if (!kgsl_pool_shrinker) {
+		pr_err("kgsl: failed to allocate pool shrinker\n");
+		return;
+	}
+	kgsl_pool_shrinker->count_objects = kgsl_pool_shrink_count_objects;
+	kgsl_pool_shrinker->scan_objects = kgsl_pool_shrink_scan_objects;
+	kgsl_pool_shrinker->seeks = DEFAULT_SEEKS;
+	shrinker_register(kgsl_pool_shrinker);
 }
 
 void kgsl_exit_page_pools(void)
@@ -569,6 +574,9 @@ void kgsl_exit_page_pools(void)
 	kgsl_pool_reduce(0, true);
 
 	/* Unregister shrinker */
-	unregister_shrinker(&kgsl_pool_shrinker);
+	if (kgsl_pool_shrinker) {
+		shrinker_free(kgsl_pool_shrinker);
+		kgsl_pool_shrinker = NULL;
+	}
 }
 

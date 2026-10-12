@@ -3,7 +3,7 @@
  * Copyright (c) 2012-2019,2021, The Linux Foundation. All rights reserved.
  */
 
-#include <linux/clk/qcom.h>
+#include <linux/of.h>
 #include <linux/firmware.h>
 #include <linux/of.h>
 #include <linux/slab.h>

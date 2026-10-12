@@ -1,5 +1,14 @@
 # Working rules for this repo
 
+## Boot testing + kernel-log evidence
+
+`porting/REFERENCE-boot-testing.md` is the operational reference: tooling
+(`usb-boot-capture.py`, `package-diag-boot.py`, `clear-logdump.sh`,
+`pull-run-evidence.sh`), the snapshot layout, and the 6.12 initcall-ordering
+trap that turns a driver-probe panic into a completely silent failed boot
+(`pstore_blk` is level 7, driver probes are level 6). Read it before any
+boot cycle; boot cycles are the scarce resource.
+
 ## Verify before concluding
 
 Do not report a cause, a fix, or a regression from a single run or from

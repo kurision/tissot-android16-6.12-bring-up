@@ -166,10 +166,10 @@ static int print_mem_entry(void *data, void *ptr)
 	seq_printf(s, "%pK %pK %16llu %5d %9s %10s %16s %5d %16d %6d %6d",
 			(uint64_t *)(uintptr_t) m->gpuaddr,
 			/*
-			 * Show zero for the useraddr - we can't reliably track
+			 * Show NULL for the useraddr - we can't reliably track
 			 * that value for multiple vmas anyway
 			 */
-			0, m->size, entry->id, flags,
+			NULL, m->size, entry->id, flags,
 			memtype_str(usermem_type),
 			usage, (m->sgt ? m->sgt->nents : 0),
 			atomic_read(&entry->map_count),

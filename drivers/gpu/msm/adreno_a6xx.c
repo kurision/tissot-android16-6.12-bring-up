@@ -6,8 +6,8 @@
 #include <linux/firmware.h>
 #include <linux/of.h>
 #include <linux/of_fdt.h>
-#include <soc/qcom/subsystem_restart.h>
-#include <linux/clk/qcom.h>
+#include <linux/remoteproc.h>
+#include "adreno-zap-compat.h"
 
 #include "adreno.h"
 #include "adreno_a6xx.h"
@@ -664,7 +664,7 @@ static int a6xx_zap_load(struct adreno_device *adreno_dev)
 
 	/* Load the zap shader firmware through PIL if its available */
 	if (a6xx_core->zap_name && !adreno_dev->zap_loaded) {
-		zap = subsystem_get(a6xx_core->zap_name);
+		zap = adreno_zap_subsystem_get(a6xx_core->zap_name);
 
 		/* Return error if the zap shader cannot be loaded */
 		if (IS_ERR_OR_NULL(zap)) {
@@ -964,7 +964,7 @@ bool a6xx_sptprac_is_on(struct adreno_device *adreno_dev)
 	if (!adreno_has_sptprac_gdsc(adreno_dev))
 		return true;
 
-	return a6xx_gmu_sptprac_is_on(adreno_dev);
+	return kgsl_a6xx_gmu_sptprac_is_on(adreno_dev);
 }
 
 unsigned int a6xx_set_marker(

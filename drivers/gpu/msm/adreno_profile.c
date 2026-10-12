@@ -6,6 +6,7 @@
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
 #include <linux/sched/signal.h>
+#include <linux/vmalloc.h>
 
 #include "adreno.h"
 #include "adreno_profile.h"
@@ -306,7 +307,7 @@ static bool _add_to_assignments_list(struct adreno_profile *profile,
 	entry->offset = offset;
 	entry->offset_hi = offset_hi;
 
-	strlcpy(entry->name, str, sizeof(entry->name));
+	strscpy(entry->name, str, sizeof(entry->name));
 
 	profile->assignment_count++;
 
@@ -702,7 +703,7 @@ static ssize_t profile_assignments_write(struct file *filep,
 	 * all it's work.  This helps to synchronize the work flow to the
 	 * GPU and avoid racey conditions.
 	 */
-	if (adreno_idle(device)) {
+	if (kgsl_adreno_idle(device)) {
 		size = -ETIMEDOUT;
 		goto error_put;
 	}

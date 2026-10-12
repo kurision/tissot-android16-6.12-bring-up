@@ -3,15 +3,14 @@
  * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
  */
 
-#include <linux/clk/qcom.h>
+#include <linux/of.h>
 #include <linux/delay.h>
 #include <linux/firmware.h>
-#include <linux/of.h>
 #include <linux/slab.h>
 #include <soc/qcom/scm.h>
-#include <soc/qcom/subsystem_restart.h>
 
 #include "adreno.h"
+#include "adreno-zap-compat.h"
 #include "adreno_a5xx.h"
 #include "adreno_a5xx_packets.h"
 #include "adreno_pm4types.h"
@@ -1842,7 +1841,7 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 
 	/* Load the zap shader firmware through PIL if its available */
 	if (a5xx_core->zap_name && !adreno_dev->zap_loaded) {
-		ptr = subsystem_get(a5xx_core->zap_name);
+		ptr = adreno_zap_subsystem_get(a5xx_core->zap_name);
 
 		/* Return error if the zap shader cannot be loaded */
 		if (IS_ERR_OR_NULL(ptr))

@@ -16,6 +16,8 @@ import os
 import struct
 import subprocess
 import sys
+from pathlib import Path
+
 
 PAGE = 2048
 MAX_IMAGE = 64 * 1024 * 1024
@@ -64,6 +66,31 @@ def verify_kernel_dir(kdir):
             die(f"SHA256SUMS mismatch for {name}")
     return payload
 
+
+
+def stage_kernel(build_dir, kdir):
+    """Copy a fresh build into the kernel dir, rebuilding Image.gz-dtb.
+
+    A kernel dir left over from an earlier run passes verify_kernel_dir: it is
+    internally consistent, just old. Booting it silently discards the change
+    under test, so the copy is made here rather than trusted from the shell.
+    """
+    image = Path(build_dir) / "Image.gz"
+    dtb = Path(build_dir) / "dts" / "qcom" / "msm8953-xiaomi-tissot.dtb"
+    for src in (image, dtb):
+        if not src.is_file():
+            die(f"no such build artifact: {src}")
+    payload = image.read_bytes() + dtb.read_bytes()
+    kdir = Path(kdir)
+    kdir.mkdir(parents=True, exist_ok=True)
+    (kdir / "Image.gz").write_bytes(image.read_bytes())
+    (kdir / "msm8953-xiaomi-tissot.dtb").write_bytes(dtb.read_bytes())
+    (kdir / "Image.gz-dtb").write_bytes(payload)
+    lines = [f"{sha256((kdir / n).read_bytes())}  {n}"
+             for n in ("Image.gz", "msm8953-xiaomi-tissot.dtb",
+                       "Image.gz-dtb")]
+    (kdir / "SHA256SUMS").write_text("\n".join(lines) + "\n")
+    return payload
 
 def parse_cpio(data):
     """Return (records, tail). Each record: dict(fields, name, data, raw_hdr)."""
@@ -188,7 +215,9 @@ def customize_ramdisk(cpio, init, fw_entries, debuggable):
     return out, len(new)
 
 
-def new_cmdline(base):
+def new_cmdline(base, keep_console=False):
+    if keep_console:
+        return base
     if base.endswith(OLD_CONSOLE):
         return base[:-len(OLD_CONSOLE)] + NEW_CONSOLE
     if base.endswith(NEW_CONSOLE):
@@ -205,6 +234,21 @@ def main():
                     help="stage every file under DIR as lib/firmware/<relpath>")
     ap.add_argument("--debuggable", action="store_true",
                     help="force ro.secure=0 ro.debuggable=1 in prop.default")
+    ap.add_argument("--keep-stock-console", action="store_true",
+                    help="keep the base cmdline's console (do not force ttynull); "
+                         "for fault-isolation boots where the panic must hit the panel")
+    ap.add_argument("--append-cmdline", default="",
+                    help="append this text to the produced cmdline "
+                         "(e.g. earlycon=... console=ttyMSM0,115200)")
+    ap.add_argument("--drop-cmdline", action="append", default=[],
+                    metavar="TOKEN",
+                    help="drop this whitespace-separated token from the "
+                         "cmdline (repeatable)")
+    ap.add_argument("--stage-kernel", default=None,
+                    help="copy a fresh build from DIR (holding Image.gz and "
+                         "dts/qcom/msm8953-xiaomi-tissot.dtb) into "
+                         "--kernel-dir first, so a stale kernel dir cannot "
+                         "ship silently")
     ap.add_argument("--out", required=True)
     ap.add_argument("--report", required=True)
     args = ap.parse_args()
@@ -213,6 +257,8 @@ def main():
         if os.path.exists(path):
             die(f"refusing to overwrite {path}")
 
+    if args.stage_kernel:
+        stage_kernel(args.stage_kernel, args.kernel_dir)
     kernel = verify_kernel_dir(args.kernel_dir)
     with open(args.init, "rb") as f:
         init = f.read()
@@ -243,7 +289,16 @@ def main():
                              stdout=subprocess.PIPE, check=True).stdout
 
     base_cmd = base[CMDLINE_OFF:CMDLINE_OFF + CMDLINE_LEN].split(b"\0", 1)[0].decode()
-    cmdline = new_cmdline(base_cmd)
+    cmdline = new_cmdline(base_cmd, args.keep_stock_console)
+    if args.drop_cmdline:
+        present = cmdline.split()
+        missing = set(args.drop_cmdline) - set(present)
+        if missing:
+            die(f"--drop-cmdline token not in cmdline: {sorted(missing)}")
+        dropped = set(args.drop_cmdline)
+        cmdline = " ".join(t for t in present if t not in dropped)
+    if args.append_cmdline.strip():
+        cmdline += " " + args.append_cmdline.strip()
     if len(cmdline) >= CMDLINE_LEN:
         die("cmdline too long")
 

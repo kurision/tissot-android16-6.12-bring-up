@@ -7,8 +7,10 @@
  * Default mode never returns after setup; recovery requires a reboot.
  * Build with -DANDROID_CAPTURE to exec the original /system/bin/init as
  * PID 1 while a child records for 900 seconds in a private mount namespace,
- * and a watchdog child reboots the phone if Android has not reached
- * sys.boot_completed=1 within BOOT_DEADLINE_SECONDS of kernel start.
+ * and, when built with -DBOOT_DEADLINE_SECONDS=<n> (n > 0), a watchdog
+ * child reboots the phone if Android has not reached sys.boot_completed=1
+ * within n seconds of kernel start. Off by default: since snapshot60 run31
+ * the 6.12 boot reaches adb, so the host ends a run with `adb reboot`.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -45,7 +47,7 @@
 #define DURABLE_CAPTURE 0
 #endif
 #ifndef BOOT_DEADLINE_SECONDS
-#define BOOT_DEADLINE_SECONDS 360
+#define BOOT_DEADLINE_SECONDS 0
 #endif
 static time_t monotonic_seconds(void);
 struct ramoops_sampler;
@@ -399,19 +401,41 @@ failed:
 }
 #endif
 
-/* A failed backup must never take down the primary recorder. */
+/*
+ * Sinks are independent and reported separately: bit 0 set means the primary
+ * took the record, bit 1 the mirror. A USB gadget that unbinds ACM
+ * mid-boot clears bit 0 and costs the USB capture only, not the whole run.
+ * fd < 0 means "sink retired".
+ */
 static int write_capture(int out, int *mirror, const char *buf, size_t len,
 			 int durable)
 {
-	if (write_all(out, buf, len) || (durable && fsync(out)))
-		return -1;
-	if (mirror && *mirror >= 0 &&
-	    (write_all(*mirror, buf, len) || fsync(*mirror))) {
-		close(*mirror);
-		*mirror = -1;
-		say(out, "\nDIAG: SD mirror failed; primary capture continues\n");
+	int taken = 0;
+
+	if (out >= 0) {
+		if (!write_all(out, buf, len) && !(durable && fsync(out)))
+			taken |= 1;
+		else if (mirror && *mirror >= 0)
+			say(*mirror, "\nDIAG: USB sink gone; SD capture continues\n");
 	}
-	return 0;
+	if (mirror && *mirror >= 0) {
+		if (!write_all(*mirror, buf, len) && !fsync(*mirror)) {
+			taken |= 2;
+		} else {
+			close(*mirror);
+			*mirror = -1;
+			if (out >= 0)
+				say(out,
+					"\nDIAG: SD mirror failed; primary capture continues\n");
+		}
+	}
+	return taken;
+}
+
+/* Every sink gone: nothing left to record, stop burning the deadline. */
+static int sinks_dead(int out, int *mirror)
+{
+	return out < 0 && (!mirror || *mirror < 0);
 }
 
 static int dump_log(int in, int out, unsigned seconds, int durable, int *mirror,
@@ -433,18 +457,46 @@ static int dump_log(int in, int out, unsigned seconds, int durable, int *mirror,
 #endif
 		got = read(in, buf, sizeof buf);
 		if (got > 0) {
-			if (write_capture(out, mirror, buf, (size_t)got, durable))
-				return -1;
+			int taken = write_capture(out, mirror, buf, (size_t)got,
+						  durable);
+			if (!(taken & 1))
+				out = -1;
 		} else if (got < 0 && errno == EPIPE) {
 			static const char lost[] =
 				"\nDIAG: kmsg overrun; some records lost\n";
-			if (write_capture(out, mirror, lost, sizeof lost - 1, durable))
-				return -1;
+			int taken = write_capture(out, mirror, lost,
+						  sizeof lost - 1, durable);
+			if (!(taken & 1))
+				out = -1;
+		} else if (got < 0 && (errno == EACCES || errno == EPERM)) {
+			/*
+			 * Enforcing SELinux takes the kmsg fd away from this
+			 * pre-policy child; every retry is another avc line and
+			 * no further record can ever arrive. Stop reading but
+			 * keep the sinks open to the deadline so the marker is
+			 * still written. This is what ended every capture at
+			 * ~35 s: "DIAG: Android capture failed" in run25-sd.log.
+			 */
+			write_capture(out, mirror,
+				"\nDIAG: kmsg read denied; capture idle to deadline\n",
+				sizeof("\nDIAG: kmsg read denied; capture idle to deadline\n") - 1,
+				durable);
+			while (monotonic_seconds() <= deadline) {
+				usleep(500000);
+#ifdef ANDROID_CAPTURE
+				ramoops_sampler_tick(sampler);
+#endif
+				if (sinks_dead(out, mirror))
+					return -1;
+			}
+			break;
 		} else if (got < 0 && errno != EAGAIN && errno != EINTR) {
 			return -1;
 		} else {
 			usleep(200000);
 		}
+		if (sinks_dead(out, mirror))
+			return -1;
 	} while (monotonic_seconds() <= deadline);
 	return 0;
 }
@@ -601,6 +653,65 @@ static int ramoops_selftest(void)
 	close(dir);
 	assert(!rmdir(directory));
 	puts("Ramoops alternating snapshot and capture continuation checks PASS");
+	return 0;
+}
+
+/* A dead USB sink must not end the capture while the SD mirror is open. */
+static int sink_retirement_selftest(void)
+{
+	char directory[] = "/tmp/ack-sink-check-XXXXXX";
+	static const char records[] = "6,1,1000,-;sink one\n6,2,2000,-;sink two\n";
+	static const char more[] = "6,3,3000,-;sink three\n";
+	struct stat st;
+	int dir, kmsg, primary, mirror;
+	char whole[512];
+	off_t before;
+	ssize_t got;
+
+	assert(mkdtemp(directory));
+	dir = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	assert(dir >= 0);
+	kmsg = openat(dir, "kmsg", O_RDWR | O_CREAT | O_EXCL, 0600);
+	primary = openat(dir, "primary", O_RDWR | O_CREAT | O_EXCL, 0600);
+	mirror = openat(dir, "mirror", O_RDWR | O_CREAT | O_EXCL, 0600);
+	assert(kmsg >= 0 && primary >= 0 && mirror >= 0);
+	/* Write a record the primary will refuse, then retire its fd. */
+	assert(!write_all(kmsg, records, sizeof records - 1));
+	assert(lseek(kmsg, 0, SEEK_SET) == 0);
+	close(primary);
+	primary = openat(dir, "read-only", O_RDONLY | O_CREAT | O_EXCL, 0600);
+	assert(primary >= 0);
+	assert(!dump_log(kmsg, primary, 0, 1, &mirror, NULL));
+	assert(!fstat(mirror, &st) && st.st_size > (off_t)0);
+	got = pread(mirror, whole, sizeof whole - 1, 0);
+	assert(got > 0);
+	whole[got] = '\0';
+	assert(strstr(whole, records));
+	/* With the primary retired, later records must still reach the mirror. */
+	assert(!fstat(mirror, &st));
+	before = st.st_size;
+	assert(!write_all(kmsg, more, sizeof more - 1));
+	assert(lseek(kmsg, 0, SEEK_SET) == 0);
+	assert(!dump_log(kmsg, -1, 0, 1, &mirror, NULL));
+	assert(!fstat(mirror, &st) && st.st_size > before);
+	got = pread(mirror, whole, sizeof whole - 1, 0);
+	assert(got > 0);
+	whole[got] = '\0';
+	assert(strstr(whole, more));
+	/* Both sinks gone: capture must stop rather than spin to deadline. */
+	close(mirror);
+	mirror = -1;
+	assert(dump_log(kmsg, -1, 0, 1, &mirror, NULL) == -1);
+	close(primary);
+	close(kmsg);
+	close(mirror);
+	assert(!unlinkat(dir, "kmsg", 0));
+	assert(!unlinkat(dir, "primary", 0));
+	assert(!unlinkat(dir, "read-only", 0));
+	assert(!unlinkat(dir, "mirror", 0));
+	close(dir);
+	assert(!rmdir(directory));
+	puts("Sink retirement and mirror continuation checks PASS");
 	return 0;
 }
 #endif
@@ -1774,6 +1885,21 @@ static void boot_deadline(int kin, int klog)
 			}
 		} else if (got < 0 && errno == EAGAIN) {
 			poll(&p, 1, 1000);
+		} else if (got < 0 && (errno == EACCES || errno == EPERM)) {
+			/*
+			 * Enforcing SELinux denies this pre-policy (u:r:kernel)
+			 * child its inherited kmsg fd; every retry is another
+			 * avc line on the console (262 in snapshot60 run25).
+			 * Completion is unobservable from here on, so keep the
+			 * deadline reboot but stop reading.
+			 */
+			snprintf(msg, sizeof(msg),
+				 "DIAG: deadline kmsg read denied errno=%d t=%ld; sleeping to deadline\n",
+				 errno, (long)monotonic_seconds());
+			say(klog, msg);
+			while (monotonic_seconds() < BOOT_DEADLINE_SECONDS)
+				sleep(5);
+			break;
 		} else if (got == 0 || (errno != EINTR && errno != EPIPE)) {
 			sleep(1);
 		}
@@ -1872,7 +1998,8 @@ static int launch_android(char **argv)
 				close(kin);
 			capture_block_state(klog);
 		}
-		if (kdl >= 0 && klog >= 0 && fork() == 0) {
+		if (BOOT_DEADLINE_SECONDS > 0 && kdl >= 0 && klog >= 0 &&
+		    fork() == 0) {
 			close(ready[1]);
 			close(in);
 			close(out);
@@ -1897,7 +2024,7 @@ static int launch_android(char **argv)
 			sd = -1;
 		}
 		if (out < 0 ||
-		    write_capture(out, &sd, marker, sizeof marker - 1, 1))
+		    !(write_capture(out, &sd, marker, sizeof marker - 1, 1) & 3))
 			goto child_failed;
 		ramoops_sampler_tick(&sampler);
 		status = 1;
@@ -1980,7 +2107,13 @@ int main(int argc, char **argv)
 	return guard_selftest();
 #endif
 #ifdef ANDROID_RAMOOPS_TEST
-	return ramoops_selftest();
+	{
+		int rc = ramoops_selftest();
+
+		if (rc)
+			return rc;
+		return sink_retirement_selftest();
+	}
 #endif
 	return launch_android(argv);
 #endif

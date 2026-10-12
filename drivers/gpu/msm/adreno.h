@@ -12,6 +12,7 @@
 #include "adreno_profile.h"
 #include "adreno_ringbuffer.h"
 #include "kgsl_sharedmem.h"
+#include <linux/adreno-smmu-priv.h>
 
 #define DEVICE_3D_NAME "kgsl-3d"
 #define DEVICE_3D0_NAME "kgsl-3d0"
@@ -568,6 +569,7 @@ struct adreno_device {
 	 * controls perfcounter ioctl read
 	 */
 	bool perfcounter;
+	struct adreno_smmu_priv adreno_smmu;
 };
 
 /**
@@ -1080,7 +1082,7 @@ int adreno_set_unsecured_mode(struct adreno_device *adreno_dev,
 		struct adreno_ringbuffer *rb);
 void adreno_spin_idle_debug(struct adreno_device *adreno_dev, const char *str);
 int adreno_spin_idle(struct adreno_device *device, unsigned int timeout);
-int adreno_idle(struct kgsl_device *device);
+int kgsl_adreno_idle(struct kgsl_device *device);
 bool adreno_isidle(struct kgsl_device *device);
 
 int adreno_set_constraint(struct kgsl_device *device,
@@ -1876,4 +1878,30 @@ int adreno_gmu_fenced_write(struct adreno_device *adreno_dev,
 int adreno_clear_pending_transactions(struct kgsl_device *device);
 void adreno_gmu_send_nmi(struct adreno_device *adreno_dev);
 void adreno_smmu_resume(struct adreno_device *adreno_dev);
+
+/*
+ * 4.19 qcom clk flags (linux/clk/qcom.h) are gone from 6.12;
+ * retain/noretain control lives in the clock controller and rpmh
+ * power domains now. adreno_a3xx/a5xx call these only on chips this
+ * port never binds (3xx family, a540/a512/a508/a509), so the no-op in
+ * <linux/clk/qcom.h> is sufficient and honest.
+ */
+#include <linux/clk/qcom.h>
+
+/*
+ * 4.19 of_fdt_get_ddrtype()/of_fdt_get_ddrhbb() DRAM queries are gone.
+ * Only adreno_a6xx calls them, guarded by a650/a610/a702 chip checks that
+ * are false on this a506. "Undetermined" (-1) is what the callers already
+ * handle: no highest-bank-bit override.
+ */
+static inline int of_fdt_get_ddrtype(void)
+{
+	return -1;
+}
+
+static inline int of_fdt_get_ddrhbb(int a, int b)
+{
+	return 0;
+}
+
 #endif /*__ADRENO_H */

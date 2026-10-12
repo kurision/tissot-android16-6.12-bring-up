@@ -848,7 +848,7 @@ static bool a6xx_gmu_cx_is_on(struct kgsl_device *device)
  * This check should only be performed if the keepalive bit is set or it
  * can be guaranteed that the power state of the GPU will remain unchanged
  */
-bool a6xx_gmu_sptprac_is_on(struct adreno_device *adreno_dev)
+bool kgsl_a6xx_gmu_sptprac_is_on(struct adreno_device *adreno_dev)
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 	unsigned int val;

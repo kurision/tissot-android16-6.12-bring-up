@@ -22,6 +22,7 @@ msm_kgsl_core-y = \
 	kgsl_hfi.o \
 	kgsl_pool.o \
 	secure_buffer_compat.o \
+	msm-bus-compat.o \
 	kgsl_reclaim.o \
 	kgsl_timeline.o
 

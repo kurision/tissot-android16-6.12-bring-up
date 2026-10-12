@@ -8,6 +8,7 @@
 #include "msm8953.dtsi"
 #include "pm8953.dtsi"
 #include "pmi8950.dtsi"
+#include "msm8953-xiaomi-tissot-mdss.dtsi"
 #include <dt-bindings/leds/common.h>
 
 /delete-node/ &adsp_fw_mem;
@@ -400,41 +401,23 @@
 };
 
 &mdss {
-	status = "okay";
+	status = "disabled";
 };
 
 &mdss_dsi0 {
-	vdd-supply = <&pm8953_l17>;
-	vddio-supply = <&pm8953_l6>;
-	vdda-supply = <&pm8953_l2>;
-
-	status = "okay";
-
-	panel@0 {
-		compatible = "orisetech,otm1911";
-		reg = <0>;
-
-		backlight = <&pmi8950_wled>;
-		vdd-supply = <&pm8953_l10>;
-		vddio-supply = <&pm8953_l6>;
-
-		port {
-			panel_in: endpoint {
-				remote-endpoint = <&mdss_dsi0_out>;
-			};
-		};
-	};
+	status = "disabled";
 };
 
-&mdss_dsi0_out {
-	data-lanes = <0 1 2 3>;
-	remote-endpoint = <&panel_in>;
+&mdss_dsi1 {
+	status = "disabled";
 };
 
 &mdss_dsi0_phy {
-	vcca-supply = <&pm8953_l3>;
+	status = "disabled";
+};
 
-	status = "okay";
+&mdss_dsi1_phy {
+	status = "disabled";
 };
 
 &lpass {
@@ -459,6 +442,236 @@
 &gpu {
 	compatible = "qcom,kgsl-3d0", "qcom,adreno-506.0";
 	status = "okay";
+	/*
+	 * Vendor chip identity, from the 4.19 donor gpu node
+	 * (msm8953-gpu.dtsi:109, qcom,chipid = <0x05000600> = A506 rev 6.0.0).
+	 * 6.12's msm8953.dtsi gpu node dropped it (drm/msm probes the chip from
+	 * hardware), but adreno_update_soc_hw_revision_quirks() reads only the DT
+	 * and BUG()s in probe without it (adreno.c:838-843) — an invisible reset
+	 * with oops=panic + console=ttynull.
+	 */
+	qcom,chipid = <0x05000600>;
+
+	/*
+	 * Vendor identity/IO properties, from the 4.19 donor gpu node
+	 * (msm8953-gpu.dtsi:101-113). adreno_of_get_power() returns -EINVAL
+	 * without `label` (adreno.c:1215-1218, "(NULL device *): Unable to
+	 * read 'label'") and without `qcom,id` (adreno.c:1220).
+	 */
+	label = "kgsl-3d0";
+	qcom,id = <0>;
+	qcom,initial-pwrlevel = <0>;
+	qcom,idle-timeout = <80>; /* msecs */
+
+	/*
+	 * GPU memory addressing bank bit, verbatim from the 4.19 donor gpu node
+	 * (msm8953-gpu.dtsi:117). Without it of_property_read_u32() leaves
+	 * adreno_dev->highest_bank_bit at 0, and a5xx_init() WARNs
+	 * ("The highest-bank-bit property is invalid", adreno_a5xx.c:294) and
+	 * clamps it to 13 instead of the correct 14 — a wrong memory-addressing
+	 * parameter, not just a warning. seen in run29.
+	 */
+	qcom,highest-bank-bit = <14>;
+
+	/*
+	 * Donor GPU clock names, verbatim from the 4.19 gpu node
+	 * (msm8953-gpu.dtsi:128-130). _get_clocks() matches DT clock-names
+	 * against the driver's table (kgsl_pwrctrl.c:37-56) and skips every
+	 * name it does not know, so the 6.12 names ("core", "iface",
+	 * "mem_iface", ...) matched nothing: not one GPU clock was ever
+	 * acquired and nothing reported it. The clocks phandle list is
+	 * inherited unchanged from msm8953.dtsi:1054-1059, so these names
+	 * map onto the same six clocks in the same order.
+	 */
+	clock-names = "core_clk", "iface_clk",
+		      "mem_iface_clk", "alt_mem_iface_clk",
+		      "rbbmtimer_clk", "alwayson_clk";
+
+	/*
+	 * Donor IRQ name (msm8953-gpu.dtsi). kgsl_request_irq() looks the IRQ
+	 * up by name ("kgsl_3d0_irq", adreno.c:53 -> kgsl.c:5368); the 6.12
+	 * node has only `interrupts`, so probe failed with -ENXIO — run26.
+	 */
+	interrupt-names = "kgsl_3d0_irq";
+
+	/*
+	 * Vendor legacy bus-vote table, verbatim from the 4.19 donor gpu node
+	 * (msm8953-gpu.dtsi:135-149). kgsl_get_bus_scale_table() (kgsl.c:1390)
+	 * looks for a "qcom,gpu-bus-table[-ddrN]" child, then falls back to
+	 * msm_bus_cl_get_pdata(), which parses the vendor legacy
+	 * "qcom,msm-bus,*" properties off the gpu node itself. Neither the
+	 * child node nor these properties existed here, so all three lookups
+	 * returned NULL and kgsl_pwrctrl_init() bailed out with -EINVAL on its
+	 * very first statement (kgsl_pwrctrl.c:2267-2269) — run25.
+	 * msm-bus-compat.c reads exactly this format.
+	 *
+	 * Deliberately NOT ported: qcom,bus-control + qcom,gpubw-dev. The
+	 * donor's "qcom,devbw" gpubw node matches no 6.12 OF bus, so
+	 * of_find_device_by_node() would return NULL and the driver would
+	 * skip msm_bus_scale_register_client() entirely, silently dropping
+	 * every bus vote. Without those properties the driver registers the
+	 * client itself against the "gpu_icc_path" interconnect; this gpu node
+	 * has no "interconnects" property, so votes are accepted and warned
+	 * about once rather than applied.
+	 *
+	 * 11 cases cover every bus index the pwrlevels below use (0-10).
+	 */
+	qcom,msm-bus,name = "grp3d";
+	qcom,msm-bus,num-cases = <11>;
+	qcom,msm-bus,num-paths = <1>;
+	qcom,msm-bus,vectors-KBps =
+			<26 512 0 0>,	     /*  off          */
+			<26 512 0 1689600>, /* 1. 211.20 MHz */
+			<26 512 0 2227200>, /* 2. 278.40 MHz */
+			<26 512 0 3072000>, /* 3. 384.00 MHz */
+			<26 512 0 3379200>, /* 4.  422.40 MHz */
+			<26 512 0 4454400>, /* 5. 556.80 MHz */
+			<26 512 0 5376000>, /* 6. 672.00 MHz */
+			<26 512 0 6144000>, /* 7. 768.00 MHz */
+			<26 512 0 6451200>, /* 8. 806.40 MHz */
+			<26 512 0 6758400>, /* 9. 844.80 MHz */
+			<26 512 0 7449600>; /*10. 931.20 MHz */
+
+	/*
+	 * Vendor legacy power levels, verbatim from the 4.19 donor gpu node
+	 * (msm8953-gpu.dtsi:202-278, "qcom,gpu-pwrlevels"). The ported driver
+	 * parses only these: adreno_of_get_pwrlevels() falls back to the legacy
+	 * node and returns -EINVAL ("Unable to find 'qcom,gpu-pwrlevels'") when
+	 * it is absent (adreno.c:1108-1114). The 6.12 tree's gpu node carries
+	 * only the OPP-v2 table, which the driver never reads. Bus indices are
+	 * the donor's; the msm-bus shim maps them onto the 6.12 interconnect.
+	 */
+	qcom,gpu-pwrlevels {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		compatible = "qcom,gpu-pwrlevels";
+
+		/* TURBO */
+		qcom,gpu-pwrlevel@0 {
+			reg = <0>;
+			qcom,gpu-freq = <650000000>;
+			qcom,bus-freq = <10>;
+			qcom,bus-min = <10>;
+			qcom,bus-max = <10>;
+		};
+
+		/* NOM+ */
+		qcom,gpu-pwrlevel@1 {
+			reg = <1>;
+			qcom,gpu-freq = <560000000>;
+			qcom,bus-freq = <10>;
+			qcom,bus-min = <8>;
+			qcom,bus-max = <10>;
+		};
+
+		/* NOM */
+		qcom,gpu-pwrlevel@2 {
+			reg = <2>;
+			qcom,gpu-freq = <510000000>;
+			qcom,bus-freq = <9>;
+			qcom,bus-min = <6>;
+			qcom,bus-max = <10>;
+		};
+
+		qcom,gpu-pwrlevel@3 {
+			reg = <3>;
+			qcom,gpu-freq = <400000000>;
+			qcom,bus-freq = <7>;
+			qcom,bus-min = <5>;
+			qcom,bus-max = <8>;
+		};
+
+		/* SVS+ */
+		qcom,gpu-pwrlevel@4 {
+			reg = <4>;
+			qcom,gpu-freq = <320000000>;
+			qcom,bus-freq = <4>;
+			qcom,bus-min = <2>;
+			qcom,bus-max = <6>;
+		};
+
+		/* SVS */
+		qcom,gpu-pwrlevel@5 {
+			reg = <5>;
+			qcom,gpu-freq = <216000000>;
+			qcom,bus-freq = <1>;
+			qcom,bus-min = <1>;
+			qcom,bus-max = <4>;
+		};
+
+		/* Low SVS */
+		qcom,gpu-pwrlevel@6 {
+			reg = <6>;
+			qcom,gpu-freq = <133300000>;
+			qcom,bus-freq = <1>;
+			qcom,bus-min = <1>;
+			qcom,bus-max = <4>;
+		};
+
+		/* XO */
+		qcom,gpu-pwrlevel@7 {
+			reg = <7>;
+			qcom,gpu-freq = <19200000>;
+			qcom,bus-freq = <0>;
+			qcom,bus-min = <0>;
+			qcom,bus-max = <0>;
+		};
+	};
+
+	/*
+	 * Vendor kgsl-iommu glue from the 4.19 donor
+	 * (kernel_xiaomi_msm8953 msm8953-gpu.dtsi, kgsl_msm_iommu node),
+	 * retargeted to the 6.12 tree's gpu_iommu SMMU handle. Without it
+	 * kgsl_iommu_probe finds no qcom,kgsl-smmu-v2 node and the driver
+	 * cannot bring up its context bank.
+	 */
+	kgsl_iommu: qcom,kgsl-iommu@1c40000 {
+		compatible = "qcom,kgsl-smmu-v2";
+		reg = <0x01c40000 0x10000>;
+		clocks = <&gcc GCC_OXILI_AHB_CLK>, <&gcc GCC_BIMC_GFX_CLK>;
+		/*
+		 * DO NOT "fix" these to the gpu node's clock-names.
+		 *
+		 * These names are read from THIS node but resolved by
+		 * devm_clk_get() against the *gpu* device, because the
+		 * kgsl-iommu node matches no 6.12 OF bus and so never gets a
+		 * platform device of its own. They therefore do not resolve
+		 * ("dt: Couldn't get clock: gpu_ahb_clk"), and _kgsl_iommu_probe
+		 * returns -ENODEV there.
+		 *
+		 * That early return is load-bearing. Renaming them to the gpu
+		 * node's names ("iface_clk"/"mem_iface_clk") does make the probe
+		 * succeed, and the GPU then binds and works — but the phone dies
+		 * ~60 s into the boot, before the diag init writes anything, twice
+		 * in a row: run34 and run36. With the names left as they are,
+		 * run35 boots to a full 300 s+ Android and /dev/kgsl-3d0 opens.
+		 *
+		 * kgsl_iommu_probe is a separate platform driver, so its -ENODEV
+		 * is non-fatal to the GPU bind. The untested code past the early
+		 * return (of_platform_populate over the CB children, and the
+		 * NULL-pdev fallback passing the live GPU device to
+		 * of_dma_configure(ctx->dev, node, true)) is what kills the
+		 * boot; guarding the of_dma_configure call did not help (run36).
+		 * Investigating that path needs its own evidence, not a guess.
+		 */
+		clock-names = "gpu_ahb_clk", "gcc_bimc_gfx_clk";
+		qcom,secure_align_mask = <0xfff>;
+		qcom,retention;
+		qcom,global_pt;
+		gfx3d_user: gfx3d_user {
+			compatible = "qcom,smmu-kgsl-cb";
+			label = "gfx3d_user";
+			iommus = <&gpu_iommu 0>;
+			qcom,iommu-dma = "disabled";
+		};
+	};
+};
+
+/* earlycon: stdout-path lets bare `earlycon` auto-match the UART (see
+ * porting/REFERENCE-boot-testing.md — early console is the only channel
+ * that catches a panic before level 2). */
+&{/chosen} {
+	stdout-path = "/soc@0/serial@78af000:115200n8";
 };
 
 /* WCN3680 (stock live DT iris compatible); supplies from the live DT:

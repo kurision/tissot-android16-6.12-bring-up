@@ -1708,7 +1708,7 @@ static char _pidname[TASK_COMM_LEN];
 static inline const char *_kgsl_context_comm(struct kgsl_context *context)
 {
 	if (context && context->proc_priv)
-		strlcpy(_pidname, context->proc_priv->comm, sizeof(_pidname));
+		strscpy(_pidname, context->proc_priv->comm, sizeof(_pidname));
 	else
 		snprintf(_pidname, TASK_COMM_LEN, "unknown");
 
@@ -2880,9 +2880,18 @@ static const struct sysfs_ops dispatcher_sysfs_ops = {
 	.store = dispatcher_sysfs_store
 };
 
+static struct attribute_group dispatcher_attr_group = {
+	.attrs = dispatcher_attrs,
+};
+
+static const struct attribute_group *dispatcher_attr_groups[] = {
+	&dispatcher_attr_group,
+	NULL,
+};
+
 static struct kobj_type ktype_dispatcher = {
 	.sysfs_ops = &dispatcher_sysfs_ops,
-	.default_attrs = dispatcher_attrs,
+	.default_groups = dispatcher_attr_groups,
 };
 
 /**
@@ -2948,12 +2957,11 @@ int adreno_dispatcher_idle(struct adreno_device *adreno_dev)
 		return 0;
 
 	/*
-	 * Ensure that this function is not called when dispatcher
-	 * mutex is held and device is started
+	 * 6.12 has no driver-visible mutex owner peek (the old
+	 * __mutex_owner() helper is kernel-internal), so the
+	 * re-entrancy check is gone; a caller that holds
+	 * dispatcher->mutex now surfaces as the idle timeout below.
 	 */
-	if (mutex_is_locked(&dispatcher->mutex) &&
-		(__mutex_owner(&dispatcher->mutex) == current))
-		return -EDEADLK;
 
 	adreno_get_gpu_halt(adreno_dev);
 

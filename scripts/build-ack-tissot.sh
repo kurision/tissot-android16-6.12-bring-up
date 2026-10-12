@@ -18,9 +18,10 @@ repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ack_tree=${ACK_TREE:-$(cd -- "$repo_dir/.." && pwd)/ack-android16-6.12}
 fragment=${FRAGMENT:-$repo_dir/scripts/tissot-ack.config}
 out_dir=${OUT_DIR:-$ack_tree/out}
-llvm_bin=${LLVM_BIN:-$HOME/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin}
+llvm_bin=${LLVM_BIN:-/usr/bin}
 export PATH="$llvm_bin:$PATH"
 export ARCH=arm64 LLVM=1 LLVM_IAS=1
+export CC="ccache clang"
 
 if [[ $# != 0 ]]; then
     echo "Usage: $0"

@@ -45,6 +45,13 @@ STAGED = (
     ("ack-vendor-file-contexts", 0o100444),
 )
 
+# The working base's debuggable pair (fa37accb3): first-stage init loads the
+# patched userdebug policy only when force_debuggable exists. snapshot59's
+# base carries neither, so the stock policy loads and qseecomd (tee) is
+# denied the SSD node on mmcblk0p4 (block_device) -> exit 255 loop (run30;
+# bypass rules in bc871cd44). Modes are taken from the donor.
+DEBUGGABLE = ("force_debuggable", "userdebug_plat_sepolicy.cil")
+
 
 def die(msg):
     sys.exit(f"stage-guard-inputs: {msg}")
@@ -69,6 +76,10 @@ def parse_cpio(data: bytes):
             "fields": fields, "name": name, "data": data[data_off:data_off + filesize],
         })
         off = align4(data_off + filesize)
+        # Bases padded after the trailer (snapshot59) carry zeros, not
+        # headers, past this point; keep them as the tail.
+        if name == "TRAILER!!!":
+            break
     return records, data[off:]
 
 
@@ -91,6 +102,12 @@ def main():
                     help="image to copy the guard files from verbatim; "
                          "required unless the base already carries them")
     ap.add_argument("--report", default=None)
+    ap.add_argument("--with-debuggable", action="store_true",
+                    help="also stage %s verbatim from --donor" % ", ".join(DEBUGGABLE))
+    ap.add_argument("--cil", default=None,
+                    help="with --with-debuggable: take userdebug_plat_sepolicy.cil "
+                         "from this file instead of the donor (donor cil + appended "
+                         "diagnostic rules)")
     args = ap.parse_args()
     out = Path(args.out)
     if out.exists():
@@ -120,9 +137,21 @@ def main():
         doff = PAGE + ((dks + PAGE - 1) // PAGE * PAGE)
         drecs, _dtail = parse_cpio(gzip.decompress(bytes(donor[doff:doff + drs])))
         donor_records = {r["name"]: r["data"] for r in drecs}
+        donor_modes = {r["name"]: int(r["fields"][MODE_FIELD], 16) for r in drecs}
+
+    staged = list(STAGED)
+    if args.with_debuggable:
+        if not args.donor:
+            die("--with-debuggable needs --donor")
+        for name in DEBUGGABLE:
+            if name not in donor_records:
+                die(f"donor image has no {name}")
+            staged.append((name, donor_modes[name]))
+        if args.cil:
+            donor_records["userdebug_plat_sepolicy.cil"] = Path(args.cil).read_bytes()
 
     payloads, added, replaced = [], [], []
-    for name, mode in STAGED:
+    for name, mode in staged:
         if name in existing:
             replaced.append(name)
             continue
@@ -133,6 +162,7 @@ def main():
             die(f"{name} contains a NUL byte")
         payloads.append((name, data, mode))
 
+    trailer = records.pop() if records and records[-1]["name"] == "TRAILER!!!" else None
     for name, data, mode in payloads:
         records.append({
             "name": name,
@@ -146,6 +176,8 @@ def main():
         r["fields"][NLINK_FIELD] = fmt % 1
         added.append(name)
         print(f"  staged {name} ({len(data)} bytes)")
+    if trailer:
+        records.append(trailer)
 
     new_ramdisk = subprocess.run(["gzip", "-9", "-n"], input=build_cpio(records, tail),
                                  stdout=subprocess.PIPE, check=True).stdout

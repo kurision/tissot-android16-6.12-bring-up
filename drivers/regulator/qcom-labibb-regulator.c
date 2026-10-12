@@ -754,6 +754,13 @@ static const struct labibb_regulator_data pmi8998_labibb_data[] = {
 
 static const struct of_device_id qcom_labibb_match[] = {
 	{ .compatible = "qcom,pmi8998-lab-ibb", .data = &pmi8998_labibb_data},
+	/*
+	 * PMI8950 LCD bias: live-verified on tissot against the stock ROM
+	 * (LAB 0xde00/IBB 0xdc00 bases, PERPH_TYPE 0x24/0x20, LAB VSET
+	 * base 4.6 V from programmed sel 9 at 5.5 V, IBB base 1.4 V from
+	 * sel 41). Same IP, same data.
+	 */
+	{ .compatible = "qcom,pmi8950-lab-ibb", .data = &pmi8998_labibb_data},
 	{ },
 };
 MODULE_DEVICE_TABLE(of, qcom_labibb_match);

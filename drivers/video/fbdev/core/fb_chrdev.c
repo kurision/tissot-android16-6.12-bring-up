@@ -60,7 +60,7 @@ static ssize_t fb_write(struct file *file, const char __user *buf, size_t count,
 }
 
 static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
-			unsigned long arg)
+			unsigned long arg, struct file *file)
 {
 	const struct fb_ops *fb;
 	struct fb_var_screeninfo var;
@@ -151,7 +151,9 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 	default:
 		lock_fb_info(info);
 		fb = info->fbops;
-		if (fb->fb_ioctl)
+		if (fb->fb_ioctl_file)
+			ret = fb->fb_ioctl_file(info, cmd, arg, file);
+		else if (fb->fb_ioctl)
 			ret = fb->fb_ioctl(info, cmd, arg);
 		else
 			ret = -ENOTTY;
@@ -166,7 +168,7 @@ static long fb_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	if (!info)
 		return -ENODEV;
-	return do_fb_ioctl(info, cmd, arg);
+	return do_fb_ioctl(info, cmd, arg, file);
 }
 
 #ifdef CONFIG_COMPAT
@@ -290,7 +292,7 @@ static long fb_compat_ioctl(struct file *file, unsigned int cmd,
 		arg = (unsigned long) compat_ptr(arg);
 		fallthrough;
 	case FBIOBLANK:
-		ret = do_fb_ioctl(info, cmd, arg);
+		ret = do_fb_ioctl(info, cmd, arg, file);
 		break;
 
 	case FBIOGET_FSCREENINFO:
@@ -303,7 +305,9 @@ static long fb_compat_ioctl(struct file *file, unsigned int cmd,
 		break;
 
 	default:
-		if (fb->fb_compat_ioctl)
+		if (fb->fb_compat_ioctl_file)
+			ret = fb->fb_compat_ioctl_file(info, cmd, arg, file);
+		else if (fb->fb_compat_ioctl)
 			ret = fb->fb_compat_ioctl(info, cmd, arg);
 		break;
 	}
@@ -353,11 +357,12 @@ __releases(&info->lock)
 		goto out;
 	}
 	file->private_data = info;
-	if (info->fbops->fb_open) {
+	if (info->fbops->fb_open_file)
+		res = info->fbops->fb_open_file(info, 1, file);
+	else if (info->fbops->fb_open)
 		res = info->fbops->fb_open(info, 1);
-		if (res)
-			module_put(info->fbops->owner);
-	}
+	if (res)
+		module_put(info->fbops->owner);
 #ifdef CONFIG_FB_DEFERRED_IO
 	if (info->fbdefio)
 		fb_deferred_io_open(info, inode, file);
@@ -380,7 +385,9 @@ __releases(&info->lock)
 	if (info->fbdefio)
 		fb_deferred_io_release(info);
 #endif
-	if (info->fbops->fb_release)
+	if (info->fbops->fb_release_file)
+		info->fbops->fb_release_file(info, 1, file);
+	else if (info->fbops->fb_release)
 		info->fbops->fb_release(info, 1);
 	module_put(info->fbops->owner);
 	unlock_fb_info(info);

@@ -64,10 +64,17 @@ static int parse_table(struct platform_device *pdev, struct device_node *node,
 			return -ENOMEM;
 
 		for (j = 0; j < num_paths; j++) {
-			n = i * num_paths + j;
-			if (of_property_read_u32_array_index(node,
-					"qcom,msm-bus,vectors-KBps", n,
-					vectors, 4)) {
+			int k, rc = 0;
+
+			n = (i * num_paths + j) * 4;
+			for (k = 0; k < 4; k++) {
+				rc |= of_property_read_u32_index(node,
+						"qcom,msm-bus,vectors-KBps",
+						n + k, &vectors[k]);
+				if (rc)
+					break;
+			}
+			if (rc) {
 				kfree(paths->vectors);
 				return -EINVAL;
 			}
@@ -163,8 +170,19 @@ uint32_t msm_bus_scale_register_client(
 
 int msm_bus_scale_client_update_request(uint32_t cl, unsigned int index)
 {
-	struct msm_bus_scale_pdata *pdata = (struct msm_bus_scale_pdata *)(uintptr_t)(cl & ~1UL);
+	struct msm_bus_scale_pdata *pdata;
 
+	/*
+	 * The vendor handle is a 1-based slot index into the client's own
+	 * handle table (msm_bus_arb_adhoc.c gen_handle()/update_request_adhoc():
+	 * handle_list.cl_list[cl]), not a tagged pointer. Decoding it as
+	 * "cl & ~1UL" turned every handle into NULL for cl=1 and made each
+	 * GPU power transition log "GPU BW scaling failure: -22".
+	 */
+	if (!cl || cl > MAX_CLIENTS)
+		return -EINVAL;
+
+	pdata = clients[cl - 1];
 	if (!pdata)
 		return -EINVAL;
 
@@ -177,6 +195,19 @@ int msm_bus_scale_client_update_request(uint32_t cl, unsigned int index)
 	return icc_set_bw(bus_path,
 			pdata->usecase[index].vectors[0].ab,
 			pdata->usecase[index].vectors[0].ib);
+}
+
+int msm_bus_scale_client_update_context(uint32_t cl, bool active_only,
+						unsigned int ctx_idx)
+{
+	if (!cl || cl > MAX_CLIENTS || !clients[cl - 1])
+		return -EINVAL;
+
+	/* No interconnect path: voting is tuning, not functional. */
+	if (!bus_path)
+		return 0;
+
+	return 0;
 }
 
 void msm_bus_scale_unregister_client(uint32_t cl)

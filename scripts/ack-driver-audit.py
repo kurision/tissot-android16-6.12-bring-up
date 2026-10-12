@@ -24,7 +24,6 @@ import sys
 from pathlib import Path
 OF_MATCH_RE = re.compile(r'\.compatible\s*=\s*([^;]+);', re.DOTALL)
 QUOTED_RE = re.compile(r'"([^"]+)"')
-OBJ_RE = re.compile(r'obj-\$\(CONFIG_([A-Za-z0-9_]+)\)\s*\+=\s*(\S+)')
 SCAN_DIRS = ("drivers", "sound", "net", "fs", "arch/arm64")
 SKIP_SOURCES = {("drivers", "of", "platform.c")}
 
@@ -92,8 +91,31 @@ def of_matches(tree: Path) -> dict[str, str]:
 
 
 def symbol_table(tree: Path) -> dict[tuple[str, str], str]:
-    """(driver directory, object name) -> CONFIG symbol, from obj-$(CONFIG_x)."""
-    table: dict[tuple[str, str], str] = {}
+    """(driver directory, object name) -> required CONFIG symbols.
+
+    Handles both the classic `obj-$(CONFIG_X) += file.o` form and the
+    composite module style used by drm/msm and the vendored kgsl driver:
+    `foo-y += bar.o` lists consumed by `obj-$(CONFIG_X) += foo.o`, plus
+    variable expansion (`msm-y += $(adreno-y)`, with or without the -y).
+    A member contributed under a conditional list (`foo-$(CONFIG_COND) +=
+    bar.o`) requires both symbols; an object listed under several
+    alternative obj-$(CONFIG) lines (e.g. per-SoC selects) requires any one
+    of them. Alternatives join with `|`, conjunctions with `,`; main() gates
+    with any(all()) over them.
+    """
+    table: dict[tuple[str, str], list[set[str]]] = {}
+
+    def expand(value: str, lists: dict[str, list[str]], depth: int = 0) -> list[str]:
+        def repl(m: re.Match) -> str:
+            name = m.group(1)
+            hit = lists.get(name)
+            if hit is None:
+                stem = re.sub(r"-(y|m|objs)$", "", name)
+                hit = lists.get(stem) if stem != name else None
+            return " ".join(hit or []) if depth < 8 else ""
+
+        return re.sub(r"\$\(([A-Za-z0-9_\-\.]+)\)", repl, value).split()
+
     for makefile in tree.rglob("Makefile"):
         if "out" in makefile.parts or ".git" in makefile.parts:
             continue
@@ -102,9 +124,66 @@ def symbol_table(tree: Path) -> dict[tuple[str, str], str]:
         except OSError:
             continue
         directory = str(makefile.parent.relative_to(tree))
-        for symbol, obj in OBJ_RE.findall(text):
-            table.setdefault((directory, obj), f"CONFIG_{symbol}")
-    return table
+
+        # join make continuation lines
+        joined, acc = [], ""
+        for line in text.splitlines():
+            if line.rstrip().endswith("\\"):
+                acc += line.rstrip()[:-1] + " "
+            else:
+                joined.append(acc + line)
+                acc = ""
+        if acc:
+            joined.append(acc)
+
+        obj_defs: list[tuple[str, list[str]]] = []   # (CONFIG symbol, tokens)
+        lists: dict[str, list[str]] = {}             # name -> members (names)
+        conds: dict[str, set[str]] = {}              # member -> extra CONFIGs
+
+        for line in joined:
+            line = line.split("#", 1)[0]
+            m = re.match(r"\s*obj-\$\(CONFIG_([A-Za-z0-9_]+)\)\s*[:+]?=\s*(.+)", line)
+            if m:
+                obj_defs.append((m.group(1), expand(m.group(2), lists)))
+                continue
+            m = re.match(r"\s*([A-Za-z0-9_\-\.]+)-(?:\$\(CONFIG_([A-Za-z0-9_]+)\))?y?\s*\+?[:?]?=\s*(.+)", line)
+            if m:
+                name, cond, rhs = m.group(1), m.group(2), expand(m.group(3), lists)
+                lists.setdefault(name, [])
+                for tok in rhs:
+                    lists[name].append(tok)
+                    if cond:
+                        conds.setdefault(tok, set()).add(f"CONFIG_{cond}")
+                continue
+            # drag non -y/-m assignments' variable refs into view (foo := $(a) $(b))
+            m = re.match(r"\s*([A-Za-z0-9_\-\.]+)\s*:?\+?=\s*(.+)", line)
+            if m and "$(" in m.group(2):
+                rhs = expand(m.group(2), lists)
+                if rhs:
+                    lists.setdefault(m.group(1), []).extend(rhs)
+
+        for symbol, tokens in obj_defs:
+            for tok in tokens:
+                base = tok[:-2] if tok.endswith(".o") else tok
+                members = lists.get(base, [tok])
+                for member in members:
+                    if "/" in member:
+                        mdir, _, mobj = member.rpartition("/")
+                        key = (directory + "/" + mdir, mobj)
+                    else:
+                        key = (directory, member)
+                    required = {f"CONFIG_{symbol}"} | conds.get(member, set())
+                    slot = table.setdefault(key, [])
+                    if required not in slot:
+                        slot.append(required)
+
+    out: dict[tuple[str, str], str] = {}
+    for key, alternatives in table.items():
+        shown = ",".join(sorted(alternatives[0]))
+        if len(alternatives) > 1:
+            shown += "|" + "|".join(",".join(sorted(a)) for a in alternatives[1:])
+        out[key] = shown
+    return out
 
 
 def enabled_symbols(config: Path | None) -> set[str]:
@@ -157,7 +236,8 @@ def main() -> int:
         src = matches[hit]
         obj = Path(src).name[:-2] + ".o"
         symbol = symbols.get((str(Path(src).parent), obj), "?")
-        is_built = symbol in enabled
+        is_built = symbol != "?" and any(
+            all(s in enabled for s in alt.split(",")) for alt in symbol.split("|"))
         built += int(is_built)
         if not args.only_unbound:
             state = "BUILT  " if is_built else "NOTBLD "

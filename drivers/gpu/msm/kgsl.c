@@ -21,6 +21,8 @@
 #include <linux/sort.h>
 #include <asm/cacheflush.h>
 
+
+#include "adreno.h"
 #include "kgsl_compat.h"
 #include "kgsl_debugfs.h"
 #include "kgsl_device.h"
@@ -1394,7 +1396,8 @@ struct msm_bus_scale_pdata *kgsl_get_bus_scale_table(struct kgsl_device *device)
 
 	parent = device->pdev->dev.of_node;
 
-	snprintf(str, sizeof(str), "qcom,gpu-bus-table-ddr%d", 0);
+	snprintf(str, sizeof(str), "qcom,gpu-bus-table-ddr%d",
+		of_fdt_get_ddrtype());
 
 	child = of_find_compatible_node(parent, NULL, str);
 
@@ -5293,7 +5296,7 @@ int kgsl_of_property_read_ddrtype(struct device_node *node, const char *base,
 		u32 *ptr)
 {
 	char str[32];
-	int ddr = 0;
+	int ddr = of_fdt_get_ddrtype();
 
 	/* of_fdt_get_ddrtype returns error if the DDR type isn't determined */
 	if (ddr >= 0) {
@@ -5320,8 +5323,10 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	int status = -EINVAL;
 
 	status = _register_device(device);
-	if (status)
+	if (status) {
+		dev_err(device->dev, "_register_device failed: %d\n", status);
 		return status;
+	}
 
 	/* Disable the sparse ioctl invocation as they are not used */
 	device->flags &= ~KGSL_FLAG_SPARSE;
@@ -5329,8 +5334,10 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	kgsl_device_debugfs_init(device);
 
 	status = kgsl_pwrctrl_init(device);
-	if (status)
+	if (status) {
+		dev_err(device->dev, "kgsl_pwrctrl_init failed: %d\n", status);
 		goto error;
+	}
 
 	device->events_worker = kthread_create_worker(0, "kgsl-events");
 
@@ -5360,8 +5367,10 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 
 	status = kgsl_request_irq(device->pdev, device->pwrctrl.irq_name,
 		kgsl_irq_handler, device);
-	if (status < 0)
+	if (status < 0) {
+		dev_err(device->dev, "kgsl_request_irq failed: %d\n", status);
 		goto error_pwrctrl_close;
+	}
 
 	device->pwrctrl.interrupt_num = status;
 	disable_irq(device->pwrctrl.interrupt_num);
@@ -5372,13 +5381,18 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	timer_setup(&device->idle_timer, kgsl_timer, 0);
 
 	status = kgsl_mmu_probe(device);
-	if (status != 0)
+	if (status != 0) {
+		dev_err(device->dev, "kgsl_mmu_probe failed: %d\n", status);
 		goto error_pwrctrl_close;
+	}
 
 	/* Check to see if our device can perform DMA correctly */
 	status = dma_set_coherent_mask(&device->pdev->dev, KGSL_DMA_BIT_MASK);
-	if (status)
+	if (status) {
+		dev_err(device->dev, "dma_set_coherent_mask failed: %d\n",
+			status);
 		goto error_close_mmu;
+	}
 
 	/* Allocate memory for dma_parms and set the max_seg_size */
 	device->dev->dma_parms =
@@ -5390,8 +5404,10 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	kgsl_init_page_pools(device);
 
 	status = kgsl_reclaim_init(device);
-	if (status)
+	if (status) {
+		dev_err(device->dev, "kgsl_reclaim_init failed: %d\n", status);
 		goto error_close_mmu;
+	}
 
 	idr_init(&device->timelines);
 	spin_lock_init(&device->timelines_lock);
@@ -5612,7 +5628,7 @@ err:
 	return result;
 }
 
-module_init(kgsl_core_init);
+late_initcall(kgsl_core_init);
 module_exit(kgsl_core_exit);
 
 MODULE_DESCRIPTION("MSM GPU driver");

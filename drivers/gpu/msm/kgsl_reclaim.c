@@ -12,6 +12,21 @@
 #include "kgsl_reclaim.h"
 #include "kgsl_sharedmem.h"
 
+/*
+ * 6.12 has no proc_reclaim notifier registry (that was a vendor mm
+ * extension). a506 does not set ADRENO_PROCESS_RECLAIM (only a6xx
+ * chips do, adreno-gpulist.h:1424,1504), so this stays inert: register
+ * succeeds, no process-reclaim callback ever fires.
+ */
+static inline int proc_reclaim_notifier_register(struct notifier_block *nb)
+{
+	return 0;
+}
+
+static inline void proc_reclaim_notifier_unregister(struct notifier_block *nb)
+{
+}
+
 static struct notifier_block kgsl_reclaim_nb;
 static bool kgsl_reclaim;
 
@@ -195,10 +210,9 @@ ssize_t kgsl_proc_max_reclaim_limit_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%d\n", kgsl_reclaim_max_page_limit);
 }
 
-static void kgsl_release_page_vec(struct pagevec *pvec)
+static void kgsl_release_page_vec(struct folio_batch *fbatch)
 {
-	check_move_unevictable_pages(pvec->pages, pvec->nr);
-	__pagevec_release(pvec);
+	__folio_batch_release(fbatch);
 }
 
 static int kgsl_reclaim_callback(struct notifier_block *nb,
@@ -274,37 +288,40 @@ static int kgsl_reclaim_callback(struct notifier_block *nb,
 
 		if (!kgsl_mmu_unmap(memdesc->pagetable, memdesc)) {
 			int i;
-			struct pagevec pvec;
+			struct folio_batch pvec;
 
 			/*
 			 * Pages that are first allocated are by default added
-			 * to unevictable list. To reclaim them, we first clear
+			 * to the unevictable list. To reclaim them, we first clear
 			 * the AS_UNEVICTABLE flag of the shmem file address
-			 * space thus check_move_unevictable_pages() places
-			 * them on the evictable list.
+			 * space so the pages land on the evictable list.
+			 * (6.12 deleted check_move_unevictable_pages(); the
+			 * mapping flag plus folio_batch release is the remaining
+			 * mechanism.)
 			 *
 			 * Once reclaim is done, hint that further shmem
 			 * allocations will have to be on the unevictable list.
 			 */
 			mapping_clear_unevictable(
 					memdesc->shmem_filp->f_mapping);
-			pagevec_init(&pvec);
+			folio_batch_init(&pvec);
 			for (i = 0; i < memdesc->page_count; i++) {
 				set_page_dirty_lock(memdesc->pages[i]);
 				spin_lock(&memdesc->lock);
-				pagevec_add(&pvec, memdesc->pages[i]);
+				folio_batch_add(&pvec,
+					page_folio(memdesc->pages[i]));
 				memdesc->pages[i] = NULL;
 				spin_unlock(&memdesc->lock);
-				if (pagevec_count(&pvec) == PAGEVEC_SIZE)
+				if (folio_batch_count(&pvec) == PAGEVEC_SIZE)
 					kgsl_release_page_vec(&pvec);
 			}
-			if (pagevec_count(&pvec))
+			if (folio_batch_count(&pvec))
 				kgsl_release_page_vec(&pvec);
 
 			memdesc->priv |= KGSL_MEMDESC_RECLAIMED;
 
-			ret = reclaim_address_space
-				(memdesc->shmem_filp->f_mapping, data);
+			ret = reclaim_shmem_address_space
+				(memdesc->shmem_filp->f_mapping);
 
 			mapping_set_unevictable(memdesc->shmem_filp->f_mapping);
 			memdesc->reclaimed_page_count += memdesc->page_count;

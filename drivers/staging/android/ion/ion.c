@@ -245,14 +245,14 @@ static struct sg_table *dup_sg_table(struct sg_table *table)
 	if (!new_table)
 		return ERR_PTR(-ENOMEM);
 
-	ret = sg_alloc_table(new_table, table->nents, GFP_KERNEL);
+	ret = sg_alloc_table(new_table, table->orig_nents, GFP_KERNEL);
 	if (ret) {
 		kfree(new_table);
 		return ERR_PTR(-ENOMEM);
 	}
 
 	new_sg = new_table->sgl;
-	for_each_sg(table->sgl, sg, table->nents, i) {
+	for_each_sg(table->sgl, sg, table->orig_nents, i) {
 		memcpy(new_sg, sg, sizeof(*sg));
 		sg_dma_address(new_sg) = 0;
 		sg_dma_len(new_sg) = 0;
@@ -325,7 +325,7 @@ static struct sg_table *ion_map_dma_buf(struct dma_buf_attachment *attachment,
 {
 	struct ion_dma_buf_attachment *a = attachment->priv;
 	struct sg_table *table;
-	int count, map_attrs;
+	int ret, map_attrs;
 	struct ion_buffer *buffer = attachment->dmabuf->priv;
 
 	table = a->table;
@@ -351,13 +351,10 @@ static struct sg_table *ion_map_dma_buf(struct dma_buf_attachment *attachment,
 					    attachment->dma_map_attrs,
 					    direction);
 
-	count = dma_map_sg_attrs(attachment->dev, table->sgl,
-				 table->nents, direction,
-				 map_attrs);
-
-	if (count <= 0) {
+	ret = dma_map_sgtable(attachment->dev, table, direction, map_attrs);
+	if (ret) {
 		mutex_unlock(&buffer->lock);
-		return ERR_PTR(-ENOMEM);
+		return ERR_PTR(ret);
 	}
 
 	a->dma_mapped = true;
@@ -394,8 +391,7 @@ static void ion_unmap_dma_buf(struct dma_buf_attachment *attachment,
 					      attachment->dma_map_attrs,
 					      direction);
 
-	dma_unmap_sg_attrs(attachment->dev, table->sgl, table->nents,
-			   direction, map_attrs);
+	dma_unmap_sgtable(attachment->dev, table, direction, map_attrs);
 	a->dma_mapped = false;
 	mutex_unlock(&buffer->lock);
 }
@@ -551,14 +547,14 @@ static int ion_sgl_sync_range(struct device *dev, struct scatterlist *sgl,
 		if (i == 0)
 			sg_dma_addr = sg_dma_address(sg);
 
-		len += sg->length;
+		len += sg_dma_len(sg);
 		if (len <= offset) {
-			sg_dma_addr += sg->length;
+			sg_dma_addr += sg_dma_len(sg);
 			continue;
 		}
 
 		sg_left = len - offset;
-		sg_offset = sg->length - sg_left;
+		sg_offset = sg_dma_len(sg) - sg_left;
 
 		size = (length < sg_left) ? length : sg_left;
 		if (for_cpu)
@@ -570,7 +566,7 @@ static int ion_sgl_sync_range(struct device *dev, struct scatterlist *sgl,
 
 		offset += size;
 		length -= size;
-		sg_dma_addr += sg->length;
+		sg_dma_addr += sg_dma_len(sg);
 
 		if (length == 0)
 			break;
@@ -670,8 +666,7 @@ static int __ion_dma_buf_begin_cpu_access(struct dma_buf *dmabuf,
 						  &buffer->vmas,
 						  direction, true);
 		else
-			dma_sync_sg_for_cpu(a->dev, a->table->sgl,
-					    a->table->nents, direction);
+			dma_sync_sgtable_for_cpu(a->dev, a->table, direction);
 
 		if (!tmp) {
 			trace_ion_begin_cpu_access_cmo_apply(a->dev,
@@ -761,8 +756,7 @@ static int __ion_dma_buf_end_cpu_access(struct dma_buf *dmabuf,
 						  &buffer->vmas, direction,
 						  false);
 		else
-			dma_sync_sg_for_device(a->dev, a->table->sgl,
-					       a->table->nents, direction);
+			dma_sync_sgtable_for_device(a->dev, a->table, direction);
 
 		if (!tmp) {
 			trace_ion_end_cpu_access_cmo_apply(a->dev, dmabuf->name,
