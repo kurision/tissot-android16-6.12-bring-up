@@ -28,6 +28,7 @@
 #include <linux/mutex.h>
 #include <linux/sched.h>
 #include <linux/time.h>
+#include <linux/ktime.h>
 #include <linux/spinlock.h>
 #include <linux/semaphore.h>
 #include <linux/uaccess.h>
@@ -1430,22 +1431,34 @@ static inline void __mdss_mdp_reg_access_clk_enable(
  */
 static void __mdss_mdp_clk_control(struct mdss_data_type *mdata, bool enable)
 {
+	int rc = 0;
 	unsigned long flags;
 
 	if (enable) {
-	/* BISECT run61: only vote+spinlock remain of clk_ctrl(ON).
-	 * Boots => killer in {iommu_ctrl, bus_update_context}.
-	 * Dies => killer is vote/spinlock (absurd) or a state/timing
-	 * effect of executing clk_ctrl at all. */
+		pm_runtime_get_sync(&mdata->pdev->dev);
+
+		mdss_update_reg_bus_vote(mdata->reg_bus_clt,
+			VOTE_INDEX_LOW);
+
+		rc = mdss_iommu_ctrl(1);
+		if (IS_ERR_VALUE((unsigned long) rc))
+			pr_err("IOMMU attach failed\n");
+
+		/* Active+Sleep */
+		msm_bus_scale_client_update_context(mdata->bus_hdl,
+			false, mdata->curr_bw_uc_idx);
 
 		spin_lock_irqsave(&mdp_lock, flags);
 		mdata->clk_ena = enable;
 		spin_unlock_irqrestore(&mdp_lock, flags);
 
-	/* BISECT run59: skip all enables, keep pm/bus/iommu.
-	 * Boots => killer in one of the 7 clk_prepare_enables.
-	 * Dies => killer in {pm_get_sync, reg_vote, iommu_ctrl,
-	 * bus_update_context}. */
+		mdss_mdp_clk_update(MDSS_CLK_MNOC_AHB, 1);
+		mdss_mdp_clk_update(MDSS_CLK_AHB, 1);
+		mdss_mdp_clk_update(MDSS_CLK_AXI, 1);
+		mdss_mdp_clk_update(MDSS_CLK_MDP_CORE, 1);
+		mdss_mdp_clk_update(MDSS_CLK_MDP_LUT, 1);
+		mdss_mdp_clk_update(MDSS_CLK_THROTTLE_AXI, 1);
+		mdss_mdp_clk_update(MDSS_CLK_BIMC, 1);
 		if (mdata->vsync_ena)
 			mdss_mdp_clk_update(MDSS_CLK_MDP_VSYNC, 1);
 	} else {
@@ -1797,8 +1810,11 @@ void mdss_mdp_clk_ctrl(int enable)
 	if (changed)
 		__mdss_mdp_clk_control(mdata, enable);
 
-	/* BISECT run62: skip idle_pc_restore (hw_init register writes).
-	 * Boots => hw_init with clocks/GDSC off hangs the bus. */
+	/* WORKAROUND run62-64: idle_pc_restore's mdss_hw_init register
+	 * access hangs the bus on this port (MDP power/clock domain not
+	 * established by our genpd/clk bring-up yet). Skipping it leaves
+	 * the MDP probe degraded (same as the IRQ-fail baseline) but
+	 * bootable. Remove once MDSS_GDSC + MDP clocks are proven on. */
 
 	mutex_unlock(&mdp_clk_lock);
 }
@@ -2471,10 +2487,8 @@ void mdss_mdp_footswitch_ctrl_splash(int on)
 				pr_err("Footswitch failed to enable: %d\n",
 					ret);
 
-	/* BISECT run57: clocks on, bus vote still skipped.
-	 * Dies => mdss_mdp_clk_ctrl(POWER_ON) hangs/crashes.
-	 * Boots => mdss_bus_bandwidth_ctrl(true). */
-	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+			mdss_bus_bandwidth_ctrl(true);
 		} else {
 			pr_debug("Disable MDP FS for splash.\n");
 			mdss_bus_bandwidth_ctrl(false);
@@ -2920,7 +2934,11 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 	uint32_t split_display = 0;
 	int num_of_display_on = 0;
 	int i = 0;
-
+	/* DEBUG run65: defer the full probe until pstore_blk has had a
+	 * chance to attach (~30s), so the eventual death persists to
+	 * eMMC instead of vanishing with the RAMOOPS stomping. */
+	if (ktime_get_boottime_seconds() < 45)
+		return -EPROBE_DEFER;
 	if (!pdev->dev.of_node) {
 		pr_err("MDP driver only supports device tree probe\n");
 		return -ENOTSUPP;
@@ -3048,11 +3066,8 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 	 * kernel is up.
 	 */
 	mdss_mdp_footswitch_ctrl_splash(true);
-	/* BISECT run55: bail between splash(true) and hw_rev_init.
-	 * Dies => hw_rev_init (unclocked MDP rev read hangs the bus).
-	 * Boots => footswitch_ctrl_splash(true) path. */
-	rc = -ENOMEM;
-	goto probe_done;
+	mdss_hw_rev_init(mdata);
+
 	/*populate hw iomem base info from device tree*/
 	rc = mdss_mdp_parse_dt(pdev);
 	if (rc) {
@@ -3071,6 +3086,10 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 		pr_err("unable to initialize mdp debugging\n");
 		goto probe_done;
 	}
+	rc = mdss_mdp_scaler_init(mdata, &pdev->dev);
+	if (rc)
+		goto probe_done;
+
 	rc = mdss_mdp_register_sysfs(mdata);
 	if (rc)
 		pr_err("unable to register mdp sysfs nodes\n");

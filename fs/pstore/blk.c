@@ -289,8 +289,8 @@ static inline const char *early_boot_devpath(const char *initial_devname)
  * before (no backend), panics after get eMMC persistence that survives
  * any later fallback-ROM boot.
  */
-#define PSTORE_BLK_RETRY_DELAY	(4 * HZ)
-#define PSTORE_BLK_RETRY_MAX	5
+#define PSTORE_BLK_RETRY_DELAY	(6 * HZ)
+#define PSTORE_BLK_RETRY_MAX	8
 
 static struct delayed_work pstore_blk_retry_work;
 static int pstore_blk_retry_count;
