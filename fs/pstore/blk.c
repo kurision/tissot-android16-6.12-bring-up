@@ -282,7 +282,36 @@ static inline const char *early_boot_devpath(const char *initial_devname)
 }
 #endif
 
-static int __init __best_effort_init(void)
+/*
+ * The logdump eMMC appears ~1 s after this late initcall runs, so the
+ * first PARTLABEL resolution always fails with -ENOENT on this device.
+ * Retry a bounded number of times; panics before the backend attaches
+ * behave exactly as before (no backend), panics after get eMMC
+ * persistence that survives any later fallback-ROM boot.
+ */
+#define PSTORE_BLK_RETRY_DELAY	(10 * HZ)
+#define PSTORE_BLK_RETRY_MAX	3
+
+static struct delayed_work pstore_blk_retry_work;
+static int pstore_blk_retry_count;
+
+static void pstore_blk_retry_fn(struct work_struct *work)
+{
+	int ret;
+
+	mutex_lock(&pstore_blk_lock);
+	/* Another path may have attached meanwhile (unload/reload). */
+	if (psblk_file) {
+		mutex_unlock(&pstore_blk_lock);
+		return;
+	}
+	ret = __best_effort_init();
+	if (ret && ++pstore_blk_retry_count < PSTORE_BLK_RETRY_MAX)
+		schedule_delayed_work(&pstore_blk_retry_work,
+				      PSTORE_BLK_RETRY_DELAY);
+	mutex_unlock(&pstore_blk_lock);
+}
+
 {
 	struct pstore_device_info *best_effort_dev;
 	int ret;
@@ -306,9 +335,17 @@ static int __init __best_effort_init(void)
 
 	ret = __register_pstore_blk(best_effort_dev,
 				    early_boot_devpath(blkdev));
-	if (ret)
+	if (ret) {
 		kfree(best_effort_dev);
-	else
+		/* eMMC may simply not be probed yet; retry a few times. */
+		if (ret == -ENODEV || ret == -ENOENT) {
+			pstore_blk_retry_count = 0;
+			INIT_DELAYED_WORK(&pstore_blk_retry_work,
+					  pstore_blk_retry_fn);
+			schedule_delayed_work(&pstore_blk_retry_work,
+					      PSTORE_BLK_RETRY_DELAY);
+		}
+	} else
 		pr_info("attached %s (%lu) (no dedicated panic_write!)\n",
 			blkdev, best_effort_dev->zone.total_size);
 
@@ -317,6 +354,7 @@ static int __init __best_effort_init(void)
 
 static void __exit __best_effort_exit(void)
 {
+	cancel_delayed_work_sync(&pstore_blk_retry_work);
 	/*
 	 * Currently, the only user of psblk_file is best_effort, so
 	 * we can assume that pstore_device_info is associated with it.
