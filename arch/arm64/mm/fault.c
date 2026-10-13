@@ -41,6 +41,7 @@
 #include <asm/mte.h>
 #include <asm/processor.h>
 #include <asm/sysreg.h>
+#include <asm/stacktrace.h>
 #include <asm/system_misc.h>
 #include <asm/tlbflush.h>
 #include <asm/traps.h>
@@ -834,6 +835,17 @@ static int do_sea(unsigned long far, unsigned long esr, struct pt_regs *regs)
 	}
 	trace_android_rvh_do_sea(siaddr, esr, regs);
 	add_taint(TAINT_MACHINE_CHECK, LOCKDEP_STILL_OK);
+	/*
+	 * Preserve the fault site before the verbose oops dump: a subsequent
+	 * reset can truncate it before show_regs() prints PC and LR.
+	 */
+	if (!user_mode(regs)) {
+		pr_emerg("SEA: ESR=%016lx FAR=%016lx FnV=%d PC=%016llx LR=%016llx PID=%d PPID=%d COMM=%s\n",
+			 esr, far, !!(esr & ESR_ELx_FnV), regs->pc,
+			 regs->regs[30], task_pid_nr(current),
+			 task_ppid_nr(current), current->comm);
+		dump_backtrace(regs, current, KERN_EMERG);
+	}
 	arm64_notify_die(inf->name, regs, inf->sig, inf->code, siaddr, esr);
 
 	return 0;

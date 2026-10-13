@@ -114,6 +114,16 @@ Secondary: `dpmd` also aborts, in
 `android::hardware::ProcessState::init` — it dies setting up its scheduler
 state, not a display issue. Not yet triaged.
 
+Run105 preparation (not built/booted): kernel-mode `do_sea` prints
+compact ESR/FAR/FnV/PC/LR/PID/PPID/comm and the fault-context backtrace
+before the verbose oops dump. No fixup, user-mode, reset or driver
+behavior changes. Patch is `snapshot60/run105-sea-context.patch`;
+incremental build/artifact handoff is in TRACKER-kgsl-port.md.
+User selected building on Linux; local clangd lacks kernel include
+configuration and build-host SSH authentication is unavailable.
+Status BLOCKED on matching Image.gz, vmlinux/System.map and configuration.
+Strict patch style checked; compilation and runtime remain unverified.
+
 ## Status key
 - FIXING — patch in tree, awaiting build/boot verdict.
 - BLOCKED — needs something external (rebuild, firmware harvest).
