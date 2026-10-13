@@ -2532,6 +2532,10 @@ static int mdss_fb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 {
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
 	int rc = -EINVAL;
+	pr_err("mdss_fb_mmap: %s by %s len=%lu pgoff=%lu smem_start=%llx smem_len=%x\n",
+	       info->fix.id, current->group_leader->comm,
+	       vma->vm_end - vma->vm_start, vma->vm_pgoff,
+	       (u64)info->fix.smem_start, info->fix.smem_len);
 
 	if (mfd->fb_mmap_type == MDP_FB_MMAP_ION_ALLOC) {
 		rc = mdss_fb_fbmem_ion_mmap(info, vma);
@@ -2880,6 +2884,9 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 static int mdss_fb_open(struct fb_info *info, int user, struct file *file)
 {
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
+	pr_err("mdss_fb_open: %s by %s pid=%d par=%s\n",
+	       info->fix.id, current->group_leader->comm, current->tgid,
+	       mfd ? "ok" : "NULL");
 	struct mdss_fb_file_info *file_info = NULL;
 	int result;
 	struct task_struct *task = current->group_leader;
@@ -5191,10 +5198,20 @@ exit:
 static int mdss_fb_ioctl(struct fb_info *info, unsigned int cmd,
 			 unsigned long arg, struct file *file)
 {
-	if (!info || !info->par)
-		return -EINVAL;
+	int rc;
 
-	return mdss_fb_do_ioctl(info, cmd, arg, file);
+	if (!info || !info->par) {
+		pr_err("mdss_fb_ioctl: %s par=%s cmd=%04x -> EINVAL\n",
+		       info ? info->fix.id : "(null)",
+		       info && info->par ? "ok" : "NULL", cmd);
+		return -EINVAL;
+	}
+
+	rc = mdss_fb_do_ioctl(info, cmd, arg, file);
+	if (rc)
+		pr_err("mdss_fb_ioctl: %s cmd=%04x -> %d\n",
+		       info->fix.id, cmd, rc);
+	return rc;
 }
 
 static int mdss_fb_register_extra_panel(struct platform_device *pdev,

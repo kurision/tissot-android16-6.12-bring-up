@@ -2644,6 +2644,9 @@ int mdss_dsi_post_clkoff_cb(void *priv,
 		pdata = &ctrl->panel_data;
 
 		for (i = DSI_MAX_PM - 1; i >= DSI_CORE_PM; i--) {
+			if (!sdata->power_data[i].vreg_config ||
+			    !sdata->power_data[i].num_vreg)
+				continue;
 			/**
 			 * If DSI_CTRL is active, proceed to turn off
 			 * supplies which support turning off in low power
@@ -2707,6 +2710,12 @@ int mdss_dsi_pre_clkon_cb(void *priv,
 		 */
 		pr_debug("%s: Enable DSI core power\n", __func__);
 		for (i = DSI_CORE_PM; i < DSI_MAX_PM; i++) {
+			/* entries without DT supply data are not
+			 * populated (e.g. empty core-supply-entries);
+			 * nothing to enable. */
+			if (!sdata->power_data[i].vreg_config ||
+			    !sdata->power_data[i].num_vreg)
+				continue;
 			if ((ctrl->ctrl_state & CTRL_STATE_DSI_ACTIVE) &&
 				(!pdata->panel_info.cont_splash_enabled) &&
 				(!sdata->power_data[i].vreg_config

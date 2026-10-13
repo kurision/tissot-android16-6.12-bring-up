@@ -2457,8 +2457,9 @@ static u32 mdss_mdp_scaler_init(struct mdss_data_type *mdata,
 	return ret;
 }
 
+/* DEBUG run70: defined after the probe; used in splash below. */
+static void mdss_mdp_debug_emmc_write(u32 val, loff_t off);
 /**
- * mdss_mdp_footswitch_ctrl_splash() - clocks handoff for cont. splash screen
  * @on: 1 to start handoff, 0 to complete the handoff after first frame update
  *
  * MDSS Clocks and GDSC are already on during continuous splash screen, but
@@ -2486,8 +2487,9 @@ void mdss_mdp_footswitch_ctrl_splash(int on)
 			if (ret < 0)
 				pr_err("Footswitch failed to enable: %d\n",
 					ret);
-
+			mdss_mdp_debug_emmc_write(0x314d4453, 60*1024*1024+16);
 			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+			mdss_mdp_debug_emmc_write(0x324d4453, 60*1024*1024+24);
 			mdss_bus_bandwidth_ctrl(true);
 		} else {
 			pr_debug("Disable MDP FS for splash.\n");
@@ -2925,6 +2927,40 @@ int mdss_panel_get_intf_status(u32 disp_num, u32 intf_type)
 
 	return rc;
 }
+/* declared in drivers/base/base.h (not exported to modules, but this
+ * driver is built in); DEBUG-only late re-probe kick, see below. */
+extern void driver_deferred_probe_trigger(void);
+static struct delayed_work mdss_mdp_defer_kick_work;
+static void mdss_mdp_defer_kick_fn(struct work_struct *work)
+{
+	pr_info("mdss_mdp: kicking late deferred re-probe\n");
+	driver_deferred_probe_trigger();
+}
+/* DEBUG run69-70: write markers straight to eMMC (60 MB offset, past
+ * DIAG's area). */
+#include <linux/fs.h>
+#include <linux/file.h>
+static void mdss_mdp_debug_emmc_write(u32 val, loff_t off)
+{
+	struct file *f;
+	loff_t pos = off;
+
+	f = filp_open("/dev/mmcblk0p48", O_WRONLY | O_DSYNC, 0);
+	if (IS_ERR(f))
+		return;
+	kernel_write(f, &val, sizeof(val), &pos);
+	filp_close(f, NULL);
+}
+static void mdss_mdp_debug_emmc_marker(struct mdss_data_type *mdata)
+{
+	loff_t pos = 60 * 1024 * 1024;
+	u32 ver;
+
+	mdss_mdp_debug_emmc_write(0x4d445053, pos);
+	/* If the HW is unpowered this read hangs: marker-only on eMMC. */
+	ver = MDSS_REG_READ(mdata, MDSS_REG_HW_VERSION);
+	mdss_mdp_debug_emmc_write(ver, pos + 8);
+}
 
 static int mdss_mdp_probe(struct platform_device *pdev)
 {
@@ -2934,11 +2970,21 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 	uint32_t split_display = 0;
 	int num_of_display_on = 0;
 	int i = 0;
-	/* DEBUG run65: defer the full probe until pstore_blk has had a
-	 * chance to attach (~30s), so the eventual death persists to
-	 * eMMC instead of vanishing with the RAMOOPS stomping. */
-	if (ktime_get_boottime_seconds() < 45)
+	/* DEBUG run68: defer the full probe until power suppliers have
+	 * settled (the early probe hangs on unpowered MDP registers
+	 * instead of deferring), and kick one late re-probe at 60 s since
+	 * nothing else retriggers the deferred queue that late. */
+	if (ktime_get_boottime_seconds() < 45) {
+		static bool defer_kick_armed;
+		if (!defer_kick_armed) {
+			defer_kick_armed = true;
+			INIT_DELAYED_WORK(&mdss_mdp_defer_kick_work,
+					  mdss_mdp_defer_kick_fn);
+			schedule_delayed_work(&mdss_mdp_defer_kick_work,
+					      60 * HZ);
+		}
 		return -EPROBE_DEFER;
+	}
 	if (!pdev->dev.of_node) {
 		pr_err("MDP driver only supports device tree probe\n");
 		return -ENOTSUPP;
@@ -3066,6 +3112,11 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 	 * kernel is up.
 	 */
 	mdss_mdp_footswitch_ctrl_splash(true);
+	/* DEBUG run69: three-way marker written straight to eMMC (60 MB
+	 * offset, past DIAG's area). Present+version => the HW_VERSION
+	 * read works and the killer is later. Marker-only => the read
+	 * hangs (power/clocks off). Absent => died inside splash. */
+	mdss_mdp_debug_emmc_marker(mdata);
 	mdss_hw_rev_init(mdata);
 
 	/*populate hw iomem base info from device tree*/
