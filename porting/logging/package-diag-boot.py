@@ -356,6 +356,7 @@ def main():
         "firmware": [name for name, _ in fw_entries],
         "debuggable": args.debuggable,
         "policy_append_sha256": sha256(policy_append) if policy_append else None,
+        "cmdline": cmdline,
         "base_image": args.base_image,
     }
     with open(args.report, "x") as f:
