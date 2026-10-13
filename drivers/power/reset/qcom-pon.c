@@ -14,6 +14,9 @@
 
 #define PON_SOFT_RB_SPARE		0x8f
 
+/* PON peripheral (pm8941 family): cause of the previous reset, sticky. */
+#define PON_REASON1			0x08
+
 #define GEN1_REASON_SHIFT		2
 #define GEN2_REASON_SHIFT		1
 
@@ -78,6 +81,19 @@ static int pm8916_pon_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev, "can't register reboot mode\n");
 			return error;
 		}
+	}
+
+	/*
+	 * Snapshot60 run9x diagnostic: report the previous reset's PON
+	 * cause as raw register, decoded offline. Plain read, no side
+	 * effects; one line per boot, like any probe message.
+	 */
+	{
+		unsigned int reason = 0;
+		int rerr = regmap_read(pon->regmap,
+				       pon->baseaddr + PON_REASON1, &reason);
+		pr_info("DIAG pon_reason reason1=0x%02x err=%d\n",
+			reason & 0xff, rerr);
 	}
 
 	platform_set_drvdata(pdev, pon);

@@ -936,13 +936,16 @@ done:
  * sockets. The existing shell domain can execute logcat and write
  * shell_data_file; do not run logcat in the pre-policy kernel domain.
  * /data must be mounted first. Earlier init messages remain in kmsg.
+ * Flush an initial logd backlog before streaming: an early reset can precede
+ * the independent sync loop's next iteration. Streaming may repeat backlog
+ * records; retaining them avoids losing messages during the initial flush.
  */
 static void guard_early_logcat(int proc, int log)
 {
 	static const char target[] = "/system/etc/init/logd.rc";
 	static const char action[] =
 		"\n# ACK diagnostic: persistent Android logs before adb.\n"
-		"service ack-early-logcat /system/bin/sh -c \"exec /system/bin/logcat -b all -v threadtime -f /data/local/tmp/ack-early-logcat.log -r 1024 -n 4\"\n"
+		"service ack-early-logcat /system/bin/sh -c \"/system/bin/logcat -d -b all -v threadtime -f /data/local/tmp/ack-early-logcat.log -r 1024 -n 4 && sync && exec /system/bin/logcat -b all -v threadtime -f /data/local/tmp/ack-early-logcat.log -r 1024 -n 4\"\n"
 		"    class core\n"
 		"    disabled\n"
 		"    user root\n"
@@ -1032,9 +1035,52 @@ static void guard_headless(int proc, int log)
 	}
 }
 #endif
+
+#ifdef ANDROID_HALGATE
+/*
+ * HAL-gate probe (run91): stub the five vendor HAL services active in the
+ * runs87-90 death window (107-123 s) so init never defines them. Same
+ * memfd bind-mount mechanism as the headless probe above; separate flag
+ * and table so either gate builds independently.
+ */
+static const char *const halgate_rc[][2] = {
+	{ "/dev/block/ack-halgate-sensors.rc",
+	  "/vendor/etc/init/android.hardware.sensors@1.0-service.rc" },
+	{ "/dev/block/ack-halgate-usb.rc",
+	  "/vendor/etc/init/android.hardware.usb-service.qti.rc" },
+	{ "/dev/block/ack-halgate-wifi.rc",
+	  "/vendor/etc/init/android.hardware.wifi-service.rc" },
+	{ "/dev/block/ack-halgate-lights.rc",
+	  "/vendor/etc/init/lights-xiaomi_msm8953.rc" },
+	{ "/dev/block/ack-halgate-memtrack.rc",
+	  "/vendor/etc/init/memtrack_qti.rc" },
+};
+
+static void guard_halgate(int proc, int log)
+{
+	static const char stub[] = "# disabled by ACK diag halgate probe\n";
+	char message[256];
+	size_t i;
+
+	for (i = 0; i < sizeof(halgate_rc) / sizeof(halgate_rc[0]); i++) {
+		int fd = memfd_create("ack-halgate-rc", MFD_CLOEXEC);
+		int error = 0;
+
+		if (fd < 0 || write_all(fd, stub, sizeof(stub) - 1) ||
+		    guard_bind_config(proc, fd, halgate_rc[i][0],
+				      halgate_rc[i][1]))
+			error = errno;
+		if (fd >= 0)
+			close(fd);
+		snprintf(message, sizeof(message),
+			 "DIAG: halgate rc override %s errno=%d\n",
+			 halgate_rc[i][1], error);
+		say(log, message);
+	}
+}
+#endif
 /*
  * GPU firmware staging. Upstream adreno requests qcom/a530_pm4.fw,
- * qcom/a530_pfp.fw and a506_zap.mdt (+ .b0x segments) through the
  * filesystem firmware loader, which this early only searches the ramdisk
  * (/lib/firmware); the blobs live on /vendor/firmware, unreadable to
  * shell/adb. This process is root in PID 1's mount namespace after vendor
@@ -1647,6 +1693,9 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	guard_usb_handoff(proc, log);
 #ifdef ANDROID_HEADLESS
 	guard_headless(proc, log);
+#endif
+#ifdef ANDROID_HALGATE
+	guard_halgate(proc, log);
 #endif
 	guard_firmware(log);
 	harvest_modem_firmware(log);
