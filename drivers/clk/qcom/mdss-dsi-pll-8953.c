@@ -557,6 +557,7 @@ static int mdss_8953_enable_seq(struct mdss_8953_pll *pll)
 			mdss_8953_dump_fail_state(pll);
 			return -EINVAL;
 		}
+	}
 
 	MDSS_PLL_REG_W(pll->pll_base, DSIPHY_CMN_GLBL_DIGTOP_SPARE2,
 		DSI_PHY_SPARE_VAL);
