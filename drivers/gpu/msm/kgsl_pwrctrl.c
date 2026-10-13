@@ -3031,14 +3031,6 @@ int kgsl_pwrctrl_change_state(struct kgsl_device *device, int state)
 
 	if (device->state == state)
 		return status;
-	/*
-	 * Snapshot60 run9x diagnostic: every GPU power-state transition,
-	 * read-only. A death with no return to a low-power state means
-	 * the GPU was powered at death (run94 died inside kgsl worker
-	 * clock code on the old kernel).
-	 */
-	dev_info(device->dev, "DIAG kgsl_pwrstate 0x%x->0x%x\n",
-		 device->state, state);
 	kgsl_pwrctrl_request_state(device, state);
 
 	/* Work through the legal state transitions */
