@@ -143,6 +143,55 @@ static bool mdss_8953_pll_locked(struct mdss_8953_pll *pll)
 	return true;
 }
 
+/*
+ * Diagnostic-only dump on lock failure: read-only snapshot of the PLL
+ * block, power state and requested rate so a failing boot identifies
+ * whether the config never latched (power), the sequencer is stuck, or
+ * the math programmed an impossible target. Called only from the
+ * enable failure path; success path behavior is unchanged.
+ */
+static void mdss_8953_dump_fail_state(struct mdss_8953_pll *pll)
+{
+	void __iomem *base = pll->pll_base;
+	struct device *dev = pll->dev;
+
+	dev_err(dev, "PLL%d fail state: vco=%llu ref=%u ssc=%u pm_active=%u iface_rate=%lu\n",
+		pll->index, pll->vco_current_rate, pll->vco_ref_clk_rate,
+		pll->ssc_en, pm_runtime_active(dev),
+		clk_get_rate(pll->iface_clk));
+	dev_err(dev, "PLL%d regs: CNTRL=%x CTRL0=%x CTRL1=%x LDO=%x CLKCFG0=%x CLKCFG1=%x VREF=%x\n",
+		pll->index, MDSS_PLL_REG_R(base, DSIPHY_CMN_PLL_CNTRL),
+		MDSS_PLL_REG_R(base, DSIPHY_CMN_CTRL_0),
+		MDSS_PLL_REG_R(base, DSIPHY_CMN_CTRL_1),
+		MDSS_PLL_REG_R(base, DSIPHY_CMN_LDO_CNTRL),
+		MDSS_PLL_REG_R(base, DSIPHY_CMN_CLK_CFG0),
+		MDSS_PLL_REG_R(base, DSIPHY_CMN_CLK_CFG1),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_VREF_CFG1));
+	dev_err(dev, "PLL%d regs: RESETSM=%x VCO_TUNE=%x KVCO_CODE=%x DEC=%x FRAC=%x%x%x LOCKCMP=%x%x%x CMPEN=%x\n",
+		pll->index, MDSS_PLL_REG_R(base, DSIPHY_PLL_RESETSM_CNTRL),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_PLL_VCO_TUNE),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_KVCO_CODE),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_DEC_START),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_DIV_FRAC_START1),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_DIV_FRAC_START2),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_DIV_FRAC_START3),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_PLLLOCK_CMP1),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_PLLLOCK_CMP2),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_PLLLOCK_CMP3),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_PLLLOCK_CMP_EN));
+	dev_err(dev, "PLL%d regs: VCOCNT=%x%x KVCOCNT=%x%x LPF2_POSTDIV=%x CLKBUFLR=%x GLBLTEST=%x SYSCLK=%x TXCLK=%x STATUS=%x\n",
+		pll->index, MDSS_PLL_REG_R(base, DSIPHY_PLL_VCO_COUNT1),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_VCO_COUNT2),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_KVCO_COUNT1),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_KVCO_COUNT2),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_PLL_LPF2_POSTDIV),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_CLKBUFLR_EN),
+		MDSS_PLL_REG_R(base, DSIPHY_CMN_GLBL_TEST_CTRL),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_SYSCLK_EN_RESET),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_TXCLK_EN),
+		MDSS_PLL_REG_R(base, DSIPHY_PLL_RESET_SM_READY_STATUS));
+}
+
 static void mdss_8953_pll_start(struct mdss_8953_pll *pll)
 {
 	MDSS_PLL_REG_W(pll->pll_base, DSIPHY_PLL_VREF_CFG1, 0x10);
@@ -505,9 +554,9 @@ static int mdss_8953_enable_seq(struct mdss_8953_pll *pll)
 		mdss_8953_pll_start(pll);
 		if (!mdss_8953_pll_locked(pll)) {
 			pr_err("PLL ndx=%d lock failed\n", pll->index);
+			mdss_8953_dump_fail_state(pll);
 			return -EINVAL;
 		}
-	}
 
 	MDSS_PLL_REG_W(pll->pll_base, DSIPHY_CMN_GLBL_DIGTOP_SPARE2,
 		DSI_PHY_SPARE_VAL);
