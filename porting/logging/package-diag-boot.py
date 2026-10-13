@@ -132,8 +132,12 @@ def hex_upper(records):
     return any(c in "ABCDEF" for c in text) and not any(c in "abcdef" for c in text)
 
 
-def customize_ramdisk(cpio, init, fw_entries, debuggable):
-    """Replace /init; optionally inject lib/firmware files and debuggable props."""
+POLICY_CIL_RECORD = "userdebug_plat_sepolicy.cil"
+
+
+def customize_ramdisk(cpio, init, fw_entries, debuggable, policy_append):
+    """Replace /init; optionally inject lib/firmware files, debuggable props,
+    and extra sepolicy CIL text (harness-only policy deltas)."""
     records, tail = parse_cpio(cpio)
     hits = [i for i, r in enumerate(records)
             if r["name"] == "init" and int(r["fields"][1], 16) & S_IFMT == S_IFREG]
@@ -193,6 +197,13 @@ def customize_ramdisk(cpio, init, fw_entries, debuggable):
         if len(trailer) != 1:
             die("expected exactly one TRAILER!!! record")
         new[trailer[0]:trailer[0]] = added
+    if policy_append:
+        cil = [i for i, r in enumerate(new)
+               if r["name"] == POLICY_CIL_RECORD]
+        if len(cil) != 1:
+            die(f"policy-append: expected exactly one {POLICY_CIL_RECORD} record")
+        new[cil[0]]["data"] += policy_append
+        new[cil[0]]["fields"][FILESIZE_FIELD] = fmt % len(new[cil[0]]["data"])
 
     out = build_cpio(new, tail)
 
@@ -249,6 +260,10 @@ def main():
                          "dts/qcom/msm8953-xiaomi-tissot.dtb) into "
                          "--kernel-dir first, so a stale kernel dir cannot "
                          "ship silently")
+    ap.add_argument("--policy-append", default=None, metavar="FILE",
+                    help="append FILE's bytes to the ramdisk sepolicy CIL "
+                         "record (harness-only policy deltas, e.g. to allow "
+                         "a HAL past a generic-label denial)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--report", required=True)
     args = ap.parse_args()
@@ -283,8 +298,13 @@ def main():
         die(f"unsupported base header page={page} version={version} second={ssize}")
     base_ramdisk = base[PAGE + pad(ksize):PAGE + pad(ksize) + rsize]
 
+    policy_append = b""
+    if args.policy_append:
+        with open(args.policy_append, "rb") as f:
+            policy_append = f.read()
     cpio, records = customize_ramdisk(gzip.decompress(base_ramdisk), init,
-                                      fw_entries, args.debuggable)
+                                      fw_entries, args.debuggable,
+                                      policy_append)
     ramdisk = subprocess.run(["gzip", "-9", "-n"], input=cpio,
                              stdout=subprocess.PIPE, check=True).stdout
 
@@ -335,8 +355,8 @@ def main():
         "init_sha256": sha256(init),
         "firmware": [name for name, _ in fw_entries],
         "debuggable": args.debuggable,
+        "policy_append_sha256": sha256(policy_append) if policy_append else None,
         "base_image": args.base_image,
-        "cmdline": cmdline,
     }
     with open(args.report, "x") as f:
         json.dump(report, f, indent=2)
