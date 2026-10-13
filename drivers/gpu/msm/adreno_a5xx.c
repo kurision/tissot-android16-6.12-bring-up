@@ -1989,7 +1989,7 @@ static int a5xx_send_me_init(struct adreno_device *adreno_dev,
 
 		kgsl_regread(device, A5XX_RBBM_STATUS, &rbbm);
 		dev_info(device->dev,
-			 "DIAG ME_INIT submit: gfx_rate=%lu active_freq=%u rbbm=%x secured=%u pm4=%p pfp=%p zap_loaded=%u\n",
+			 "DIAG ME_INIT submit: gfx_rate=%lu active_freq=%lu rbbm=%x secured=%u pm4=%p pfp=%p zap_loaded=%u\n",
 			kgsl_get_clkrate(device->pwrctrl.grp_clks[0]),
 			kgsl_pwrctrl_active_freq(&device->pwrctrl), rbbm,
 			device->mmu.secured, pm4_fw->memdesc.hostptr,
