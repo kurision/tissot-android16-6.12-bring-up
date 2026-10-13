@@ -30,6 +30,7 @@
 #include <linux/blkdev.h>
 #include <linux/device/class.h>
 #include <linux/kmsg_dump.h>
+#include <linux/crc32.h>
 #include <linux/reboot.h>
 #include <linux/sched.h>
 #include <linux/mutex.h>
@@ -490,7 +491,8 @@ static bool ramoops_raw_geometry_valid(struct ramoops_context *cxt)
 {
 	unsigned int i;
 
-	if (cxt->phys_addr != RAMOOPS_RAW_PHYS || cxt->size != SZ_1M ||
+	if (PAGE_SHIFT != 12 ||
+	    cxt->phys_addr != RAMOOPS_RAW_PHYS || cxt->size != SZ_1M ||
 	    cxt->record_size != SZ_4K || cxt->console_size != SZ_512K ||
 	    cxt->pmsg_size != SZ_32K || cxt->ftrace_size != SZ_4K ||
 	    cxt->max_dump_cnt != 119 || cxt->max_ftrace_cnt != 1 ||
@@ -600,6 +602,12 @@ static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
 #define RAMOOPS_SNAP_SLOTS		2
 #define RAMOOPS_SNAP_INTERVAL_MS	2000
 #define RAMOOPS_SNAP_MAGIC		0x52414d4fULL	/* "RAMO" */
+#define RAMOOPS_SNAP_VERSION		1
+#define RAMOOPS_TAIL_OFFSET		(RAMOOPS_SNAP_OFFSET + \
+					 RAMOOPS_SNAP_SLOTS * RAMOOPS_SNAP_SLOT_STRIDE)
+#define RAMOOPS_TAIL_SLOT_SIZE		SZ_128K
+#define RAMOOPS_TAIL_PAYLOAD_SIZE	(RAMOOPS_TAIL_SLOT_SIZE - PAGE_SIZE)
+#define RAMOOPS_TAIL_MAGIC		0x314c4941544b4341ULL /* "ACKTAIL1" */
 
 /* Opt-in diagnostics, separate from snapshots, stall witness and QSEE ring. */
 #define RAMOOPS_RESET_OFFSET		0x3f30000ULL
@@ -627,6 +635,7 @@ struct ramoops_snapper {
 	struct file *file;
 	struct block_device *bdev;
 	void *buf;			/* header page + SZ_1M payload, vmalloc'd once */
+	void *tail_buf;			/* header page + bounded printk tail */
 	struct task_struct *task;
 	struct completion wake;
 	u64 seq;
@@ -642,6 +651,8 @@ struct ramoops_snapper {
 static struct ramoops_snapper ramoops_snapper;
 
 static_assert(sizeof(struct ramoops_snap_header) == RAMOOPS_SNAP_HDR_SIZE);
+static_assert(RAMOOPS_TAIL_OFFSET +
+	      RAMOOPS_SNAP_SLOTS * RAMOOPS_TAIL_SLOT_SIZE <= 0x3f00000ULL);
 
 /* Find the "logdump" partition the way uevent PARTNAME=logdump names it. */
 static int ramoops_snap_find_logdump(struct device *dev, void *data)
@@ -686,6 +697,13 @@ static int ramoops_snap_open_logdump(struct ramoops_snapper *s)
 		s->file = NULL;
 		return err;
 	}
+	if (bdev_nr_bytes(file_bdev(s->file)) <
+	    RAMOOPS_RESET_OFFSET + RAMOOPS_RESET_SIZE) {
+		pr_err_once("DIAG: logdump is too small for diagnostic records\n");
+		filp_close(s->file, &ramoops_snapper);
+		s->file = NULL;
+		return -ENOSPC;
+	}
 	/* The notifier uses a separate buffer; publish the held device last. */
 	smp_store_release(&s->bdev, file_bdev(s->file));
 	return 0;
@@ -709,7 +727,7 @@ static int ramoops_snap_bio_write(struct block_device *bdev, void *data,
 		size_t chunk = min_t(size_t, len - done, PAGE_SIZE);
 		struct page *page = vmalloc_to_page((char *)data + done);
 
-		if (!page || bio_add_page(bio, page, chunk, 0) < 0) {
+		if (!page || bio_add_page(bio, page, chunk, 0) != chunk) {
 			bio_put(bio);
 			return -EIO;
 		}
@@ -725,47 +743,96 @@ static int ramoops_snap_bio_write(struct block_device *bdev, void *data,
 	return err;
 }
 
+static void ramoops_snap_init_header(void *buf, u64 magic, u64 seq,
+				     u32 len, u32 phys_addr, unsigned int slot)
+{
+	struct ramoops_snap_header *hdr = buf;
+
+	memset(buf, 0, PAGE_SIZE);
+	hdr->magic = cpu_to_le64(magic);
+	hdr->seq = cpu_to_le64(seq);
+	hdr->index = cpu_to_le64(seq);
+	hdr->timestamp_ns = cpu_to_le64(ktime_get_ns());
+	hdr->payload_offset = cpu_to_le32(PAGE_SIZE);
+	hdr->payload_len = cpu_to_le32(len);
+	hdr->phys_addr_lo = cpu_to_le32(phys_addr);
+	hdr->slot = cpu_to_le32(slot);
+	hdr->reserved[0] = cpu_to_le32(RAMOOPS_SNAP_VERSION);
+	hdr->reserved[1] = cpu_to_le32(crc32_le(~0U, buf + PAGE_SIZE, len) ^ ~0U);
+	hdr->reserved[2] = cpu_to_le32(crc32_le(~0U, buf, sizeof(*hdr)) ^ ~0U);
+}
+
+/*
+ * Process context only. An incomplete overwrite is invalid until both the
+ * payload and its final checksummed identity have reached stable storage.
+ */
+static int ramoops_snap_commit(struct ramoops_snapper *s, void *buf, u64 base)
+{
+	struct ramoops_snap_header *hdr = buf;
+	__le64 magic = hdr->magic;
+	u32 len = le32_to_cpu(hdr->payload_len);
+	size_t write_len = ALIGN(len, PAGE_SIZE);
+	int err;
+
+	hdr->magic = 0;
+	err = ramoops_snap_bio_write(s->bdev, buf, PAGE_SIZE, base);
+	if (err)
+		return err;
+	err = blkdev_issue_flush(s->bdev);
+	if (err)
+		return err;
+
+	if (write_len > len)
+		memset(buf + PAGE_SIZE + len, 0, write_len - len);
+	err = ramoops_snap_bio_write(s->bdev, buf + PAGE_SIZE, write_len,
+				     base + PAGE_SIZE);
+	if (err)
+		return err;
+	err = blkdev_issue_flush(s->bdev);
+	if (err)
+		return err;
+
+	hdr->magic = magic;
+	err = ramoops_snap_bio_write(s->bdev, buf, PAGE_SIZE, base);
+	if (err)
+		return err;
+	return blkdev_issue_flush(s->bdev);
+}
+
 static int ramoops_snap_take(struct ramoops_snapper *s)
 {
-	struct ramoops_snap_header *hdr = s->buf;
+	struct kmsg_dump_iter iter;
 	void *payload = s->buf + PAGE_SIZE;
 	unsigned int slot = s->slot % RAMOOPS_SNAP_SLOTS;
 	u64 base = RAMOOPS_SNAP_OFFSET + slot * RAMOOPS_SNAP_SLOT_STRIDE;
+	size_t tail_len = 0;
 	ssize_t copied;
 	int err;
 
 	copied = ramoops_raw_copy(s->cxt, payload, 0, SZ_1M);
 	if (copied < 0)
 		return (int)copied;
+	if (s->tail_buf) {
+		kmsg_dump_rewind(&iter);
+		kmsg_dump_get_buffer(&iter, false, s->tail_buf + PAGE_SIZE,
+				     RAMOOPS_TAIL_PAYLOAD_SIZE, &tail_len);
+	}
 
 	s->seq++;
-
-	memset(s->buf, 0, PAGE_SIZE);
-	hdr->magic = cpu_to_le64(RAMOOPS_SNAP_MAGIC);
-	hdr->seq = cpu_to_le64(s->seq);
-	hdr->index = cpu_to_le64(s->seq);	/* sample index within this boot */
-	hdr->timestamp_ns = cpu_to_le64(ktime_get_ns());
-	hdr->payload_offset = cpu_to_le32(PAGE_SIZE);
-	hdr->payload_len = cpu_to_le32(SZ_1M);
-	hdr->phys_addr_lo = cpu_to_le32(RAMOOPS_RAW_PHYS);
-	hdr->slot = cpu_to_le32(slot);
-
-	/* Header page first, so a recovery sees this sample's identity. */
-	err = ramoops_snap_bio_write(s->bdev, s->buf, PAGE_SIZE, base);
+	ramoops_snap_init_header(s->buf, RAMOOPS_SNAP_MAGIC, s->seq,
+				 SZ_1M, RAMOOPS_RAW_PHYS, slot);
+	err = ramoops_snap_commit(s, s->buf, base);
 	if (err)
 		return err;
-
-	err = ramoops_snap_bio_write(s->bdev, payload, SZ_1M,
-				     base + RAMOOPS_SNAP_PAYLOAD_OFFSET -
-				     RAMOOPS_SNAP_OFFSET);
-	if (err)
-		return err;
-
-	/* Reach stable storage: the last sample before a freeze is the
-	 * one this whole channel exists to preserve. */
-	err = blkdev_issue_flush(s->bdev);
-	if (err)
-		pr_warn("snapshot38 logdump flush failed errno=%d\n", err);
+	if (s->tail_buf && tail_len) {
+		ramoops_snap_init_header(s->tail_buf, RAMOOPS_TAIL_MAGIC, s->seq,
+					 tail_len, 0, slot);
+		err = ramoops_snap_commit(s, s->tail_buf,
+					  RAMOOPS_TAIL_OFFSET +
+					  slot * RAMOOPS_TAIL_SLOT_SIZE);
+		if (err)
+			return err;
+	}
 
 	/* Advance only after a fully flushed sample. */
 	s->slot = slot + 1;
@@ -925,6 +992,7 @@ static void ramoops_process_trace_stop(struct ramoops_snapper *s)
 static int ramoops_snap_thread(void *unused)
 {
 	struct ramoops_snapper *s = &ramoops_snapper;
+	int ret;
 	(void)unused;
 
 	while (!kthread_should_stop()) {
@@ -940,14 +1008,19 @@ static int ramoops_snap_thread(void *unused)
 			}
 		}
 
-		if (ramoops_snap_take(s)) {
-			pr_err("snapshot38 logdump snapshot failed; disabled\n");
+		ret = ramoops_snap_take(s);
+		if (ret) {
+			pr_err("DIAG: logdump commit failed errno=%d; snapshotter disabled\n",
+			       ret);
 			break;
 		}
 		if (!s->warned) {
 			s->warned = true;
 			pr_info("snapshot38 logdump snapshotter ready offset=%llu slots=%u size=%u\n",
 				RAMOOPS_SNAP_OFFSET, RAMOOPS_SNAP_SLOTS, SZ_1M);
+			pr_info("DIAG: snapshot format=%u CRC32 committed, periodic printk tail=%s offset=%llu\n",
+				RAMOOPS_SNAP_VERSION, s->tail_buf ? "on" : "off",
+				RAMOOPS_TAIL_OFFSET);
 		}
 		if (ramoops_reset_capture && !(s->seq % 10))
 			pr_info("DIAG: snapshot heartbeat seq=%llu uptime_ns=%llu\n",
@@ -1128,6 +1201,7 @@ static void ramoops_snap_start(struct ramoops_context *cxt)
 		pr_err("snapshot38 staging buffer alloc failed; snapshotter disabled\n");
 		return;
 	}
+	s->tail_buf = vzalloc(RAMOOPS_TAIL_SLOT_SIZE);
 
 	s->task = kthread_create(ramoops_snap_thread, s, "ramoops_snap");
 	if (IS_ERR(s->task)) {
@@ -1136,6 +1210,8 @@ static void ramoops_snap_start(struct ramoops_context *cxt)
 		s->task = NULL;
 		vfree(s->buf);
 		s->buf = NULL;
+		vfree(s->tail_buf);
+		s->tail_buf = NULL;
 		return;
 	}
 	if (ramoops_reset_capture) {
@@ -1147,6 +1223,8 @@ static void ramoops_snap_start(struct ramoops_context *cxt)
 			err = register_reboot_notifier(&s->reset_nb);
 			if (!err) {
 				s->reset_registered = true;
+				pr_info("DIAG: orderly reset capture armed offset=%llu size=%u\n",
+					RAMOOPS_RESET_OFFSET, RAMOOPS_RESET_SIZE);
 			} else {
 				pr_warn("DIAG: reset notifier registration failed errno=%d\n",
 					err);
@@ -1181,6 +1259,8 @@ static void ramoops_snap_stop(void)
 		vfree(s->buf);
 		s->buf = NULL;
 	}
+	vfree(s->tail_buf);
+	s->tail_buf = NULL;
 	if (s->file) {
 		filp_close(s->file, &ramoops_snapper);
 		s->file = NULL;

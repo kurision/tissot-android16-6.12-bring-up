@@ -37,6 +37,8 @@
 	(defined(ANDROID_GUARD_TEST) || defined(ANDROID_RAMOOPS_TEST))
 #include <assert.h>
 #include <stdlib.h>
+#include <signal.h>
+#include <sys/resource.h>
 #endif
 
 #define G "/sys/kernel/config/usb_gadget/g1"
@@ -64,16 +66,31 @@
 #ifndef BOOT_DEADLINE_SECONDS
 #define BOOT_DEADLINE_SECONDS 0
 #endif
+#define LOGDUMP_TEXT_LIMIT	(60UL * 1024 * 1024)
 static time_t monotonic_seconds(void);
 struct ramoops_sampler;
 
-static int write_all(int fd, const char *buf, size_t len)
+static int write_all_limit(int fd, const char *buf, size_t len,
+			   size_t *remaining)
 {
 	while (len) {
-		ssize_t n = write(fd, buf, len);
+		size_t count = len;
+		ssize_t n;
+
+		if (remaining) {
+			if (!*remaining) {
+				errno = ENOSPC;
+				return -1;
+			}
+			if (count > *remaining)
+				count = *remaining;
+		}
+		n = write(fd, buf, count);
 		if (n > 0) {
 			buf += n;
 			len -= (size_t)n;
+			if (remaining)
+				*remaining -= (size_t)n;
 		} else if (n < 0 && errno == EINTR) {
 			continue;
 		} else if (n < 0 && errno == EAGAIN) {
@@ -97,6 +114,11 @@ static int write_all(int fd, const char *buf, size_t len)
 		}
 	}
 	return 0;
+}
+
+static int write_all(int fd, const char *buf, size_t len)
+{
+	return write_all_limit(fd, buf, len, NULL);
 }
 
 static void say(int fd, const char *s)
@@ -423,15 +445,17 @@ failed:
  * fd < 0 means "sink retired".
  */
 static int write_capture(int out, int *mirror, const char *buf, size_t len,
-			 int durable)
+			 int durable, size_t *remaining)
 {
 	int taken = 0;
 
 	if (out >= 0) {
-		if (!write_all(out, buf, len) && !(durable && fsync(out)))
+		if (!write_all_limit(out, buf, len, remaining) &&
+		    !(durable && fsync(out)))
 			taken |= 1;
 		else if (mirror && *mirror >= 0)
-			say(*mirror, "\nDIAG: USB sink gone; SD capture continues\n");
+			say(*mirror,
+			    "\nDIAG: primary sink unavailable or full; SD capture continues\n");
 	}
 	if (mirror && *mirror >= 0) {
 		if (!write_all(*mirror, buf, len) && !fsync(*mirror)) {
@@ -439,9 +463,13 @@ static int write_capture(int out, int *mirror, const char *buf, size_t len,
 		} else {
 			close(*mirror);
 			*mirror = -1;
-			if (out >= 0)
-				say(out,
-					"\nDIAG: SD mirror failed; primary capture continues\n");
+			if (out >= 0) {
+				static const char message[] =
+					"\nDIAG: SD mirror failed; primary capture continues\n";
+
+				write_all_limit(out, message, sizeof(message) - 1,
+						remaining);
+			}
 		}
 	}
 	return taken;
@@ -454,7 +482,7 @@ static int sinks_dead(int out, int *mirror)
 }
 
 static int dump_log(int in, int out, unsigned seconds, int durable, int *mirror,
-		    struct ramoops_sampler *sampler)
+		    struct ramoops_sampler *sampler, size_t *remaining)
 {
 	time_t deadline = monotonic_seconds() + seconds;
 	char buf[8192];
@@ -473,14 +501,14 @@ static int dump_log(int in, int out, unsigned seconds, int durable, int *mirror,
 		got = read(in, buf, sizeof buf);
 		if (got > 0) {
 			int taken = write_capture(out, mirror, buf, (size_t)got,
-						  durable);
+						  durable, remaining);
 			if (!(taken & 1))
 				out = -1;
 		} else if (got < 0 && errno == EPIPE) {
 			static const char lost[] =
 				"\nDIAG: kmsg overrun; some records lost\n";
 			int taken = write_capture(out, mirror, lost,
-						  sizeof lost - 1, durable);
+						  sizeof(lost) - 1, durable, remaining);
 			if (!(taken & 1))
 				out = -1;
 		} else if (got < 0 && (errno == EACCES || errno == EPERM)) {
@@ -495,7 +523,7 @@ static int dump_log(int in, int out, unsigned seconds, int durable, int *mirror,
 			write_capture(out, mirror,
 				"\nDIAG: kmsg read denied; capture idle to deadline\n",
 				sizeof("\nDIAG: kmsg read denied; capture idle to deadline\n") - 1,
-				durable);
+				durable, remaining);
 			while (monotonic_seconds() <= deadline) {
 				usleep(500000);
 #ifdef ANDROID_CAPTURE
@@ -628,7 +656,7 @@ static int ramoops_selftest(void)
 	assert(lseek(kmsg, 0, SEEK_SET) == 0);
 	s.log = log;
 	s.next = 0;
-	assert(!dump_log(kmsg, primary, 0, 1, NULL, &s));
+	assert(!dump_log(kmsg, primary, 0, 1, NULL, &s, NULL));
 	assert(s.input == -1 && s.output[0] == -1 && s.output[1] == -1);
 	assert(s.slot == 0 && s.sample == 2);
 	assert(fcntl(log, F_GETFD) >= 0);
@@ -696,7 +724,7 @@ static int sink_retirement_selftest(void)
 	close(primary);
 	primary = openat(dir, "read-only", O_RDONLY | O_CREAT | O_EXCL, 0600);
 	assert(primary >= 0);
-	assert(!dump_log(kmsg, primary, 0, 1, &mirror, NULL));
+	assert(!dump_log(kmsg, primary, 0, 1, &mirror, NULL, NULL));
 	assert(!fstat(mirror, &st) && st.st_size > (off_t)0);
 	got = pread(mirror, whole, sizeof whole - 1, 0);
 	assert(got > 0);
@@ -707,7 +735,7 @@ static int sink_retirement_selftest(void)
 	before = st.st_size;
 	assert(!write_all(kmsg, more, sizeof more - 1));
 	assert(lseek(kmsg, 0, SEEK_SET) == 0);
-	assert(!dump_log(kmsg, -1, 0, 1, &mirror, NULL));
+	assert(!dump_log(kmsg, -1, 0, 1, &mirror, NULL, NULL));
 	assert(!fstat(mirror, &st) && st.st_size > before);
 	got = pread(mirror, whole, sizeof whole - 1, 0);
 	assert(got > 0);
@@ -716,7 +744,7 @@ static int sink_retirement_selftest(void)
 	/* Both sinks gone: capture must stop rather than spin to deadline. */
 	close(mirror);
 	mirror = -1;
-	assert(dump_log(kmsg, -1, 0, 1, &mirror, NULL) == -1);
+	assert(dump_log(kmsg, -1, 0, 1, &mirror, NULL, NULL) == -1);
 	close(primary);
 	close(kmsg);
 	close(mirror);
@@ -727,6 +755,79 @@ static int sink_retirement_selftest(void)
 	close(dir);
 	assert(!rmdir(directory));
 	puts("Sink retirement and mirror continuation checks PASS");
+	return 0;
+}
+
+/* The raw text prefix must not consume the reserved diagnostic tail. */
+static int prefix_budget_selftest(void)
+{
+	static const char first[] = "6,1,1000,-;first record\n";
+	static const char second[] = "6,2,2000,-;second record\n";
+	static const char sentinel[] = "KEEP";
+	static const char partial[] = "partial write";
+	struct rlimit saved, limited;
+	struct stat st;
+	void (*handler)(int signal);
+	char actual[sizeof(second)];
+	char path[64];
+	size_t cap = sizeof(first) - 1 + 3;
+	size_t remaining = cap;
+	size_t failed_budget = 3;
+	size_t partial_budget = sizeof(partial) - 1;
+	int primary, mirror, readonly, short_fd;
+
+	primary = memfd_create("ack-prefix-primary", MFD_CLOEXEC);
+	mirror = memfd_create("ack-prefix-mirror", MFD_CLOEXEC);
+	short_fd = memfd_create("ack-prefix-short", MFD_CLOEXEC);
+	assert(primary >= 0 && mirror >= 0 && short_fd >= 0);
+	assert(pwrite(primary, sentinel, sizeof(sentinel) - 1, cap) ==
+	       (ssize_t)sizeof(sentinel) - 1);
+	assert(write_capture(primary, &mirror, first, sizeof(first) - 1,
+			     0, &remaining) == 3);
+	assert(remaining == 3);
+	assert(write_capture(primary, &mirror, second, sizeof(second) - 1,
+			     0, &remaining) == 2);
+	assert(remaining == 0);
+	assert(pread(primary, actual, sizeof(first) - 1, 0) ==
+	       (ssize_t)sizeof(first) - 1);
+	assert(!memcmp(actual, first, sizeof(first) - 1));
+	assert(pread(primary, actual, 3, sizeof(first) - 1) == 3);
+	assert(!memcmp(actual, second, 3));
+	assert(pread(primary, actual, sizeof(sentinel) - 1, cap) ==
+	       (ssize_t)sizeof(sentinel) - 1);
+	assert(!memcmp(actual, sentinel, sizeof(sentinel) - 1));
+	assert(!fstat(mirror, &st));
+	assert(pread(mirror, actual, sizeof(second) - 1,
+		     st.st_size - (sizeof(second) - 1)) ==
+	       (ssize_t)sizeof(second) - 1);
+	assert(!memcmp(actual, second, sizeof(second) - 1));
+
+	snprintf(path, sizeof(path), "/proc/self/fd/%d", primary);
+	readonly = open(path, O_RDONLY);
+	assert(readonly >= 0);
+	assert(write_all_limit(readonly, first, 3, &failed_budget) == -1);
+	assert(errno == EBADF && failed_budget == 3);
+
+	/* A short successful write followed by failure consumes only its bytes. */
+	assert(!getrlimit(RLIMIT_FSIZE, &saved));
+	limited = saved;
+	limited.rlim_cur = 3;
+	handler = signal(SIGXFSZ, SIG_IGN);
+	assert(handler != SIG_ERR);
+	assert(!setrlimit(RLIMIT_FSIZE, &limited));
+	assert(write_all_limit(short_fd, partial, sizeof(partial) - 1,
+			       &partial_budget) == -1);
+	assert(errno == EFBIG && partial_budget == sizeof(partial) - 1 - 3);
+	assert(!setrlimit(RLIMIT_FSIZE, &saved));
+	assert(signal(SIGXFSZ, handler) != SIG_ERR);
+	assert(pread(short_fd, actual, 3, 0) == 3);
+	assert(!memcmp(actual, partial, 3));
+
+	close(readonly);
+	close(short_fd);
+	close(mirror);
+	close(primary);
+	puts("Logdump prefix budget, mirror continuation and partial writes PASS");
 	return 0;
 }
 #endif
@@ -1976,7 +2077,7 @@ static void capture_usb(int kin, int klog, int kerr)
 		snprintf(msg, sizeof msg,
 			 "DIAG: USB kmsg unavailable errno=%d\n", kerr);
 		say(out, msg);
-	} else if (dump_log(kin, out, 900, 0, NULL, NULL)) {
+	} else if (dump_log(kin, out, 900, 0, NULL, NULL, NULL)) {
 		snprintf(msg, sizeof msg,
 			 "DIAG: USB dump failed errno=%d\n", errno);
 		say(out, msg);
@@ -2051,6 +2152,8 @@ static int launch_android(char **argv)
 	if (child == 0) {
 		int in = -1, out = -1, kin = -1, klog = -1, kerr = 0, n, kdl;
 		int proc = -1, fstab = -1, contexts = -1, sd = -1;
+		size_t remaining = LOGDUMP_TEXT_LIMIT;
+		size_t *primary_remaining = NULL;
 		struct ramoops_sampler sampler = {
 			.input = -1, .output = { -1, -1 }, .log = -1,
 		};
@@ -2082,6 +2185,8 @@ static int launch_android(char **argv)
 				break;
 			usleep(500000);
 		}
+		if (out >= 0)
+			primary_remaining = &remaining;
 		/* Retain inputs and procfs before Android removes the old ramdisk.
 		 * The guard, unlike the recorder, joins PID 1's namespace. */
 		proc = open("/proc", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -2148,7 +2253,8 @@ static int launch_android(char **argv)
 			sd = -1;
 		}
 		if (out < 0 ||
-		    !(write_capture(out, &sd, marker, sizeof marker - 1, 1) & 3))
+		    !(write_capture(out, &sd, marker, sizeof(marker) - 1, 1,
+				     primary_remaining) & 3))
 			goto child_failed;
 		ramoops_sampler_tick(&sampler);
 		status = 1;
@@ -2162,22 +2268,26 @@ static int launch_android(char **argv)
 			} while (received < 0 && errno == EINTR);
 			if (received == 0)
 				write_capture(out, &sd, "DIAG: Android init exec succeeded\n",
-					      sizeof("DIAG: Android init exec succeeded\n") - 1, 1);
+					      sizeof("DIAG: Android init exec succeeded\n") - 1,
+					      1, primary_remaining);
 			else {
 				snprintf(message, sizeof message,
 					 "DIAG: Android init exec failed or handshake lost: errno=%d\n",
 					 error);
-				write_capture(out, &sd, message, strlen(message), 1);
+				write_capture(out, &sd, message, strlen(message), 1,
+					      primary_remaining);
 			}
 			fsync(out);
 		}
 		close(ready[1]);
-		if (dump_log(in, out, 900, 1, &sd, &sampler)) {
+		if (dump_log(in, out, 900, 1, &sd, &sampler, primary_remaining)) {
 			static const char failed[] = "\nDIAG: Android capture failed\n";
-			write_capture(out, &sd, failed, sizeof failed - 1, 1);
+			write_capture(out, &sd, failed, sizeof(failed) - 1, 1,
+				      primary_remaining);
 		} else {
 			static const char eof[] = "\nDIAG: EOF Android kmsg dump complete\n";
-			write_capture(out, &sd, eof, sizeof eof - 1, 1);
+			write_capture(out, &sd, eof, sizeof(eof) - 1, 1,
+				      primary_remaining);
 		}
 		ramoops_sampler_close(&sampler);
 		if (sd >= 0)
@@ -2223,6 +2333,8 @@ exec_init:
 int main(int argc, char **argv)
 {
 	int in = -1, out = -1, usb = 0, console, n;
+	size_t remaining = LOGDUMP_TEXT_LIMIT;
+	size_t *primary_remaining = NULL;
 
 	(void)argc;
 	(void)argv;
@@ -2231,12 +2343,17 @@ int main(int argc, char **argv)
 	return guard_selftest();
 #endif
 #ifdef ANDROID_RAMOOPS_TEST
+	if (argc == 2 && !strcmp(argv[1], "--prefix-only"))
+		return prefix_budget_selftest();
 	{
 		int rc = ramoops_selftest();
 
 		if (rc)
 			return rc;
-		return sink_retirement_selftest();
+		rc = sink_retirement_selftest();
+		if (rc)
+			return rc;
+		return prefix_budget_selftest();
 	}
 #endif
 	return launch_android(argv);
@@ -2279,10 +2396,12 @@ int main(int argc, char **argv)
 		say(console, "DIAG: no storage or USB sink\n");
 		goto spin;
 	}
+	if (!usb)
+		primary_remaining = &remaining;
 	/* Allow time for the host to configure USB before consuming kmsg. */
 	for (n = 0; n < (usb ? POLL_TRIES : 1); n++) {
 		static const char marker[] = "DIAG: init running; kernel log follows\n";
-		if (!write_all(out, marker, sizeof marker - 1))
+		if (!write_all_limit(out, marker, sizeof(marker) - 1, primary_remaining))
 			break;
 		usleep(500000);
 	}
@@ -2290,11 +2409,16 @@ int main(int argc, char **argv)
 		say(console, "DIAG: sink write failed\n");
 		goto spin;
 	}
-	if (dump_log(in, out, DUMP_SECONDS, DURABLE_CAPTURE && !usb, NULL, NULL)) {
+	if (dump_log(in, out, DUMP_SECONDS, DURABLE_CAPTURE && !usb, NULL, NULL,
+		     primary_remaining)) {
 		say(console, "DIAG: kernel log capture failed\n");
 		goto spin;
 	}
-	say(out, "\nDIAG: EOF kmsg dump complete\n");
+	{
+		static const char eof[] = "\nDIAG: EOF kmsg dump complete\n";
+
+		write_all_limit(out, eof, sizeof(eof) - 1, primary_remaining);
+	}
 	if (!usb && fsync(out))
 		say(console, "DIAG: logdump fsync failed\n");
 	say(console, "DIAG: dump finished\n");

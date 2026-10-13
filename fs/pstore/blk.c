@@ -9,6 +9,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/blkdev.h>
+#include <linux/device.h>
 #include <linux/string.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -199,6 +200,44 @@ static ssize_t psblk_generic_blk_write(const char *buf, size_t bytes,
 	return kernel_write(psblk_file, buf, bytes, &pos);
 }
 
+#ifndef MODULE
+static int psblk_match_partlabel(struct device *dev, const void *data)
+{
+	const char *label = data;
+	struct block_device *bdev;
+
+	if (!dev->devt || !dev->type || strcmp(dev->type->name, "partition"))
+		return 0;
+	bdev = dev_to_bdev(dev);
+	return bdev->bd_meta_info &&
+		!strcmp(bdev->bd_meta_info->volname, label);
+}
+
+static struct file *psblk_open_partlabel(const char *label)
+{
+	struct device *dev;
+	struct file *file;
+
+	if (!label[0])
+		return ERR_PTR(-EINVAL);
+	if (!class_is_registered(&block_class))
+		return ERR_PTR(-ENODEV);
+	dev = class_find_device(&block_class, NULL, label,
+				psblk_match_partlabel);
+	if (!dev)
+		return ERR_PTR(-ENODEV);
+
+	file = bdev_file_open_by_dev(dev->devt, BLK_OPEN_READ | BLK_OPEN_WRITE,
+				     &psblk_file, NULL);
+	put_device(dev);
+	if (!IS_ERR(file)) {
+		file->f_flags |= O_DSYNC | O_NOATIME;
+		file->f_iocb_flags = iocb_flags(file);
+	}
+	return file;
+}
+#endif
+
 /*
  * This takes its configuration only from the module parameters now.
  */
@@ -209,7 +248,14 @@ static int __register_pstore_blk(struct pstore_device_info *dev,
 
 	lockdep_assert_held(&pstore_blk_lock);
 
-	psblk_file = filp_open(devpath, O_RDWR | O_DSYNC | O_NOATIME | O_EXCL, 0);
+#ifndef MODULE
+	/* Resolve labels on every attempt, even after init memory is freed. */
+	if (!strncmp(devpath, "PARTLABEL=", 10))
+		psblk_file = psblk_open_partlabel(devpath + 10);
+	else
+#endif
+		psblk_file = filp_open(devpath,
+				       O_RDWR | O_DSYNC | O_NOATIME | O_EXCL, 0);
 	if (IS_ERR(psblk_file)) {
 		ret = PTR_ERR(psblk_file);
 		pr_err("failed to open '%s': %d!\n", devpath, ret);
@@ -265,6 +311,10 @@ static __init const char *early_boot_devpath(const char *initial_devname)
 	 */
 	dev_t dev;
 
+	/* The best-effort open resolves GPT labels without device nodes. */
+	if (!strncmp(initial_devname, "PARTLABEL=", 10))
+		return initial_devname;
+
 	if (early_lookup_bdev(initial_devname, &dev)) {
 		pr_err("failed to resolve '%s'!\n", initial_devname);
 		return initial_devname;
@@ -283,11 +333,8 @@ static inline const char *early_boot_devpath(const char *initial_devname)
 #endif
 
 /*
- * The logdump eMMC appears ~1 s after this late initcall runs, so the
- * first attach always fails with -ENOENT on this device. Retry a bounded
- * number of times; panics before the backend attaches behave exactly as
- * before (no backend), panics after get eMMC persistence that survives
- * any later fallback-ROM boot.
+ * Storage may appear after this late initcall. Retry only transient lookup
+ * failures; ownership and backend conflicts must not be retried or bypassed.
  */
 #define PSTORE_BLK_RETRY_DELAY	(6 * HZ)
 #define PSTORE_BLK_RETRY_MAX	8
@@ -327,15 +374,16 @@ static void pstore_blk_retry_fn(struct work_struct *work)
 	if (!psblk_file) {
 		ret = best_effort_attach(blkdev);
 		if (!ret) {
-			/* Prove the attach on eMMC: a later panic appends
-			 * its own record; marker alone means no panic after
-			 * attach (hang) or death before the first retry. */
-			pr_info("pstore_blk retry attached, dumping dmesg\n");
-			kmsg_dump_desc(KMSG_DUMP_PANIC,
-				       "pstore-blk retry attach");
-		} else if (++pstore_blk_retry_count < PSTORE_BLK_RETRY_MAX)
-			schedule_delayed_work(&pstore_blk_retry_work,
-					      PSTORE_BLK_RETRY_DELAY);
+			pr_info("retry attached without generating a crash record\n");
+		} else if (ret == -ENODEV || ret == -ENOENT) {
+			if (++pstore_blk_retry_count < PSTORE_BLK_RETRY_MAX)
+				schedule_delayed_work(&pstore_blk_retry_work,
+						      PSTORE_BLK_RETRY_DELAY);
+			else
+				pr_err("device lookup retries exhausted: %d\n", ret);
+		} else {
+			pr_err("retry stopped after attach failure: %d\n", ret);
+		}
 	}
 	mutex_unlock(&pstore_blk_lock);
 }
@@ -358,9 +406,10 @@ static int __init __best_effort_init(void)
 	/* eMMC may simply not be probed yet; retry a few times. */
 	if (ret == -ENODEV || ret == -ENOENT) {
 		pstore_blk_retry_count = 0;
-		INIT_DELAYED_WORK(&pstore_blk_retry_work, pstore_blk_retry_fn);
 		schedule_delayed_work(&pstore_blk_retry_work,
 				      PSTORE_BLK_RETRY_DELAY);
+		/* A loaded module must stay alive while its retry work is queued. */
+		return 0;
 	}
 
 	return ret;
@@ -368,7 +417,6 @@ static int __init __best_effort_init(void)
 
 static void __exit __best_effort_exit(void)
 {
-	cancel_delayed_work_sync(&pstore_blk_retry_work);
 	/*
 	 * Currently, the only user of psblk_file is best_effort, so
 	 * we can assume that pstore_device_info is associated with it.
@@ -389,6 +437,8 @@ static int __init pstore_blk_init(void)
 {
 	int ret;
 
+	INIT_DELAYED_WORK(&pstore_blk_retry_work, pstore_blk_retry_fn);
+
 	mutex_lock(&pstore_blk_lock);
 	ret = __best_effort_init();
 	mutex_unlock(&pstore_blk_lock);
@@ -399,6 +449,8 @@ late_initcall(pstore_blk_init);
 
 static void __exit pstore_blk_exit(void)
 {
+	/* The worker takes pstore_blk_lock; drain it before taking that lock. */
+	cancel_delayed_work_sync(&pstore_blk_retry_work);
 	mutex_lock(&pstore_blk_lock);
 	__best_effort_exit();
 	/* If we've been asked to unload, unregister any remaining device. */

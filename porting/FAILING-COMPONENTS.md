@@ -170,3 +170,18 @@ byte-for-byte on 39500 bytes. Boot stops in the userspace bringup: the
 recorder is denied `{write}` on `/kmsg` and `/mmcblk0p48` by SELinux, then
 the log ends at ~37 s — before `sys.boot_completed`, so the 360 s watchdog
 reboots the phone back to ROM.
+
+## Reset logging repair after run106 — runtime validation pending
+
+Late PARTLABEL lookup is repaired; generic pstore-blk is not a panic-safe
+replacement for the existing ramoops/logdump owner. Raw snapshot recovery
+exports two actual run106 console samples, no valid panic/oops dump.
+CRC32-committed snapshots, separate periodic printk tails and a 60 MiB
+userspace prefix cap now protect the reserved diagnostic ranges.
+
+Host regressions and Android ARM64 emulator prefix smoke pass; the full
+kernel has not been built or booted. Linux kernel/DTB rebuild and one
+controlled orderly reboot remain required to prove ACKRESET1 persistence.
+See `TRACKER-kgsl-port.md`, "Reset logging repair after run106", and
+`logging/README.md` for build, packaging, layout and acceptance details.
+

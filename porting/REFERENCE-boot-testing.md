@@ -246,3 +246,19 @@ A valid `ACKRESET1` record proves the orderly notifier ran and its bytes were
 retrieved; successful runtime flush is reported separately in kmsg. An absent
 record does not establish a hardware reset: early storage unavailability,
 concurrent reset capture, failed I/O or an abrupt failure can also omit it.
+
+## Reset logging repair after run106
+
+Earlier pstore-blk failure descriptions above refer to the pre-repair images.
+Built-in PARTLABEL opens now resolve partition metadata on each retry, but
+generic block I/O still supplies no panic_write and cannot share the existing
+diagnostic partition owner. Select ramoops and drop inherited pstore-blk
+cmdline tokens; do not mistake a resolved label for crash durability.
+
+Stock ramoops uses a different reservation from this port. The evidence
+collector now recovers committed raw-console/dmesg slots and separate periodic
+printk tails directly from logdump, with integrity/provenance metadata.
+Full layout and next-image instructions are in `logging/README.md`,
+"Tissot reset persistence after run106". Kernel build and controlled
+orderly-reboot persistence validation remain unexecuted.
+

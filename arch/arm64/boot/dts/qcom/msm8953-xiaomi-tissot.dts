@@ -123,6 +123,8 @@
 			console-size = <0x80000>;
 			ftrace-size = <0x1000>;
 			pmsg-size = <0x8000>;
+			/* Include genuine emergency and orderly-shutdown dumps. */
+			max-reason = <4>;
 		};
 	};
 	vph_pwr: vph-pwr-regulator {
