@@ -1973,6 +1973,29 @@ static int a5xx_send_me_init(struct adreno_device *adreno_dev,
 	unsigned int *cmds;
 	int ret;
 
+	/*
+	 * Diagnostic-only snapshot at ME_INIT submit: clock/power state
+	 * sampled here (not on the slumber/teardown unwind) separates a
+	 * stopped clock from a mapped-but-idle stream in one boot.
+	 * Read-only; success-path behavior unchanged.
+	 */
+	{
+		struct kgsl_device *device = &adreno_dev->dev;
+		struct adreno_firmware *pm4_fw =
+			ADRENO_FW(adreno_dev, ADRENO_FW_PM4);
+		struct adreno_firmware *pfp_fw =
+			ADRENO_FW(adreno_dev, ADRENO_FW_PFP);
+		unsigned int rbbm = 0;
+
+		kgsl_regread(device, A5XX_RBBM_STATUS, &rbbm);
+		dev_info(device->dev,
+			 "DIAG ME_INIT submit: gfx_rate=%lu active_freq=%u rbbm=%x secured=%u pm4=%p pfp=%p zap_loaded=%u\n",
+			kgsl_get_clkrate(device->pwrctrl.grp_clks[0]),
+			kgsl_pwrctrl_active_freq(&device->pwrctrl), rbbm,
+			device->mmu.secured, pm4_fw->memdesc.hostptr,
+			pfp_fw->memdesc.hostptr, adreno_dev->zap_loaded);
+	}
+
 	cmds = adreno_ringbuffer_allocspace(rb, 9);
 	if (IS_ERR(cmds))
 		return PTR_ERR(cmds);
