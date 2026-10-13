@@ -949,7 +949,7 @@ static void guard_early_logcat(int proc, int log)
 		"    group log shell readproc\n"
 		"    seclabel u:r:shell:s0\n"
 		"    restart_period 5\n"
-		"service ack-sync-loop /system/bin/sh -c \"i=0; while true; do i=$((i+1)); echo $i $(cat /proc/uptime) >> /data/local/tmp/ack-sync-probe.log; sync; sleep 5; done\"\n"
+		"service ack-sync-loop /system/bin/sh -c \"i=0; while true; do i=$$((i+1)); echo $$i $$(cat /proc/uptime) >> /data/local/tmp/ack-sync-probe.log; sync; sleep 5; done\"\n"
 		"    class core\n"
 		"    disabled\n"
 		"    user root\n"
