@@ -458,7 +458,7 @@ static void mdss_8953_commit(struct mdss_8953_pll *pll)
 	data = 0x20;
 	MDSS_PLL_REG_W(pll_base, DSIPHY_CMN_CTRL_1, data);
 
-	data = 0x38;
+	data = pout->pll_resetsm_cntrl;
 	MDSS_PLL_REG_W(pll_base, DSIPHY_PLL_RESETSM_CNTRL, data);
 
 	data = BIT(7);
