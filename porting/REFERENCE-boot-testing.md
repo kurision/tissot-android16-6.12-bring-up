@@ -130,3 +130,111 @@ broken in earlier runs.
   defaults `llvm_bin=/usr/bin`, `CC="ccache clang"`). Never run bare
   `make O=out ...` without the script's env — it re-syncs kconfig for host
   arch and destroys the merged config.
+
+## Opt-in early-reset diagnostics (2026-10-13; device verification pending)
+
+Prepared after run82 returned to stock without an observed 6.12 ADB window.
+The user builds the image; no diagnostic-image boot verdict exists yet.
+
+### What changes
+
+- `ramoops.reset_capture=1` enables a blocking reboot notifier before
+  `device_shutdown()`. It saves caller PID/comm, reboot action/command,
+  timestamp and up to 65024 bytes of kernel-log tail to logdump, then flushes.
+  The 65536-byte record starts at `0x3f30000`, outside the snapshot slots,
+  stall witness and QSEE trace ring. Default is off; no new Kconfig or exports.
+- The notifier has its own preallocated buffer and serialization lock.
+  Periodic snapshot I/O does not own that lock. Remove unregisters the
+  notifier before freeing its buffer or closing the held block device.
+- With capture enabled, the snapshot thread prints a heartbeat every ten
+  successful samples. This is an execution/write-progress witness, not proof
+  of boot completion. Emergency resets, panics and hardware watchdog resets
+  do not invoke this sleeping notifier; existing snapshots remain essential.
+- Build diagnostic init with `-DANDROID_CAPTURE -DANDROID_EARLY_LOGCAT`.
+  The pre-policy guard appends an init-managed service to a read-only bind
+  overlay of `/system/etc/init/logd.rc`, preserving its original contents.
+  Android init starts a root collector in the existing shell domain on
+  `post-fs-data`. It writes `/data/local/tmp/ack-early-logcat.log` with four
+  rotated backups, 1024 KiB each, before host ADB is required. No policy delta.
+- Logcat needs mounted `/data` and a working logd. Failures before that point
+  still require kmsg/reset evidence. File output is not explicitly fsynced
+  per record, so abrupt resets may lose the last records. Service startup,
+  on-device overlay parsing and reset-time block I/O remain unverified.
+- The notifier preserves normal reboot behavior; it never synthesizes a
+  panic. Its synchronous block write/flush can still stall if storage is
+  unresponsive. Use only on this diagnostic image, not as a production fix.
+
+### Build and package on the known-good Linux build machine
+
+Keep the run73/run81 merged configuration, toolchain environment and DTB.
+Do not rerun an old fragment merge or use a host-architecture make command.
+Build the kernel with the existing arm64 wrapper/environment; the only
+kernel source change for this experiment is the pstore diagnostic extension.
+
+From the kernel repository root, using the existing static arm64 libc
+toolchain for the diagnostic init:
+
+```sh
+aarch64-linux-musl-gcc -Os -static \
+  -DANDROID_CAPTURE -DANDROID_EARLY_LOGCAT \
+  scripts/initramfs-diag/init.c \
+  -o porting/artifacts/snapshot60/init-run83
+```
+
+If the previous init used additional build defines, retain those too.
+`BOOT_DEADLINE_SECONDS` must stay zero. The compiler name above is the
+musl cross-toolchain convention; use the equivalent existing compiler if
+that machine uses another static libc toolchain.
+
+After building fresh `out/arch/arm64/boot/Image.gz` and the unchanged DTB:
+
+```sh
+python3 porting/logging/package-diag-boot.py \
+  --base-image porting/artifacts/snapshot60/boot-run81.img \
+  --kernel-dir porting/artifacts/snapshot60/kdir-run83 \
+  --stage-kernel out/arch/arm64/boot \
+  --init porting/artifacts/snapshot60/init-run83 \
+  --keep-stock-console \
+  --append-cmdline ramoops.reset_capture=1 \
+  --out porting/artifacts/snapshot60/boot-run83.img \
+  --report porting/artifacts/snapshot60/package-run83.json
+```
+
+Use the real run81 image as base, not a reconstructed capture. Do not pass
+`--policy-append`, `--debuggable` or a firmware staging flag: the base already
+contains the verified policy, props, firmware and guard inputs. The packager
+asserts all other cpio records/header fields are preserved. Confirm the
+staged DTB equals the run81 DTB before testing. Supply the image, package
+report and init binary for offline inspection before any device boot.
+
+`--keep-stock-console` preserves the run81 command line verbatim (including
+its existing `console=ttynull`) before appending the opt-in parameter. Without
+it, the packager rejects this base because console is not its final token.
+The resulting header command line is 483 bytes, below the 512-byte limit.
+
+### Collect and interpret
+
+Archive any existing `ack-early-logcat.log*` before a repeat, then remove only
+those diagnostic files after verifying the archive. Logcat appends to
+existing files; without this step an old file is not fresh boot evidence.
+Archive current raw/SD evidence, prove preclear, and use an unused run tag.
+Keep USB and continuous host logcat capture alongside the on-device service.
+Observe at least eight minutes unless the port demonstrably exits. Detect
+return to stock after transport loss even if port ADB was never observed.
+
+After returning to an authorized rooted stock ROM:
+
+```sh
+# Run in porting/artifacts/snapshot60/.
+bash ../../logging/pull-run-evidence.sh 83 boot-run83.img
+python3 ../../logging/decode-reset.py run83-logdump.bin
+adb -s 2819f2320604 pull /data/local/tmp/ack-early-logcat.log
+```
+
+Also retrieve existing `.1` through `.4` backups into the same unused run
+evidence directory, without overwriting another run's files. If ADB appears
+on 6.12, capture `getprop init.svc.ack-early-logcat` and the current kernel.
+A valid `ACKRESET1` record proves the orderly notifier ran and its bytes were
+retrieved; successful runtime flush is reported separately in kmsg. An absent
+record does not establish a hardware reset: early storage unavailability,
+concurrent reset capture, failed I/O or an abrupt failure can also omit it.

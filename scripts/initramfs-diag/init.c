@@ -11,6 +11,8 @@
  * child reboots the phone if Android has not reached sys.boot_completed=1
  * within n seconds of kernel start. Off by default: since snapshot60 run31
  * the 6.12 boot reaches adb, so the host ends a run with `adb reboot`.
+ * Add -DANDROID_EARLY_LOGCAT for an init-managed logcat collector starting
+ * at post-fs-data, writing bounded logs in /data/local/tmp without ADB.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -928,6 +930,63 @@ done:
 	say(log, message);
 }
 
+#ifdef ANDROID_EARLY_LOGCAT
+/*
+ * Android init owns the collector, so it sees Android's mounts and logd
+ * sockets. The existing shell domain can execute logcat and write
+ * shell_data_file; do not run logcat in the pre-policy kernel domain.
+ * /data must be mounted first. Earlier init messages remain in kmsg.
+ */
+static void guard_early_logcat(int proc, int log)
+{
+	static const char target[] = "/system/etc/init/logd.rc";
+	static const char action[] =
+		"\n# ACK diagnostic: persistent Android logs before adb.\n"
+		"service ack-early-logcat /system/bin/sh -c \"exec /system/bin/logcat -b all -v threadtime -f /data/local/tmp/ack-early-logcat.log -r 1024 -n 4\"\n"
+		"    class core\n"
+		"    disabled\n"
+		"    user root\n"
+		"    group log shell readproc\n"
+		"    seclabel u:r:shell:s0\n"
+		"    restart_period 5\n"
+		"\non post-fs-data\n"
+		"    start ack-early-logcat\n";
+	char buf[8192], message[160];
+	int in = open(target, O_RDONLY | O_CLOEXEC);
+	int fd = memfd_create("ack-logcat-rc", MFD_CLOEXEC);
+	int error = 0;
+	ssize_t n;
+
+	if (in < 0 || fd < 0)
+		goto failed;
+	for (;;) {
+		n = read(in, buf, sizeof(buf));
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n < 0)
+			goto failed;
+		if (!n)
+			break;
+		if (write_all(fd, buf, (size_t)n))
+			goto failed;
+	}
+	if (write_all(fd, action, sizeof(action) - 1) ||
+	    guard_bind_config(proc, fd, "/dev/block/ack-early-logcat.rc", target))
+		goto failed;
+	goto done;
+failed:
+	error = errno;
+done:
+	if (in >= 0)
+		close(in);
+	if (fd >= 0)
+		close(fd);
+	snprintf(message, sizeof(message),
+		 "DIAG: early logcat rc appended errno=%d\n", error);
+	say(log, message);
+}
+#endif
+
 #ifdef ANDROID_HEADLESS
 /*
  * Headless probe: the vendor sdm HWC and LiveDisplay need the legacy MDSS
@@ -1567,6 +1626,9 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	if (guard_bind_config(proc, contexts, GUARDED_CONTEXTS,
 			      "/vendor/etc/selinux/vendor_file_contexts"))
 		goto failed;
+#ifdef ANDROID_EARLY_LOGCAT
+	guard_early_logcat(proc, log);
+#endif
 	step = "release canonical bootdevice and legacy wait";
 	if (guard_bootdevice(proc))
 		goto failed;

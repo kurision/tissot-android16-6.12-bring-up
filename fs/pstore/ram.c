@@ -29,6 +29,10 @@
 #include <linux/bio.h>
 #include <linux/blkdev.h>
 #include <linux/device/class.h>
+#include <linux/kmsg_dump.h>
+#include <linux/reboot.h>
+#include <linux/sched.h>
+#include <linux/mutex.h>
 #endif
 #include <linux/fs.h>
 #include <linux/kthread.h>
@@ -594,6 +598,15 @@ static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
 #define RAMOOPS_SNAP_INTERVAL_MS	2000
 #define RAMOOPS_SNAP_MAGIC		0x52414d4fULL	/* "RAMO" */
 
+/* Opt-in diagnostics, separate from snapshots, stall witness and QSEE ring. */
+#define RAMOOPS_RESET_OFFSET		0x3f30000ULL
+#define RAMOOPS_RESET_SIZE		SZ_64K
+#define RAMOOPS_RESET_HEADER		512
+
+static bool ramoops_reset_capture;
+module_param_named(reset_capture, ramoops_reset_capture, bool, 0400);
+MODULE_PARM_DESC(reset_capture, "Capture orderly reset evidence to logdump");
+
 struct ramoops_snap_header {
 	__le64 magic;
 	__le64 seq;
@@ -616,6 +629,10 @@ struct ramoops_snapper {
 	u64 seq;
 	unsigned int slot;		/* next slot to write */
 	bool warned;
+	struct mutex reset_lock;		/* serialize reset callbacks only */
+	void *reset_buf;
+	struct notifier_block reset_nb;
+	bool reset_registered;
 };
 
 static struct ramoops_snapper ramoops_snapper;
@@ -665,7 +682,8 @@ static int ramoops_snap_open_logdump(struct ramoops_snapper *s)
 		s->file = NULL;
 		return err;
 	}
-	s->bdev = file_bdev(s->file);
+	/* The notifier uses a separate buffer; publish the held device last. */
+	smp_store_release(&s->bdev, file_bdev(s->file));
 	return 0;
 }
 
@@ -751,6 +769,58 @@ static int ramoops_snap_take(struct ramoops_snapper *s)
 }
 
 /*
+ * Blocking reboot notifiers run before device_shutdown(), while MMC is live.
+ * Never panic or replace the requested reboot. Emergency/atomic resets cannot
+ * use this sleeping I/O path and remain covered only by periodic snapshots.
+ */
+static int ramoops_reset_notify(struct notifier_block *nb,
+				unsigned long action, void *command)
+{
+	struct ramoops_snapper *s = container_of(nb, struct ramoops_snapper,
+					       reset_nb);
+	struct kmsg_dump_iter iter;
+	struct block_device *bdev;
+	char *buf = s->reset_buf;
+	size_t len = 0;
+	int err;
+
+	pr_emerg("DIAG: orderly reset action=%lu pid=%d comm=%s command=%.128s\n",
+		 action, task_pid_nr(current), current->comm,
+		 command ? (char *)command : "");
+	/* Avoid waiting if another reset callback is already doing I/O. */
+	if (!mutex_trylock(&s->reset_lock)) {
+		pr_warn("DIAG: reset capture skipped: another reset capture is busy\n");
+		return NOTIFY_DONE;
+	}
+	/* Paired with the worker's publication of its held block device. */
+	bdev = smp_load_acquire(&s->bdev);
+	if (!bdev ||
+	    bdev_nr_bytes(bdev) < RAMOOPS_RESET_OFFSET + RAMOOPS_RESET_SIZE) {
+		pr_warn("DIAG: reset capture skipped: logdump unavailable or too small\n");
+		goto out;
+	}
+	memset(buf, 0, RAMOOPS_RESET_SIZE);
+	kmsg_dump_rewind(&iter);
+	kmsg_dump_get_buffer(&iter, false, buf + RAMOOPS_RESET_HEADER,
+			     RAMOOPS_RESET_SIZE - RAMOOPS_RESET_HEADER, &len);
+	scnprintf(buf, RAMOOPS_RESET_HEADER,
+		  "ACKRESET1 timestamp_ns=%llu action=%lu pid=%d comm=%s command=%.128s tail_bytes=%zu\n",
+		  ktime_get_ns(), action, task_pid_nr(current), current->comm,
+		  command ? (char *)command : "", len);
+	err = ramoops_snap_bio_write(bdev, buf, RAMOOPS_RESET_SIZE,
+				     RAMOOPS_RESET_OFFSET);
+	if (!err)
+		err = blkdev_issue_flush(bdev);
+	if (err)
+		pr_warn("DIAG: reset capture failed errno=%d\n", err);
+	else
+		pr_info("DIAG: reset capture persisted tail_bytes=%zu\n", len);
+out:
+	mutex_unlock(&s->reset_lock);
+	return NOTIFY_DONE;
+}
+
+/*
  * The thread retries the open because MMC block devices register at
  * device_initcall, long after ramoops probes at postcore_initcall.
  */
@@ -781,6 +851,9 @@ static int ramoops_snap_thread(void *unused)
 			pr_info("snapshot38 logdump snapshotter ready offset=%llu slots=%u size=%u\n",
 				RAMOOPS_SNAP_OFFSET, RAMOOPS_SNAP_SLOTS, SZ_1M);
 		}
+		if (ramoops_reset_capture && !(s->seq % 10))
+			pr_info("DIAG: snapshot heartbeat seq=%llu uptime_ns=%llu\n",
+				s->seq, ktime_get_ns());
 		wait_for_completion_interruptible_timeout(
 			&s->wake, msecs_to_jiffies(RAMOOPS_SNAP_INTERVAL_MS));
 	}
@@ -807,6 +880,10 @@ static int ramoops_snap_thread(void *unused)
  */
 #define RAMOOPS_QTRACE_OFFSET	0x3f10000ULL
 #define RAMOOPS_QTRACE_SLOTS	128
+
+static_assert(RAMOOPS_QTRACE_OFFSET +
+	      RAMOOPS_QTRACE_SLOTS * RAMOOPS_WITNESS_LEN <= RAMOOPS_RESET_OFFSET);
+static_assert(RAMOOPS_RESET_OFFSET + RAMOOPS_RESET_SIZE <= SZ_64M);
 
 static struct file *ramoops_witness_file;
 static struct block_device *ramoops_witness_bdev;
@@ -946,6 +1023,7 @@ static void ramoops_snap_start(struct ramoops_context *cxt)
 	memset(s, 0, sizeof(*s));
 	s->cxt = cxt;
 	init_completion(&s->wake);
+	mutex_init(&s->reset_lock);
 
 	s->buf = __vmalloc(PAGE_SIZE + SZ_1M, GFP_KERNEL);
 	if (!s->buf) {
@@ -962,15 +1040,39 @@ static void ramoops_snap_start(struct ramoops_context *cxt)
 		s->buf = NULL;
 		return;
 	}
+	if (ramoops_reset_capture) {
+		int err;
+
+		s->reset_buf = vzalloc(RAMOOPS_RESET_SIZE);
+		if (s->reset_buf) {
+			s->reset_nb.notifier_call = ramoops_reset_notify;
+			err = register_reboot_notifier(&s->reset_nb);
+			if (!err) {
+				s->reset_registered = true;
+			} else {
+				pr_warn("DIAG: reset notifier registration failed errno=%d\n",
+					err);
+				vfree(s->reset_buf);
+				s->reset_buf = NULL;
+			}
+		} else {
+			pr_warn("DIAG: reset buffer unavailable; capture disabled\n");
+		}
+	}
 	wake_up_process(s->task);
 }
-
 
 /* Drain the worker before any zone mapping is freed or unmapped. */
 static void ramoops_snap_stop(void)
 {
 	struct ramoops_snapper *s = &ramoops_snapper;
 
+	if (s->reset_registered) {
+		unregister_reboot_notifier(&s->reset_nb);
+		s->reset_registered = false;
+	}
+	vfree(s->reset_buf);
+	s->reset_buf = NULL;
 	if (s->task) {
 		kthread_stop(s->task);
 		s->task = NULL;
