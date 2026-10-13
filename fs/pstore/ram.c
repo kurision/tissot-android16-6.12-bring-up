@@ -33,6 +33,9 @@
 #include <linux/reboot.h>
 #include <linux/sched.h>
 #include <linux/mutex.h>
+#include <linux/sched/signal.h>
+#include <trace/events/signal.h>
+#include <trace/events/sched.h>
 #endif
 #include <linux/fs.h>
 #include <linux/kthread.h>
@@ -605,7 +608,7 @@ static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
 
 static bool ramoops_reset_capture;
 module_param_named(reset_capture, ramoops_reset_capture, bool, 0400);
-MODULE_PARM_DESC(reset_capture, "Capture orderly reset evidence to logdump");
+MODULE_PARM_DESC(reset_capture, "Capture orderly reset and process/signal evidence to logdump");
 
 struct ramoops_snap_header {
 	__le64 magic;
@@ -633,6 +636,7 @@ struct ramoops_snapper {
 	void *reset_buf;
 	struct notifier_block reset_nb;
 	bool reset_registered;
+	bool process_registered;
 };
 
 static struct ramoops_snapper ramoops_snapper;
@@ -818,6 +822,100 @@ static int ramoops_reset_notify(struct notifier_block *nb,
 out:
 	mutex_unlock(&s->reset_lock);
 	return NOTIFY_DONE;
+}
+
+/*
+ * Opt-in process/signal evidence: tracepoint callbacks only, no
+ * signal-delivery or exit-path changes. Enabled by ramoops.reset_capture.
+ * Callbacks only filter, read fields and printk: no allocation, I/O,
+ * sleeps, locks or storage flush.
+ */
+static void ramoops_diag_signal_generate(void *unused, int sig,
+					 struct kernel_siginfo *info,
+					 struct task_struct *task,
+					 int group, int result)
+{
+	int code;
+
+	(void)unused;
+	switch (sig) {
+	case SIGHUP:
+	case SIGINT:
+	case SIGQUIT:
+	case SIGILL:
+	case SIGABRT:
+	case SIGFPE:
+	case SIGKILL:
+	case SIGSEGV:
+	case SIGTERM:
+	case SIGBUS:
+	case SIGSYS:
+		break;
+	default:
+		return;
+	}
+	if (task->flags & PF_KTHREAD)
+		return;
+	/* Same sentinel contract as TP_STORE_SIGINFO; never dereference. */
+	if (info == SEND_SIG_NOINFO)
+		code = SI_USER;
+	else if (info == SEND_SIG_PRIV)
+		code = SI_KERNEL;
+	else
+		code = info->si_code;
+	pr_info("DIAG signal_generate sig=%d code=%d sender_pid=%d sender_tgid=%d sender_comm=%.16s target_pid=%d target_tgid=%d target_comm=%.16s group=%d result=%d\n",
+		sig, code, task_pid_nr(current), task_tgid_nr(current),
+		current->comm, task_pid_nr(task), task_tgid_nr(task),
+		task->comm, group, result);
+}
+
+static void ramoops_diag_process_exit(void *unused, struct task_struct *task)
+{
+	unsigned int group_exit;
+
+	(void)unused;
+	if (task->flags & PF_KTHREAD)
+		return;
+	if (task_pid_nr(task) != task_tgid_nr(task))
+		return;
+	group_exit = (unsigned int)!!(READ_ONCE(task->signal->flags) & SIGNAL_GROUP_EXIT);
+	pr_info("DIAG process_exit pid=%d tgid=%d comm=%.16s exit_code=0x%x group_exit_code=0x%x group_exit=%u\n",
+		task_pid_nr(task), task_tgid_nr(task), task->comm,
+		READ_ONCE(task->exit_code),
+		READ_ONCE(task->signal->group_exit_code), group_exit);
+}
+
+static void ramoops_process_trace_start(struct ramoops_snapper *s)
+{
+	int err;
+
+	err = register_trace_signal_generate(ramoops_diag_signal_generate, NULL);
+	if (err) {
+		pr_warn("DIAG process capture unavailable: signal probe errno=%d\n",
+			err);
+		return;
+	}
+	err = register_trace_sched_process_exit(ramoops_diag_process_exit, NULL);
+	if (err) {
+		unregister_trace_signal_generate(ramoops_diag_signal_generate,
+						 NULL);
+		tracepoint_synchronize_unregister();
+		pr_warn("DIAG process capture unavailable: exit probe errno=%d\n",
+			err);
+		return;
+	}
+	s->process_registered = true;
+	pr_info("DIAG process capture active\n");
+}
+
+static void ramoops_process_trace_stop(struct ramoops_snapper *s)
+{
+	if (!s->process_registered)
+		return;
+	unregister_trace_sched_process_exit(ramoops_diag_process_exit, NULL);
+	unregister_trace_signal_generate(ramoops_diag_signal_generate, NULL);
+	tracepoint_synchronize_unregister();
+	s->process_registered = false;
 }
 
 /*
@@ -1058,6 +1156,7 @@ static void ramoops_snap_start(struct ramoops_context *cxt)
 		} else {
 			pr_warn("DIAG: reset buffer unavailable; capture disabled\n");
 		}
+		ramoops_process_trace_start(s);
 	}
 	wake_up_process(s->task);
 }
@@ -1067,6 +1166,7 @@ static void ramoops_snap_stop(void)
 {
 	struct ramoops_snapper *s = &ramoops_snapper;
 
+	ramoops_process_trace_stop(s);
 	if (s->reset_registered) {
 		unregister_reboot_notifier(&s->reset_nb);
 		s->reset_registered = false;
