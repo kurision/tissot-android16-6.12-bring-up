@@ -41,6 +41,19 @@
 
 #define G "/sys/kernel/config/usb_gadget/g1"
 #define POLL_TRIES 120 /* 60 seconds for storage, then 60 seconds for USB */
+
+/*
+ * Snapshot60 run100/101: the SD card can wedge its MMC controller at init
+ * ("Card stuck being busy", -110), stalling mount_all --early for 100 s
+ * and cascading into the HAL storm. logdump (kernel-side, always on)
+ * carried every verdict, so card logging is opt-in now: define
+ * ANDROID_SD_MIRROR to restore the SD mirror behavior.
+ */
+#ifndef ANDROID_SD_MIRROR
+#define POLL_SD_TRIES 1
+#else
+#define POLL_SD_TRIES POLL_TRIES
+#endif
 #ifdef HEARTBEAT_RECORDER
 #define DUMP_SECONDS 300
 #define DURABLE_CAPTURE 1
@@ -545,13 +558,13 @@ static int open_sdlog(void)
 	char path[512];
 	int n;
 
-	for (n = 0; n < POLL_TRIES; n++) {
+	for (n = 0; n < POLL_SD_TRIES; n++) {
 		if (find_sd_partition(path, sizeof path) &&
 		    !stat(path, &st) && S_ISBLK(st.st_mode))
 			break;
 		usleep(500000);
 	}
-	if (n == POLL_TRIES || make_dir("/sdlog") ||
+	if (n == POLL_SD_TRIES || make_dir("/sdlog") ||
 	    mount(path, "/sdlog", "vfat", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL))
 		return -1;
 	return open("/sdlog/ack-kmsg.log", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
