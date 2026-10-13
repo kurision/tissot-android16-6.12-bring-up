@@ -181,6 +181,14 @@ aarch64-linux-musl-gcc -Os -static \
   -o porting/artifacts/snapshot60/init-run83
 ```
 
+Run84 is init-only: reuse the verified run83 kernel payload, rebuild
+only init with the same defines (now including the committed
+`ack-sync-loop` service), and repackage from the run83 kernel. If the
+build host did not retain `kdir-run83`, reconstruct it by splitting
+`boot-run83.img`'s kernel payload at the DTB magic (`d00dfeed`),
+writing `Image.gz`, the DTB and fresh `SHA256SUMS`. No kernel rebuild,
+no config/DT/policy change.
+
 If the previous init used additional build defines, retain those too.
 `BOOT_DEADLINE_SECONDS` must stay zero. The compiler name above is the
 musl cross-toolchain convention; use the equivalent existing compiler if

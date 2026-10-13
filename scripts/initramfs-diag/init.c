@@ -949,8 +949,16 @@ static void guard_early_logcat(int proc, int log)
 		"    group log shell readproc\n"
 		"    seclabel u:r:shell:s0\n"
 		"    restart_period 5\n"
+		"service ack-sync-loop /system/bin/sh -c \"while true; do date +%s >> /data/local/tmp/ack-sync-probe.log; sync; sleep 5; done\"\n"
+		"    class core\n"
+		"    disabled\n"
+		"    user root\n"
+		"    group shell readproc\n"
+		"    seclabel u:r:shell:s0\n"
+		"    restart_period 5\n"
 		"\non post-fs-data\n"
-		"    start ack-early-logcat\n";
+		"    start ack-early-logcat\n"
+		"    start ack-sync-loop\n";
 	char buf[8192], message[160];
 	int in = open(target, O_RDONLY | O_CLOEXEC);
 	int fd = memfd_create("ack-logcat-rc", MFD_CLOEXEC);
