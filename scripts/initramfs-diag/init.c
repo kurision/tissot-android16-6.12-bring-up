@@ -1051,22 +1051,14 @@ static void guard_headless(int proc, int log)
 
 #ifdef ANDROID_HALGATE
 /*
- * HAL-gate probe (run91): stub the five vendor HAL services active in the
- * runs87-90 death window (107-123 s) so init never defines them. Same
- * memfd bind-mount mechanism as the headless probe above; separate flag
- * and table so either gate builds independently.
+ * HAL-gate probe (run104): stub gatekeeper only, retaining keymaster so
+ * fscrypt can progress beyond the run103 wait. Tests whether gatekeeper
+ * triggers the 107-157 s death cluster; earlier deaths remain separate.
+ * Uses the same memfd bind-mount mechanism as the headless probe above.
  */
 static const char *const halgate_rc[][2] = {
-	{ "/dev/block/ack-halgate-sensors.rc",
-	  "/vendor/etc/init/android.hardware.sensors@1.0-service.rc" },
-	{ "/dev/block/ack-halgate-usb.rc",
-	  "/vendor/etc/init/android.hardware.usb-service.qti.rc" },
-	{ "/dev/block/ack-halgate-wifi.rc",
-	  "/vendor/etc/init/android.hardware.wifi-service.rc" },
-	{ "/dev/block/ack-halgate-lights.rc",
-	  "/vendor/etc/init/lights-xiaomi_msm8953.rc" },
-	{ "/dev/block/ack-halgate-memtrack.rc",
-	  "/vendor/etc/init/memtrack_qti.rc" },
+	{ "/dev/block/ack-halgate-gatekeeper.rc",
+	  "/vendor/etc/init/android.hardware.gatekeeper@1.0-service.rc" },
 };
 
 static void guard_halgate(int proc, int log)
