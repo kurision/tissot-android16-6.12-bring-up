@@ -1113,118 +1113,6 @@ done:
 }
 #endif
 
-#ifdef ANDROID_HEADLESS
-/*
- * Headless probe: the vendor sdm HWC and LiveDisplay need the legacy MDSS
- * fbdev driver (/dev/graphics/fb*, msm_fb_* sysfs), which 6.12 lacks, and
- * crash in a loop that restarts surfaceflinger and zygote (snapshot46).
- * Their rc files are replaced by a comment so init never defines them.
- */
-static const char *const headless_rc[][2] = {
-	{ "/dev/block/ack-headless-composer.rc",
-	  "/vendor/etc/init/android.hardware.graphics.composer@2.1-service.rc" },
-	{ "/dev/block/ack-headless-livedisplay.rc",
-	  "/vendor/etc/init/vendor.lineage.livedisplay-service.sdm.rc" },
-};
-
-static void guard_headless(int proc, int log)
-{
-	static const char stub[] = "# disabled by ACK diag headless probe\n";
-	char message[256];
-	size_t i;
-
-	for (i = 0; i < sizeof(headless_rc) / sizeof(headless_rc[0]); i++) {
-		int fd = memfd_create("ack-headless-rc", MFD_CLOEXEC);
-		int error = 0;
-
-		if (fd < 0 || write_all(fd, stub, sizeof(stub) - 1) ||
-		    guard_bind_config(proc, fd, headless_rc[i][0],
-				      headless_rc[i][1]))
-			error = errno;
-		if (fd >= 0)
-			close(fd);
-		snprintf(message, sizeof(message),
-			 "DIAG: headless rc override %s errno=%d\n",
-			 headless_rc[i][1], error);
-		say(log, message);
-	}
-}
-#endif
-
-#ifdef ANDROID_HALGATE
-/*
- * HAL-gate probe (run104): stub gatekeeper only, retaining keymaster so
- * fscrypt can progress beyond the run103 wait. Tests whether gatekeeper
- * triggers the 107-157 s death cluster; earlier deaths remain separate.
- * Uses the same memfd bind-mount mechanism as the headless probe above.
- */
-static const char *const halgate_rc[][2] = {
-	{ "/dev/block/ack-halgate-gatekeeper.rc",
-	  "/vendor/etc/init/android.hardware.gatekeeper@1.0-service.rc" },
-};
-
-static void guard_halgate(int proc, int log)
-{
-	static const char stub[] = "# disabled by ACK diag halgate probe\n";
-	char message[256];
-	size_t i;
-
-	for (i = 0; i < sizeof(halgate_rc) / sizeof(halgate_rc[0]); i++) {
-		int fd = memfd_create("ack-halgate-rc", MFD_CLOEXEC);
-		int error = 0;
-
-		if (fd < 0 || write_all(fd, stub, sizeof(stub) - 1) ||
-		    guard_bind_config(proc, fd, halgate_rc[i][0],
-				      halgate_rc[i][1]))
-			error = errno;
-		if (fd >= 0)
-			close(fd);
-		snprintf(message, sizeof(message),
-			 "DIAG: halgate rc override %s errno=%d\n",
-			 halgate_rc[i][1], error);
-		say(log, message);
-	}
-}
-#endif
-#ifdef ANDROID_DISPLAY_GATE
-/*
- * Display-gate probe (run110): stub the display stack only, to test whether
- * the 107-160 s silent resets correlate with first MDSS hardware use.
- * hwcomposer and display-color-hal probe MDSS sysfs/framebuffer/PP ioctls;
- * surfaceflinger opens the GPU. Everything else in the boot sequence is kept.
- */
-static const char *const displaygate_rc[][2] = {
-	{ "/dev/block/ack-displaygate-composer.rc",
-	  "/vendor/etc/init/android.hardware.graphics.composer@2.1-service.rc" },
-	{ "/dev/block/ack-displaygate-color.rc",
-	  "/vendor/etc/init/vendor.display.color@1.0-service.rc" },
-	{ "/dev/block/ack-displaygate-surfaceflinger.rc",
-	  "/system/etc/init/surfaceflinger.rc" },
-};
-
-static void guard_displaygate(int proc, int log)
-{
-	static const char stub[] = "# disabled by ACK diag display gate probe\n";
-	char message[256];
-	size_t i;
-
-	for (i = 0; i < sizeof(displaygate_rc) / sizeof(displaygate_rc[0]); i++) {
-		int fd = memfd_create("ack-displaygate-rc", MFD_CLOEXEC);
-		int error = 0;
-
-		if (fd < 0 || write_all(fd, stub, sizeof(stub) - 1) ||
-		    guard_bind_config(proc, fd, displaygate_rc[i][0],
-				      displaygate_rc[i][1]))
-			error = errno;
-		if (fd >= 0)
-			close(fd);
-		snprintf(message, sizeof(message),
-			 "DIAG: display gate rc override %s errno=%d\n",
-			 displaygate_rc[i][1], error);
-		say(log, message);
-	}
-}
-#endif
 /*
  * GPU firmware staging. Upstream adreno requests qcom/a530_pm4.fw,
  * filesystem firmware loader, which this early only searches the ramdisk
@@ -1957,15 +1845,6 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	say(log, "DIAG: bootdevice canonical alias and legacy wait path ready\n");
 	/* After the alias release: a late override must never block boot. */
 	guard_usb_handoff(proc, log);
-#ifdef ANDROID_HEADLESS
-	guard_headless(proc, log);
-#endif
-#ifdef ANDROID_HALGATE
-	guard_halgate(proc, log);
-#endif
-#ifdef ANDROID_DISPLAY_GATE
-	guard_displaygate(proc, log);
-#endif
 	guard_firmware(log);
 	harvest_modem_firmware(log);
 	adsprpc_compat_fork(log);

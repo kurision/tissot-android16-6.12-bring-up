@@ -68,7 +68,6 @@ struct mdss_8953_pll {
 	void __iomem		*pll_base;
 	int			index;
 	struct clk		*iface_clk;
-	struct clk		*handoff_clk;
 	/* rate/programming state, adapted from dsi_pll_db in/out */
 	struct dsi_pll_input	in;
 	struct dsi_pll_output	out;
@@ -79,13 +78,14 @@ struct mdss_8953_pll {
 	u32			ssc_ppm;
 	int			n1div;
 	int			n2div;
-	bool			pll_on;
+	/* Owns a runtime-PM + iface reference until unprepare. */
+	bool			prepared;
 	struct mutex		lock;
 	struct clk_hw		vco_hw;
 	struct clk_hw		postdiv_hw;
 	struct clk_hw		n2div_hw;
-	struct clk_hw		byte_hw;
-	struct clk_hw		pixel_hw;
+	struct clk_fixed_factor	byte;
+	struct clk_fixed_factor	pixel;
 };
 
 #define to_mdss_8953_pll(hw, member) \
@@ -94,8 +94,8 @@ struct mdss_8953_pll {
 /*
  * Power around register access: the PLL block lives behind MDSS_GDSC
  * (power-domains in DT) with the GCC AHB iface clock. CCF serializes
- * rate/enable paths; take a balanced runtime-PM + iface pair here so
- * recalc/prepare from any context sees powered registers.
+ * prepare/rate paths. Register access needs a balanced runtime-PM + iface
+ * pair; prepare retains that pair for the entire programmed PLL lifetime.
  */
 static int mdss_8953_pll_power_get(struct mdss_8953_pll *pll)
 {
@@ -148,7 +148,7 @@ static bool mdss_8953_pll_locked(struct mdss_8953_pll *pll)
  * block, power state and requested rate so a failing boot identifies
  * whether the config never latched (power), the sequencer is stuck, or
  * the math programmed an impossible target. Called only from the
- * enable failure path; success path behavior is unchanged.
+ * lock failure path; success path behavior is unchanged.
  */
 static void mdss_8953_dump_fail_state(struct mdss_8953_pll *pll)
 {
@@ -452,26 +452,8 @@ static void mdss_8953_commit(struct mdss_8953_pll *pll)
 
 	MDSS_PLL_REG_W(pll_base, DSIPHY_CMN_PLL_CNTRL, 0);
 
-	data = 0x7f;
-	MDSS_PLL_REG_W(pll_base, DSIPHY_CMN_CTRL_0, data);
-
-	data = 0x20;
-	MDSS_PLL_REG_W(pll_base, DSIPHY_CMN_CTRL_1, data);
-
-	data = pout->pll_resetsm_cntrl;
-	MDSS_PLL_REG_W(pll_base, DSIPHY_PLL_RESETSM_CNTRL, data);
-
-	data = BIT(7);
-	MDSS_PLL_REG_W(pll_base, DSIPHY_PLL_PLL_VCO_TUNE, data);
-
-	data = BIT(5);
-	MDSS_PLL_REG_W(pll_base, DSIPHY_PLL_KVCO_CODE, data);
-
-	data = 0xff;
-	MDSS_PLL_REG_W(pll_base, DSIPHY_CMN_CTRL_0, data);
-
-	data = 0x0;
-	MDSS_PLL_REG_W(pll_base, DSIPHY_CMN_CTRL_1, data);
+	/* Keep the PLL software reset asserted for the donor's 10 us. */
+	MDSS_PLL_REG_W(pll_base, DSIPHY_CMN_CTRL_1, 0x20);
 	wmb();
 	udelay(10);
 
@@ -607,27 +589,74 @@ static void mdss_8953_input_init(struct mdss_8953_pll *pll)
 	pin->pll_r3ctrl = 1;
 }
 
-static int mdss_8953_vco_set_rate(struct mdss_8953_pll *pll,
-				  unsigned long rate)
+static void mdss_8953_vco_calc_rate(struct mdss_8953_pll *pll,
+				    unsigned long rate)
 {
-	int rc;
-
 	pll->vco_current_rate = rate;
 	pll->vco_ref_clk_rate = VCO_REF_RATE;
 
 	mdss_8953_input_init(pll);
 	pll->out.pll_postdiv = DSI_PLL_DEFAULT_POSTDIV;
+	pll->out.pll_n1div = pll->n1div;
+	pll->out.pll_n2div = pll->n2div;
 
 	mdss_8953_dec_frac_calc(pll);
 	if (pll->ssc_en)
 		mdss_8953_ssc_calc(pll);
 	mdss_8953_calc_vco_count(pll);
+}
 
-	/* Tissot is single-DSI: always the full commit sequence. */
-	mdss_8953_commit(pll);
-	rc = 0;
+/* The caller must keep runtime-PM and the iface clock active. */
+static unsigned long mdss_8953_pll_read_rate(struct mdss_8953_pll *pll)
+{
+	void __iomem *base = pll->pll_base;
+	u32 dec, frac;
+	u64 rate;
 
-	return rc;
+	dec = MDSS_PLL_REG_R(base, DSIPHY_PLL_DEC_START) & 0xff;
+	frac = (MDSS_PLL_REG_R(base, DSIPHY_PLL_DIV_FRAC_START3) & 0xf)
+		<< 16;
+	frac |= (MDSS_PLL_REG_R(base, DSIPHY_PLL_DIV_FRAC_START2) & 0xff)
+		<< 8;
+	frac |= MDSS_PLL_REG_R(base, DSIPHY_PLL_DIV_FRAC_START1) & 0xff;
+	rate = (u64)VCO_REF_RATE * dec;
+	rate += div_u64((u64)VCO_REF_RATE * frac, BIT(20));
+
+	/* DEC/FRAC truncation must not make a valid minimum rate too low. */
+	return DIV_ROUND_UP_ULL(rate, 1000) * 1000;
+}
+
+static void mdss_8953_pll_read_state(struct mdss_8953_pll *pll)
+{
+	unsigned long rate = mdss_8953_pll_read_rate(pll);
+	u32 cfg0 = MDSS_PLL_REG_R(pll->pll_base, DSIPHY_CMN_CLK_CFG0);
+	u32 cfg1 = MDSS_PLL_REG_R(pll->pll_base, DSIPHY_CMN_CLK_CFG1);
+	int n1 = cfg0 & 0xf;
+	int n2 = (cfg0 >> 4) & 0xf;
+
+	/* The exported pixel path is the /2 input of the hardware mux. */
+	if (rate < VCO_MIN_RATE || rate > VCO_MAX_RATE ||
+	    !n1 || !n2 || (cfg1 & 0x3) != 1)
+		return;
+
+	pll->n1div = n1;
+	pll->n2div = n2;
+	mdss_8953_vco_calc_rate(pll, rate);
+}
+
+static bool mdss_8953_pll_matches_state(struct mdss_8953_pll *pll)
+{
+	void __iomem *base = pll->pll_base;
+	u32 status = MDSS_PLL_REG_R(base, DSIPHY_PLL_RESET_SM_READY_STATUS);
+	u32 cfg0 = MDSS_PLL_REG_R(base, DSIPHY_CMN_CLK_CFG0);
+	u32 cfg1 = MDSS_PLL_REG_R(base, DSIPHY_CMN_CLK_CFG1);
+
+	return pll->vco_current_rate &&
+		(MDSS_PLL_REG_R(base, DSIPHY_CMN_PLL_CNTRL) & BIT(0)) &&
+		(status & (BIT(5) | BIT(0))) == (BIT(5) | BIT(0)) &&
+		mdss_8953_pll_read_rate(pll) == pll->vco_current_rate &&
+		(cfg0 & 0xff) == (pll->n1div | (pll->n2div << 4)) &&
+		(cfg1 & 0x3) == 1;
 }
 
 static long mdss_8953_vco_round_rate(unsigned long rate)
@@ -641,62 +670,46 @@ static long mdss_8953_vco_round_rate(unsigned long rate)
 
 /* Divider helpers: N1 (postdiv) and N2, identity-mapped 1-15 in CLK_CFG0. */
 
-static int mdss_8953_div_determine(int cur, unsigned long req,
-				   unsigned long parent,
-				   unsigned long *parent_req)
+static int mdss_8953_div_determine(struct clk_hw *hw,
+				   struct clk_rate_request *req)
 {
-	int div;
-
-	if (req == 0)
-		return cur > 0 ? cur : 1;
-	if (parent == 0) {
-		div = DIV_ROUND_UP(VCO_MIN_RATE, req);
-		div = clamp(div, 1, 15);
-		*parent_req = req * div;
-		return div;
-	}
-	div = DIV_ROUND_CLOSEST(parent, req);
-	return clamp(div, 1, 15);
+	return divider_determine_rate(hw, req, NULL, 4,
+				      CLK_DIVIDER_ONE_BASED);
 }
 
-static int mdss_8953_postdiv_set(struct mdss_8953_pll *pll, int div)
+static void mdss_8953_postdiv_set(struct mdss_8953_pll *pll, int div)
 {
 	u32 cfg0;
-	int rc;
 
-	rc = mdss_8953_pll_power_get(pll);
-	if (rc)
-		return rc;
 	pll->out.pll_postdiv = DSI_PLL_DEFAULT_POSTDIV;
 	pll->out.pll_n1div = div;
+	pll->n1div = div;
+	if (!pll->prepared)
+		return;
+
+	/* A successful prepare already holds power for this register access. */
 	cfg0 = MDSS_PLL_REG_R(pll->pll_base, DSIPHY_CMN_CLK_CFG0);
 	cfg0 &= ~0xf;
 	cfg0 |= (div & 0xf);
 	MDSS_PLL_REG_W(pll->pll_base, DSIPHY_CMN_CLK_CFG0, cfg0);
 	wmb();
-	pll->n1div = div;
-	mdss_8953_pll_power_put(pll);
-	return 0;
 }
 
-static int mdss_8953_n2div_set(struct mdss_8953_pll *pll, int div)
+static void mdss_8953_n2div_set(struct mdss_8953_pll *pll, int div)
 {
 	u32 cfg0;
-	int rc;
 
-	rc = mdss_8953_pll_power_get(pll);
-	if (rc)
-		return rc;
 	pll->out.pll_n2div = div;
+	pll->n2div = div;
+	if (!pll->prepared)
+		return;
+
 	cfg0 = MDSS_PLL_REG_R(pll->pll_base, DSIPHY_CMN_CLK_CFG0);
 	cfg0 &= ~0xf0;
 	cfg0 |= ((div & 0xf) << 4);
 	MDSS_PLL_REG_W(pll->pll_base, DSIPHY_CMN_CLK_CFG0, cfg0);
 	MDSS_PLL_REG_W(pll->pll_base, DSIPHY_CMN_CLK_CFG1, 1);
 	wmb();
-	pll->n2div = div;
-	mdss_8953_pll_power_put(pll);
-	return 0;
 }
 
 /* CCF operations. */
@@ -720,76 +733,77 @@ static int mdss_8953_vco_set(struct clk_hw *hw, unsigned long rate,
 			     unsigned long parent_rate)
 {
 	struct mdss_8953_pll *pll = to_mdss_8953_pll(hw, vco_hw);
-	int rc;
 
+	if (rate < VCO_MIN_RATE || rate > VCO_MAX_RATE)
+		return -EINVAL;
+
+	/*
+	 * CCF does not propagate set_rate callback failures. Cache the
+	 * configuration here; all fallible power/program/lock work belongs
+	 * in prepare. CLK_SET_RATE_GATE prevents retuning a prepared VCO.
+	 */
 	mutex_lock(&pll->lock);
-	rc = mdss_8953_pll_power_get(pll);
-	if (rc) {
-		mutex_unlock(&pll->lock);
-		return rc;
-	}
-	rc = mdss_8953_vco_set_rate(pll, rate);
-	mdss_8953_pll_power_put(pll);
+	mdss_8953_vco_calc_rate(pll, rate);
 	mutex_unlock(&pll->lock);
-	return rc;
+	return 0;
 }
 
-static int mdss_8953_vco_enable(struct clk_hw *hw)
+static int mdss_8953_vco_prepare(struct clk_hw *hw)
 {
 	struct mdss_8953_pll *pll = to_mdss_8953_pll(hw, vco_hw);
 	int rc;
 
 	mutex_lock(&pll->lock);
-	rc = mdss_8953_pll_power_get(pll);
-	if (rc) {
-		mutex_unlock(&pll->lock);
-		return rc;
-	}
-	rc = mdss_8953_enable_seq(pll);
-	if (!rc)
-		pll->pll_on = true;
-	mdss_8953_pll_power_put(pll);
-	mutex_unlock(&pll->lock);
-	return rc;
-}
-
-static void mdss_8953_vco_disable(struct clk_hw *hw)
-{
-	struct mdss_8953_pll *pll = to_mdss_8953_pll(hw, vco_hw);
-
-	mutex_lock(&pll->lock);
-	if (mdss_8953_pll_power_get(pll)) {
-		mutex_unlock(&pll->lock);
-		return;
-	}
-	mdss_8953_pll_stop(pll);
-	pll->pll_on = false;
-	mdss_8953_pll_power_put(pll);
-	mutex_unlock(&pll->lock);
-}
-
-static int mdss_8953_vco_is_enabled(struct clk_hw *hw)
-{
-	struct mdss_8953_pll *pll = to_mdss_8953_pll(hw, vco_hw);
-	u32 cntrl;
-	int rc, ret = 0;
-
 	rc = mdss_8953_pll_power_get(pll);
 	if (rc)
-		return pll->pll_on;
-	cntrl = MDSS_PLL_REG_R(pll->pll_base, DSIPHY_CMN_PLL_CNTRL);
-	ret = (cntrl & BIT(0)) ? 1 : 0;
-	mdss_8953_pll_power_put(pll);
-	return ret;
+		goto unlock;
+
+	/* Adopt a still-locked bootloader configuration without resetting it. */
+	if (!mdss_8953_pll_matches_state(pll)) {
+		/*
+		 * Orphan reparenting can prepare the PLL before the first
+		 * set_rate. As in upstream 14nm DSI, program a valid minimum
+		 * rate rather than starting an unconfigured zero-rate PLL.
+		 * Restore the cached configuration after a power/PHY reset.
+		 */
+		mdss_8953_vco_calc_rate(pll, pll->vco_current_rate ?
+				      pll->vco_current_rate : VCO_MIN_RATE);
+		mdss_8953_commit(pll);
+		rc = mdss_8953_enable_seq(pll);
+		if (rc) {
+			mdss_8953_pll_stop(pll);
+			mdss_8953_pll_power_put(pll);
+			goto unlock;
+		}
+	}
+
+	pll->prepared = true;
+unlock:
+	mutex_unlock(&pll->lock);
+	return rc;
+}
+
+static void mdss_8953_vco_unprepare(struct clk_hw *hw)
+{
+	struct mdss_8953_pll *pll = to_mdss_8953_pll(hw, vco_hw);
+
+	mutex_lock(&pll->lock);
+	if (pll->prepared) {
+		mdss_8953_pll_stop(pll);
+		pll->prepared = false;
+		mdss_8953_pll_power_put(pll);
+	}
+	mutex_unlock(&pll->lock);
 }
 
 static const struct clk_ops mdss_8953_vco_ops = {
 	.recalc_rate = mdss_8953_vco_recalc,
 	.determine_rate = mdss_8953_vco_determine,
 	.set_rate = mdss_8953_vco_set,
-	.enable = mdss_8953_vco_enable,
-	.disable = mdss_8953_vco_disable,
-	.is_enabled = mdss_8953_vco_is_enabled,
+	.prepare = mdss_8953_vco_prepare,
+	.unprepare = mdss_8953_vco_unprepare,
+	/* clk_unregister unpublishes ops and holds the CCF prepare lock. */
+	.terminate = mdss_8953_vco_unprepare,
 };
 
 static unsigned long mdss_8953_postdiv_recalc(struct clk_hw *hw,
@@ -810,65 +824,53 @@ static unsigned long mdss_8953_n2div_recalc(struct clk_hw *hw,
 	return DIV_ROUND_UP(parent_rate, div);
 }
 
-static int mdss_8953_postdiv_determine(struct clk_hw *hw,
-				       struct clk_rate_request *req)
-{
-	struct mdss_8953_pll *pll = to_mdss_8953_pll(hw, postdiv_hw);
-	int div = mdss_8953_div_determine(pll->n1div, req->rate,
-					  req->best_parent_rate,
-					  &req->best_parent_rate);
-
-	req->rate = DIV_ROUND_UP(req->best_parent_rate, div);
-	return 0;
-}
-
-static int mdss_8953_n2div_determine(struct clk_hw *hw,
-				     struct clk_rate_request *req)
-{
-	struct mdss_8953_pll *pll = to_mdss_8953_pll(hw, n2div_hw);
-	int div = mdss_8953_div_determine(pll->n2div, req->rate,
-					  req->best_parent_rate,
-					  &req->best_parent_rate);
-
-	req->rate = DIV_ROUND_UP(req->best_parent_rate, div);
-	return 0;
-}
-
 static int mdss_8953_postdiv_set_rate(struct clk_hw *hw, unsigned long rate,
 				      unsigned long parent_rate)
 {
 	struct mdss_8953_pll *pll = to_mdss_8953_pll(hw, postdiv_hw);
-	int div = clamp(DIV_ROUND_CLOSEST(parent_rate, rate), 1, 15);
-	int rc;
+	int div;
+
+	if (!rate || !parent_rate)
+		return -EINVAL;
+	div = divider_get_val(rate, parent_rate, NULL, 4,
+			      CLK_DIVIDER_ONE_BASED);
+	if (div < 0)
+		return div;
 
 	mutex_lock(&pll->lock);
-	rc = mdss_8953_postdiv_set(pll, div);
+	mdss_8953_postdiv_set(pll, div);
 	mutex_unlock(&pll->lock);
-	return rc;
+	return 0;
 }
 
 static int mdss_8953_n2div_set_rate(struct clk_hw *hw, unsigned long rate,
 				    unsigned long parent_rate)
 {
 	struct mdss_8953_pll *pll = to_mdss_8953_pll(hw, n2div_hw);
-	int div = clamp(DIV_ROUND_CLOSEST(parent_rate, rate), 1, 15);
-	int rc;
+	int div;
+
+	if (!rate || !parent_rate)
+		return -EINVAL;
+	div = divider_get_val(rate, parent_rate, NULL, 4,
+			      CLK_DIVIDER_ONE_BASED);
+	if (div < 0)
+		return div;
 
 	mutex_lock(&pll->lock);
-	rc = mdss_8953_n2div_set(pll, div);
+	mdss_8953_n2div_set(pll, div);
 	mutex_unlock(&pll->lock);
-	return rc;
+	return 0;
 }
 
 static const struct clk_ops mdss_8953_postdiv_ops = {
 	.recalc_rate = mdss_8953_postdiv_recalc,
-	.determine_rate = mdss_8953_postdiv_determine,
+	.determine_rate = mdss_8953_div_determine,
 	.set_rate = mdss_8953_postdiv_set_rate,
 };
 
 static const struct clk_ops mdss_8953_n2div_ops = {
 	.recalc_rate = mdss_8953_n2div_recalc,
-	.determine_rate = mdss_8953_n2div_determine,
+	.determine_rate = mdss_8953_div_determine,
 	.set_rate = mdss_8953_n2div_set_rate,
 };
 
@@ -883,10 +885,10 @@ static struct clk_hw *mdss_8953_clk_xlate(struct of_phandle_args *clkspec,
 	switch (clkspec->args[0]) {
 	case MDSS_DSI_PLL_BYTE_MUX:
 	case MDSS_DSI_PLL_BYTE_SRC:
-		return &pll->byte_hw;
+		return &pll->byte.hw;
 	case MDSS_DSI_PLL_PIXEL_MUX:
 	case MDSS_DSI_PLL_PIXEL_SRC:
-		return &pll->pixel_hw;
+		return &pll->pixel.hw;
 	case MDSS_DSI_PLL_VCO:
 		return &pll->vco_hw;
 	default:
@@ -900,7 +902,6 @@ static int mdss_8953_pll_register(struct mdss_8953_pll *pll)
 	struct clk_init_data vco_init = {}, postdiv_init = {}, n2div_init = {};
 	struct clk_init_data byte_init = {}, pixel_init = {};
 	char *vco_name, *postdiv_name, *n2div_name, *byte_name, *pixel_name;
-	struct clk_fixed_factor *byte_fix, *pixel_fix;
 	int rc;
 
 	vco_name = devm_kasprintf(dev, GFP_KERNEL, "mdss_dsi_pll%u_vco",
@@ -919,7 +920,7 @@ static int mdss_8953_pll_register(struct mdss_8953_pll *pll)
 
 	vco_init.name = vco_name;
 	vco_init.ops = &mdss_8953_vco_ops;
-	vco_init.flags = CLK_GET_RATE_NOCACHE;
+	vco_init.flags = CLK_GET_RATE_NOCACHE | CLK_SET_RATE_GATE;
 	pll->vco_hw.init = &vco_init;
 	rc = devm_clk_hw_register(dev, &pll->vco_hw);
 	if (rc)
@@ -939,42 +940,36 @@ static int mdss_8953_pll_register(struct mdss_8953_pll *pll)
 	n2div_init.ops = &mdss_8953_n2div_ops;
 	n2div_init.parent_hws = (const struct clk_hw *[]){ &pll->postdiv_hw };
 	n2div_init.num_parents = 1;
-	n2div_init.flags = CLK_GET_RATE_NOCACHE | CLK_SET_RATE_PARENT;
+	/* Pixel-rate changes must not retune the shared byte-clock parent. */
+	n2div_init.flags = CLK_GET_RATE_NOCACHE;
 	pll->n2div_hw.init = &n2div_init;
 	rc = devm_clk_hw_register(dev, &pll->n2div_hw);
 	if (rc)
 		return rc;
 
-	byte_fix = devm_kzalloc(dev, sizeof(*byte_fix), GFP_KERNEL);
-	pixel_fix = devm_kzalloc(dev, sizeof(*pixel_fix), GFP_KERNEL);
-	if (!byte_fix || !pixel_fix)
-		return -ENOMEM;
-
-	byte_fix->mult = 1;
-	byte_fix->div = 8;
-	byte_fix->hw.init = &byte_init;
+	pll->byte.mult = 1;
+	pll->byte.div = 8;
+	pll->byte.hw.init = &byte_init;
 	byte_init.name = byte_name;
 	byte_init.ops = &clk_fixed_factor_ops;
 	byte_init.parent_hws = (const struct clk_hw *[]){ &pll->postdiv_hw };
 	byte_init.num_parents = 1;
 	byte_init.flags = CLK_SET_RATE_PARENT;
-	rc = devm_clk_hw_register(dev, &byte_fix->hw);
+	rc = devm_clk_hw_register(dev, &pll->byte.hw);
 	if (rc)
 		return rc;
-	pll->byte_hw = byte_fix->hw;
 
-	pixel_fix->mult = 1;
-	pixel_fix->div = 2;
-	pixel_fix->hw.init = &pixel_init;
+	pll->pixel.mult = 1;
+	pll->pixel.div = 2;
+	pll->pixel.hw.init = &pixel_init;
 	pixel_init.name = pixel_name;
 	pixel_init.ops = &clk_fixed_factor_ops;
 	pixel_init.parent_hws = (const struct clk_hw *[]){ &pll->n2div_hw };
 	pixel_init.num_parents = 1;
 	pixel_init.flags = CLK_SET_RATE_PARENT;
-	rc = devm_clk_hw_register(dev, &pixel_fix->hw);
+	rc = devm_clk_hw_register(dev, &pll->pixel.hw);
 	if (rc)
 		return rc;
-	pll->pixel_hw = pixel_fix->hw;
 
 	return devm_of_clk_add_hw_provider(dev, mdss_8953_clk_xlate, pll);
 }
@@ -1011,34 +1006,21 @@ static int mdss_8953_pll_probe(struct platform_device *pdev)
 	pll->n1div = 1;
 	pll->n2div = 1;
 
-	pm_runtime_enable(&pdev->dev);
-	rc = mdss_8953_pll_register(pll);
-	if (rc) {
-		pm_runtime_disable(&pdev->dev);
+	/* Release PM only after the provider and its clocks are unpublished. */
+	rc = devm_pm_runtime_enable(&pdev->dev);
+	if (rc)
 		return rc;
-	}
-	platform_set_drvdata(pdev, pll);
-
-	/*
-	 * BISECT: handoff claim disabled; the unused-clock cleanup will
-	 * warn but the PLL stays as the bootloader left it.
-	 */
+	rc = mdss_8953_pll_power_get(pll);
+	if (rc)
+		return rc;
+	mdss_8953_pll_read_state(pll);
+	mdss_8953_pll_power_put(pll);
+	rc = mdss_8953_pll_register(pll);
+	if (rc)
+		return rc;
 
 	dev_info(&pdev->dev, "Registered DSI PLL ndx=%u clocks\n", pll->index);
 	return 0;
-}
-
-static void mdss_8953_pll_remove(struct platform_device *pdev)
-{
-	struct mdss_8953_pll *pll = platform_get_drvdata(pdev);
-
-	if (pll && pll->handoff_clk) {
-		clk_disable_unprepare(pll->handoff_clk);
-		clk_put(pll->handoff_clk);
-		pll->handoff_clk = NULL;
-		pm_runtime_put(&pdev->dev);
-	}
-	pm_runtime_disable(&pdev->dev);
 }
 
 static const struct of_device_id mdss_8953_pll_match[] = {
@@ -1049,7 +1031,6 @@ MODULE_DEVICE_TABLE(of, mdss_8953_pll_match);
 
 static struct platform_driver mdss_8953_pll_driver = {
 	.probe = mdss_8953_pll_probe,
-	.remove = mdss_8953_pll_remove,
 	.driver = {
 		.name = "mdss-dsi-pll-8953",
 		.of_match_table = mdss_8953_pll_match,

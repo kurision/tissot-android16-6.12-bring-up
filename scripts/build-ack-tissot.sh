@@ -26,6 +26,7 @@ export CC="ccache clang"
 if [[ $# != 0 ]]; then
     echo "Usage: $0"
     echo "Overrides: ACK_TREE, FRAGMENT, OUT_DIR, LLVM_BIN, JOBS"
+    echo "Rust overrides: RUSTC, HOSTRUSTC, BINDGEN, RUST_LIB_SRC, LIBCLANG_PATH"
     if [[ ${1:-} == --help ]]; then exit 0; fi
     exit 2
 fi
@@ -38,11 +39,32 @@ done
 
 cd -- "$ack_tree"
 
+# Keep tool overrides identical during availability, config and compilation.
+# Kbuild assigns RUSTC/BINDGEN itself, so environment overrides must be passed
+# as make arguments. HOSTRUSTC also builds Rust host utilities.
+make_args=(
+    O="$out_dir"
+    RUSTC="${RUSTC:-rustc}"
+    HOSTRUSTC="${HOSTRUSTC:-${RUSTC:-rustc}}"
+    BINDGEN="${BINDGEN:-bindgen}"
+)
+
+# A compiler alone is not enough: missing bindgen, libclang or rust-src silently
+# prunes RUST and ASHMEM from gki_defconfig. Diagnose it before changing .config.
+if ! make "${make_args[@]}" rustavailable; then
+    echo "FATAL: Rust ashmem build prerequisites are unavailable (see above)." >&2
+    echo "Fedora: sudo dnf install rust rust-src bindgen-cli clang-libs" >&2
+    echo "rustup: install rust-src for the selected RUSTC toolchain." >&2
+    echo "RUST_LIB_SRC must name its matching source library directory." >&2
+    echo "LIBCLANG_PATH may be needed for bindgen to find libclang." >&2
+    exit 1
+fi
+
 # gki_defconfig is the Android baseline; the tissot fragment is merged on top so
 # the SoC drivers the board file names actually get compiled in.
-make O="$out_dir" gki_defconfig
+make "${make_args[@]}" gki_defconfig
 "$ack_tree/scripts/kconfig/merge_config.sh" -m -O "$out_dir" "$out_dir/.config" "$fragment"
-make O="$out_dir" olddefconfig
+make "${make_args[@]}" olddefconfig
 
 # Symbols without which the phone cannot reach a usable Android userspace.
 # Every one of these has been observed to matter on this device: storage for
@@ -51,6 +73,12 @@ make O="$out_dir" olddefconfig
 # adbd speaks over USB. Checked against the resolved .config, not the fragment,
 # because olddefconfig is what actually decides.
 required=(
+    CONFIG_STAGING           # contains ACK's native Rust ashmem driver
+    CONFIG_SHMEM             # ashmem mappings are backed by shmem
+    CONFIG_RUST_IS_AVAILABLE # rustc + bindgen/libclang + matching core source
+    CONFIG_RUST              # ASHMEM depends on Rust support in this ACK tree
+    CONFIG_ASHMEM            # SystemServer and vendor userspace need /dev/ashmem
+    CONFIG_COMPAT            # preserves the legacy 32-bit ashmem ioctl ABI
     CONFIG_COMMON_CLK_QCOM    # gates every symbol in drivers/clk/qcom/Kconfig
     CONFIG_MSM_GCC_8953       # this SoC's Global Clock Controller
     CONFIG_PINCTRL_MSM8953    # every regulator and PMIC GPIO depends on it
@@ -95,8 +123,8 @@ if (( ${#missing[@]} )); then
     exit 1
 fi
 
-make O="$out_dir" -j"${JOBS:-$(nproc)}" Image.gz
-make O="$out_dir" qcom/msm8953-xiaomi-tissot.dtb
+make "${make_args[@]}" -j"${JOBS:-$(nproc)}" Image.gz
+make "${make_args[@]}" qcom/msm8953-xiaomi-tissot.dtb
 
 boot=$out_dir/arch/arm64/boot
 cat "$boot/Image.gz" "$boot/dts/qcom/msm8953-xiaomi-tissot.dtb" > "$boot/Image.gz-dtb"
