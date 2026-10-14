@@ -483,3 +483,11 @@ still held. Marker code ran (pr_infos present) but all eMMC slots zero
 with error logging + readback verify. Details: `TRACKER-kgsl-port.md`,
 "Run112".
 
+## Run113 — opens fail ENOENT: kworker has no fs_struct
+
+Writer-fix kernel (`d644bb5a…`) proves every absolute `filp_open` from
+the deferred probe fails ENOENT: kworkers carry no fs_struct, so path
+lookup has no root. Init opens the same nodes fine. Silent reset at
+153.9 s, gate held. Next: `file_open_root` on init's borrowed root.
+Details: `TRACKER-kgsl-port.md`, "Run113".
+
