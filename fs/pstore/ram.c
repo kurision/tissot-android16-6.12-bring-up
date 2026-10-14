@@ -1577,6 +1577,72 @@ static void ramoops_debug_apps_wdt(void)
 		en2, sts2, bark2, bite2);
 }
 
+static void __iomem *ramoops_diag_marks;
+static phys_addr_t ramoops_diag_phys;
+
+static void __iomem *ramoops_diag_map(void)
+{
+	/* Marks live in 4K carved from the dmesg area (between the dmesg
+	 * and console zones), since the 1MB reservation packs zones with
+	 * zero slack. The carve happens in ramoops_probe below; until it
+	 * succeeds there is no window and marks refuse loudly.
+	 */
+	if (!ramoops_diag_phys)
+		return NULL;
+	if (!ramoops_diag_marks)
+		ramoops_diag_marks = ioremap(ramoops_diag_phys,
+					     RAMOOPS_DIAG_MARK_SIZE);
+	return ramoops_diag_marks;
+}
+
+void ramoops_diag_mark(loff_t slot, u32 tag, u32 val)
+{
+	void __iomem *pos;
+	u32 check_tag, check_val;
+
+	if (slot < 0 || slot + 8 > RAMOOPS_DIAG_MARK_SIZE) {
+		pr_err("ramoops: diag mark slot out of range (%llx)\n", slot);
+		return;
+	}
+	if (!ramoops_diag_map()) {
+		pr_err("ramoops: diag mark unmapped (slot %llx)\n", slot);
+		return;
+	}
+	/* Device-memory writes complete on the bus in order; the readback
+	 * proves the pair reached the reserved region. Disjoint 8-byte
+	 * slots need no locking (idempotent rewrites are harmless).
+	 */
+	pos = ramoops_diag_marks + slot;
+	writel_relaxed(tag, pos);
+	writel_relaxed(val, pos + 4);
+	check_tag = readl_relaxed(pos);
+	check_val = readl_relaxed(pos + 4);
+	if (check_tag != tag || check_val != val)
+		pr_err("ramoops: diag mark readback slot %llx got %08x/%08x want %08x/%08x\n",
+		       slot, check_tag, check_val, tag, val);
+}
+EXPORT_SYMBOL_GPL(ramoops_diag_mark);
+
+/* Dump the previous boot's marks (if DRAM survived the reset) before
+ * this boot writes its own. Runs at every probe, ~0.4 s, long before
+ * any mark site.
+ */
+static void ramoops_diag_dump_prev(void)
+{
+	loff_t slot;
+
+	if (!ramoops_diag_map())
+		return;
+	for (slot = 0; slot + 8 <= RAMOOPS_DIAG_MARK_SIZE; slot += 8) {
+		u32 tag = readl_relaxed(ramoops_diag_marks + slot);
+		u32 val = readl_relaxed(ramoops_diag_marks + slot + 4);
+
+		if (tag || val)
+			pr_info("DIAG mark prev slot %02llx tag %08x val %08x\n",
+				slot, tag, val);
+	}
+}
+
 static int ramoops_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -1644,12 +1710,19 @@ static int ramoops_probe(struct platform_device *pdev)
 	paddr = cxt->phys_addr;
 
 	dump_mem_sz = cxt->size - cxt->console_size - cxt->ftrace_size
-			- cxt->pmsg_size;
+			- cxt->pmsg_size - RAMOOPS_DIAG_MARK_SIZE;
 	err = ramoops_init_przs("dmesg", dev, cxt, &cxt->dprzs, &paddr,
 				dump_mem_sz, cxt->record_size,
 				&cxt->max_dump_cnt, 0, 0);
 	if (err)
 		goto fail_init;
+
+	/* DEBUG run117: 4K for diag marks between dmesg and console. One
+	 * fewer dmesg record; console/pmsg/ftrace follow unshifted in
+	 * content, 4K later in address — total still exactly 1MB.
+	 */
+	ramoops_diag_phys = paddr;
+	paddr += RAMOOPS_DIAG_MARK_SIZE;
 
 	err = ramoops_init_prz("console", dev, cxt, &cxt->cprz, &paddr,
 			       cxt->console_size, 0);
@@ -1671,6 +1744,8 @@ static int ramoops_probe(struct platform_device *pdev)
 					? PRZ_FLAG_NO_LOCK : 0);
 	if (err)
 		goto fail_init;
+
+	ramoops_diag_dump_prev();
 
 	cxt->pstore.data = cxt;
 	/*

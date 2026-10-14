@@ -9,6 +9,7 @@
 #define __LINUX_PSTORE_RAM_H__
 
 #include <linux/pstore.h>
+#include <linux/sizes.h>
 
 struct persistent_ram_ecc_info {
 	int block_size;
@@ -38,5 +39,16 @@ struct ramoops_platform_data {
 	u32		flags;
 	struct persistent_ram_ecc_info ecc_info;
 };
+
+/* DEBUG run117 (tissot): write a tag+value marker into 4K carved from
+ * the ramoops dmesg area (between dmesg and console zones; the 1MB
+ * reservation packs zones with zero slack). Works from any context
+ * (no sleep, no VFS); slots are disjoint and idempotent so no
+ * locking. The previous boot's slots dump at probe, since that is
+ * the only post-reset read path. Implemented in fs/pstore/ram.c;
+ * out-of-range slots warn and drop.
+ */
+#define RAMOOPS_DIAG_MARK_SIZE	SZ_4K
+void ramoops_diag_mark(loff_t slot, u32 tag, u32 val);
 
 #endif

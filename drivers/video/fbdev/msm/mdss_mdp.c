@@ -23,6 +23,7 @@
 #include <linux/of_address.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
+#include <linux/pstore_ram.h>
 #include <linux/regulator/consumer.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -2269,8 +2270,15 @@ static void mdss_mdp_hw_rev_caps_init(struct mdss_data_type *mdata)
 		mdss_set_quirk(mdata, MDSS_QUIRK_FMT_PACK_PATTERN);
 }
 
-#define MDSS_EMMC_MARK_DEV		"/dev/block/by-name/logdump"
-#define MDSS_EMMC_MARK_BASE		0x3F80000
+/* DEBUG run111/run117: per-access markers for the silent-reset hunt.
+ * Run110/114 proved the reset needs no display userspace and no MDP
+ * re-probe, but an early-path death with working markers still names
+ * the exact hanging access. Slots are 8-byte tag+value pairs in 4K
+ * carved from the ramoops dmesg area (see ramoops_diag_mark); the
+ * previous boot's slots print as "DIAG mark prev" lines at ~0.4 s of
+ * the next boot, which is the only post-reset read path. Last
+ * non-zero slot names the hanging access.
+ */
 #define MDSS_MARK_S1_PRECLK		0x00
 #define MDSS_MARK_S2_POSTCLK		0x08
 #define MDSS_MARK_PROBE_ENTRY		0x10
@@ -2288,10 +2296,6 @@ static void mdss_mdp_hw_rev_caps_init(struct mdss_data_type *mdata)
 #define MDSS_MARK_INTF_POST		0x70
 #define MDSS_MARK_SPLIT			0x78
 
-/* DEBUG run111: marker machinery is defined after the probe; the
- * rev_init/hw_init users below need prototypes here.
- */
-static void mdss_mdp_debug_emmc_write(u32 val, loff_t off);
 static void mdss_mdp_debug_emmc_mark(loff_t slot, u32 tag, u32 val);
 
 static void mdss_hw_rev_init(struct mdss_data_type *mdata)
@@ -2500,9 +2504,6 @@ static u32 mdss_mdp_scaler_init(struct mdss_data_type *mdata,
 	return ret;
 }
 
-/* DEBUG run70: defined after the probe; used in splash below. */
-static void mdss_mdp_debug_emmc_write(u32 val, loff_t off);
-static void mdss_mdp_debug_emmc_mark(loff_t slot, u32 tag, u32 val);
 /**
  * @on: 1 to start handoff, 0 to complete the handoff after first frame update
  *
@@ -2981,93 +2982,15 @@ static void mdss_mdp_defer_kick_fn(struct work_struct *work)
 	driver_deferred_probe_trigger();
 }
 
-/* DEBUG run111: per-access eMMC markers for the silent-reset hunt.
- * Run110 proved the reset needs no display userspace, so the killer is
- * one of the kernel MDP (re-)probe register accesses below. The run69-70
- * writer aimed at /dev/mmcblk0p48 + 60 MiB, which is the logdump
- * partition's snapshot slot0 header once the SD card is out (and a dead
- * node when the SD card owns mmcblk0). Resolve by by-name symlink with
- * legacy fallback, and write tag+value pairs into the free tail past
- * the reset-capture region instead (base below; 8 bytes per slot).
- * Decode on a precleared partition: the last present tag names the
- * hanging access; a present *_1/post tag exonerates that access.
- * pr_info companions carry the same sequence into ramoops snapshots if
- * the eMMC path itself is broken. No GDSC/clock register queries here:
- * any such query could itself hang and misattribute the fault; the S1/S2
- * tags already bracket the clock enable and splash-ON brackets the GDSC
- * regulator vote, so the hang location implies the domain state.
+/* DEBUG run117: markers bypass the VFS entirely (see the slot table
+ * above mdss_hw_rev_init). Every absolute open from deferred-probe
+ * context failed: run112 ENOENT on plain filp_open, run116 ENOENT on
+ * file_open_root with init's borrowed root (mechanism unexplained),
+ * while init's own opens of the same nodes succeed every boot.
  */
-#include <linux/fs.h>
-#include <linux/file.h>
-#include <linux/fs_struct.h>
-#include <linux/sched/task.h>
-static struct file *mdss_mdp_debug_emmc_open(void)
-{
-	static const char *const devs[] = {
-		MDSS_EMMC_MARK_DEV,
-		"/dev/mmcblk0p48",
-		"/dev/mmcblk1p48",
-	};
-	struct path root;
-	struct file *f = ERR_PTR(-ENOENT);
-	unsigned int i;
-
-	/* Run113: every absolute filp_open from this path fails ENOENT.
-	 * The deferred probe runs in a kworker, which has no fs_struct,
-	 * so path resolution has no root to start from (init's own opens
-	 * of the same nodes succeed). Borrow init's root and open
-	 * relative to it instead. PID 1 never exits, so init_task.fs is
-	 * stable under task_lock here.
-	 */
-	task_lock(&init_task);
-	if (init_task.fs)
-		get_fs_root(init_task.fs, &root);
-	else
-		root.mnt = NULL;
-	task_unlock(&init_task);
-	if (!root.mnt) {
-		pr_err("mdss_mdp: marker has no init root\n");
-		return ERR_PTR(-ENOENT);
-	}
-	for (i = 0; i < ARRAY_SIZE(devs); i++) {
-		f = file_open_root(&root, devs[i], O_RDWR | O_DSYNC, 0);
-		if (!IS_ERR(f))
-			break;
-	}
-	path_put(&root);
-	if (IS_ERR(f))
-		pr_err("mdss_mdp: marker open failed err=%ld\n", PTR_ERR(f));
-	return f;
-}
-
-static void mdss_mdp_debug_emmc_write(u32 val, loff_t off)
-{
-	struct file *f;
-	loff_t pos = off;
-	u32 check = 0;
-
-	f = mdss_mdp_debug_emmc_open();
-	if (IS_ERR(f))
-		return;
-	if (kernel_write(f, &val, sizeof(val), &pos) != sizeof(val)) {
-		pr_err("mdss_mdp: marker write failed off=%llx\n", off);
-		filp_close(f, NULL);
-		return;
-	}
-	pos = off;
-	if (kernel_read(f, &check, sizeof(check), &pos) != sizeof(check) ||
-	    check != val)
-		pr_err("mdss_mdp: marker readback off=%llx got=%08x want=%08x\n",
-		       off, check, val);
-	filp_close(f, NULL);
-}
-
 static void mdss_mdp_debug_emmc_mark(loff_t slot, u32 tag, u32 val)
 {
-	loff_t base = MDSS_EMMC_MARK_BASE + slot;
-
-	mdss_mdp_debug_emmc_write(tag, base);
-	mdss_mdp_debug_emmc_write(val, base + 4);
+	ramoops_diag_mark(slot, tag, val);
 }
 static void mdss_mdp_debug_emmc_marker(struct mdss_data_type *mdata)
 {
@@ -3075,7 +2998,7 @@ static void mdss_mdp_debug_emmc_marker(struct mdss_data_type *mdata)
 
 	pr_info("mdss_mdp: probe marker before HW_VERSION read\n");
 	mdss_mdp_debug_emmc_mark(MDSS_MARK_PROBE_ENTRY, 0x4D445053, 0);
-	/* If the HW is unpowered this read hangs: marker-only on eMMC. */
+	/* If the HW is unpowered this read hangs: ENTRY tag only in RAM. */
 	ver = MDSS_REG_READ(mdata, MDSS_REG_HW_VERSION);
 	mdss_mdp_debug_emmc_mark(MDSS_MARK_HWVER, 0x20524556, ver);
 }
@@ -3230,10 +3153,10 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 	 * kernel is up.
 	 */
 	mdss_mdp_footswitch_ctrl_splash(true);
-	/* DEBUG run111: per-access eMMC markers (tag+value pairs at
-	 * MDSS_EMMC_MARK_BASE in the logdump free tail). Last present tag
-	 * names the hanging access; see the slot table above
-	 * mdss_mdp_debug_emmc_write.
+	/* DEBUG run111/run117: per-access markers (tag+value pairs in the
+	 * ramoops reservation tail via ramoops_diag_mark). Last non-zero
+	 * slot of the previous boot names the hanging access; see the slot
+	 * table above mdss_hw_rev_init.
 	 */
 	mdss_mdp_debug_emmc_marker(mdata);
 	mdss_hw_rev_init(mdata);
