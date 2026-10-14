@@ -887,6 +887,18 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 		pm_runtime_put_sync(dev);
 	}
 
+	/*
+	 * DEBUG run121 (tissot) bring-up workaround: run120 showed the MDP
+	 * fetching through context bank 0x15 while this IOMMU was runtime
+	 * suspended (the MDSS consumers never hold the DL_FLAG_PM_RUNTIME
+	 * link active), faulting continuously. Keep the IOMMU powered so
+	 * translation has its clocks and the fault handler can read
+	 * FSR/FAR. Proper fix: MDSS holds its IOMMU consumer runtime-active
+	 * while scanning out.
+	 */
+	pm_runtime_forbid(dev);
+	dev_info(dev, "runtime PM forbidden: IOMMU kept powered (bring-up)\n");
+
 	return 0;
 
 err_pm_disable:
