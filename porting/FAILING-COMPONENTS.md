@@ -501,3 +501,13 @@ driver-access theory standing alone — next: watchdog audit alongside
 re-running for an early-path marker validation. Details:
 `TRACKER-kgsl-port.md`, "Run114".
 
+## Run115 — both watchdogs disarmed, stock regmap path opened
+
+WDT-dump kernel (`c5f37244…`) died silently at 136.5 s. APPS WDT reads
+all zero, PMIC WDT S2 master-disabled, POFF shows no PMIC_WD/UVLO/OTST3
+— neither watchdog can be the resetter on the fastboot-boot path.
+Stock regmap debugfs yields the live PON block, enabling post-reset
+cause reads with no bootloader in between. APCS-layout second line
+queued to close the offsets hole. Details: `TRACKER-kgsl-port.md`,
+"Run115".
+
