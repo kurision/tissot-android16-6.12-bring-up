@@ -1710,7 +1710,9 @@ static int mdss_mdp_idle_pc_restore(void)
 	}
 	mdss_iommu_ctrl(0);
 
+	pr_info("DIAG118 idle_pc_restore ctl_restore pre\n");
 	mdss_mdp_ctl_restore(true);
+	pr_info("DIAG118 idle_pc_restore ctl_restore done\n");
 	mdata->idle_pc = false;
 
 end:
@@ -2318,6 +2320,37 @@ static void mdss_hw_rev_init(struct mdss_data_type *mdata)
 	mdss_mdp_hw_rev_caps_init(mdata);
 }
 
+/* DEBUG run118: ground-truth MDSS power state, read from GCC (always
+ * clocked, so the reads are safe even when MDSS is down). GDSCR bit 31
+ * is PWR_ON; CBCR bit 31 is CLK_OFF. Offsets from gcc-msm8953.c
+ * (mdss_gdsc, gcc_mdss_{ahb,axi,mdp}_clk). pr_info, not a RAM mark:
+ * the diag init's kmsg logger lands it in logdump within ms, while
+ * marks only reach eMMC with the 2 s snapshot.
+ */
+#define MDSS_DIAG_GCC_PAGE	0x184d000
+void mdss_mdp_diag_pwr(const char *where)
+{
+	static void __iomem *gcc;
+	u32 gdscr, ahb, axi, mdp;
+
+	if (!gcc)
+		gcc = ioremap(MDSS_DIAG_GCC_PAGE, SZ_4K);
+	if (!gcc) {
+		pr_info("DIAG118 %s: gcc unmapped\n", where);
+		return;
+	}
+	gdscr = readl_relaxed(gcc + 0x078);
+	ahb = readl_relaxed(gcc + 0x07c);
+	axi = readl_relaxed(gcc + 0x080);
+	mdp = readl_relaxed(gcc + 0x088);
+	pr_info("DIAG118 %s: gdsc_on=%u ahb_off=%u axi_off=%u mdp_off=%u gdscr=%08x rpm=%s\n",
+		where, !!(gdscr & BIT(31)), !!(ahb & BIT(31)),
+		!!(axi & BIT(31)), !!(mdp & BIT(31)), gdscr,
+		mdss_res && mdss_res->pdev &&
+		pm_runtime_status_suspended(&mdss_res->pdev->dev) ?
+		"suspended" : "active");
+}
+
 /**
  * mdss_hw_init() - Initialize MDSS target specific register settings
  * @mdata: MDP private data
@@ -2331,7 +2364,9 @@ void mdss_hw_init(struct mdss_data_type *mdata)
 	struct mdss_mdp_pipe *vig;
 	int hwset_count = 0;
 
-	pr_info("mdss_mdp: hw_init begin rev=%u\n", mdata->mdp_rev);
+	pr_info("mdss_mdp: hw_init begin rev=%u from %pS\n", mdata->mdp_rev,
+		__builtin_return_address(0));
+	mdss_mdp_diag_pwr("hw_init entry");
 	mdss_mdp_debug_emmc_mark(MDSS_MARK_HWINIT_PRE, 0x3049484D,
 				 mdata->mdp_rev);
 	mdss_hw_rev_init(mdata);
@@ -2350,6 +2385,11 @@ void mdss_hw_init(struct mdss_data_type *mdata)
 		pr_info("mdss_mdp: hw_init hw_settings table begin\n");
 		mdss_mdp_debug_emmc_mark(MDSS_MARK_HWSET_PRE, 0x3057484D, 0);
 		while (hws->reg) {
+			/* DEBUG run118: name each write before it happens; a
+			 * bus hang leaves this as the last logdump line.
+			 */
+			pr_info("DIAG118 hw_settings[%d] %px <- %08x\n",
+				hwset_count, hws->reg, hws->val);
 			writel_relaxed(hws->val, hws->reg);
 			hws++;
 			hwset_count++;
@@ -2365,7 +2405,7 @@ void mdss_hw_init(struct mdss_data_type *mdata)
 
 	mdss_mdp_debug_emmc_mark(MDSS_MARK_HWINIT_POST, 0x3149484D,
 				 mdata->mdp_rev);
-	pr_debug("MDP hw init done\n");
+	pr_info("DIAG118 hw_init end writes=%d\n", hwset_count);
 }
 
 static u32 mdss_mdp_res_init(struct mdss_data_type *mdata)

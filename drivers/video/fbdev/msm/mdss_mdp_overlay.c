@@ -10,7 +10,6 @@
 #include <linux/major.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
-#include <linux/pstore_ram.h>
 #include <linux/uaccess.h>
 #include <linux/delay.h>
 #include <linux/msm_mdp.h>
@@ -1507,17 +1506,16 @@ int mdss_mdp_overlay_start(struct msm_fb_data_type *mfd)
 			pr_err("iommu attach failed rc=%d\n", rc);
 			goto end;
 		}
-		if (pm_runtime_status_suspended(&mfd->pdev->dev)) {
-			pr_err("mdss_mdp: hw_init skipped, MDSS runtime-suspended\n");
-			/* MDSS_MARK_SKIP 0x80, tag "MSKP"; table in mdss_mdp.c */
-			ramoops_diag_mark(0x80, 0x504B534D, 0);
-		} else {
-			mdss_hw_init(mdss_res);
-		}
+		/* DEBUG run118: the fb device was just runtime-resumed above
+		 * (and with it its MDP parent), so a runtime-PM gate here
+		 * can never fire; log real GDSC/clock state instead.
+		 */
+		mdss_hw_init(mdss_res);
 		/*
 		 * As splash is not enabled, disable EARLY_MAP setting which was
 		 * enabled through DT before first kickoff.
 		 */
+		pr_info("DIAG118 overlay_start smmu EARLY_MAP clear\n");
 		mdss_smmu_set_attribute(MDSS_IOMMU_DOMAIN_UNSECURE,
 					 EARLY_MAP, 0);
 		mdss_iommu_ctrl(0);
@@ -1529,7 +1527,9 @@ int mdss_mdp_overlay_start(struct msm_fb_data_type *mfd)
 	 * right away, it would be handled correctly.
 	 */
 	atomic_inc(&mdp5_data->mdata->active_intf_cnt);
+	mdss_mdp_diag_pwr("overlay_start ctl_start pre");
 	rc = mdss_mdp_ctl_start(ctl, false);
+	pr_info("DIAG118 overlay_start ctl_start rc=%d\n", rc);
 	if (rc == 0) {
 		mdss_mdp_ctl_notifier_register(mdp5_data->ctl,
 				&mfd->mdp_sync_pt_data.notifier);
@@ -1545,8 +1545,10 @@ int mdss_mdp_overlay_start(struct msm_fb_data_type *mfd)
 	rc = mdss_mdp_pp_resume(mfd);
 	if (rc && (rc != -EPERM) && (rc != -ENODEV))
 		pr_err("PP resume err %d\n", rc);
+	pr_info("DIAG118 overlay_start pp_resume rc=%d\n", rc);
 
 	rc = mdss_mdp_splash_cleanup(mfd, true);
+	pr_info("DIAG118 overlay_start splash_cleanup rc=%d\n", rc);
 	if (!rc)
 		goto end;
 
