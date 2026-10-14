@@ -491,3 +491,13 @@ lookup has no root. Init opens the same nodes fine. Silent reset at
 153.9 s, gate held. Next: `file_open_root` on init's borrowed root.
 Details: `TRACKER-kgsl-port.md`, "Run113".
 
+## Run114 — death before the kick; re-probe exonerated as necessary
+
+Root-fix kernel (`2fc6e428…`) died at 62.3 s in early-init, ~10 s
+before the deferred kick was due: no re-probe, no display, no trace.
+Markers never ran (no tags, no errors), so the `file_open_root` fix
+is still unproven. With run110 (no display userspace) this leaves no
+driver-access theory standing alone — next: watchdog audit alongside
+re-running for an early-path marker validation. Details:
+`TRACKER-kgsl-port.md`, "Run114".
+
