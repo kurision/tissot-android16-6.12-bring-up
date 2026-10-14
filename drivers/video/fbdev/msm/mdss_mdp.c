@@ -64,6 +64,34 @@
 
 #define MDP_DEVICE_ID		0x1A
 
+/* DEBUG run111/run117: per-access markers for the silent-reset hunt.
+ * Run110/114 proved the reset needs no display userspace and no MDP
+ * re-probe, but an early-path death with working markers still names
+ * the exact hanging access. Slots are 8-byte tag+value pairs in 4K
+ * carved from the ramoops dmesg area (see ramoops_diag_mark). The
+ * logdump snapshot copies the page every 2 s (decode-pstore.py prints
+ * it); a reset that returns to stock usually loses the RAM copy, so
+ * "DIAG mark prev" at the next port boot is best-effort. Last
+ * non-zero slot names the hanging access.
+ */
+#define MDSS_MARK_S1_PRECLK		0x00
+#define MDSS_MARK_S2_POSTCLK		0x08
+#define MDSS_MARK_PROBE_ENTRY		0x10
+#define MDSS_MARK_HWVER			0x18
+#define MDSS_MARK_REV_PRE		0x20
+#define MDSS_MARK_REV_POST		0x28
+#define MDSS_MARK_HWINIT_PRE		0x30
+#define MDSS_MARK_UNDERRUN		0x38
+#define MDSS_MARK_HWSET_PRE		0x40
+#define MDSS_MARK_HWSET_POST		0x48
+#define MDSS_MARK_HWINIT_POST		0x50
+#define MDSS_MARK_PANIC_PRE		0x58
+#define MDSS_MARK_PANIC_POST		0x60
+#define MDSS_MARK_INTF_PRE		0x68
+#define MDSS_MARK_INTF_POST		0x70
+#define MDSS_MARK_SPLIT			0x78
+#define MDSS_MARK_SKIP			0x80
+
 struct mdss_data_type *mdss_res;
 static u32 mem_protect_sd_ctrl_id;
 
@@ -1674,7 +1702,12 @@ static int mdss_mdp_idle_pc_restore(void)
 		pr_err("mdss iommu attach failed rc=%d\n", rc);
 		goto end;
 	}
-	mdss_hw_init(mdata);
+	if (pm_runtime_status_suspended(&mdata->pdev->dev)) {
+		pr_err("mdss_mdp: hw_init skipped, MDSS runtime-suspended\n");
+		mdss_mdp_debug_emmc_mark(MDSS_MARK_SKIP, 0x504B534D, 0);
+	} else {
+		mdss_hw_init(mdata);
+	}
 	mdss_iommu_ctrl(0);
 
 	mdss_mdp_ctl_restore(true);
@@ -2269,33 +2302,6 @@ static void mdss_mdp_hw_rev_caps_init(struct mdss_data_type *mdata)
 			mdata->mdp_rev == MDSS_MDP_HW_REV_200)
 		mdss_set_quirk(mdata, MDSS_QUIRK_FMT_PACK_PATTERN);
 }
-
-/* DEBUG run111/run117: per-access markers for the silent-reset hunt.
- * Run110/114 proved the reset needs no display userspace and no MDP
- * re-probe, but an early-path death with working markers still names
- * the exact hanging access. Slots are 8-byte tag+value pairs in 4K
- * carved from the ramoops dmesg area (see ramoops_diag_mark). The
- * logdump snapshot copies the page every 2 s (decode-pstore.py prints
- * it); a reset that returns to stock usually loses the RAM copy, so
- * "DIAG mark prev" at the next port boot is best-effort. Last
- * non-zero slot names the hanging access.
- */
-#define MDSS_MARK_S1_PRECLK		0x00
-#define MDSS_MARK_S2_POSTCLK		0x08
-#define MDSS_MARK_PROBE_ENTRY		0x10
-#define MDSS_MARK_HWVER			0x18
-#define MDSS_MARK_REV_PRE		0x20
-#define MDSS_MARK_REV_POST		0x28
-#define MDSS_MARK_HWINIT_PRE		0x30
-#define MDSS_MARK_UNDERRUN		0x38
-#define MDSS_MARK_HWSET_PRE		0x40
-#define MDSS_MARK_HWSET_POST		0x48
-#define MDSS_MARK_HWINIT_POST		0x50
-#define MDSS_MARK_PANIC_PRE		0x58
-#define MDSS_MARK_PANIC_POST		0x60
-#define MDSS_MARK_INTF_PRE		0x68
-#define MDSS_MARK_INTF_POST		0x70
-#define MDSS_MARK_SPLIT			0x78
 
 static void mdss_mdp_debug_emmc_mark(loff_t slot, u32 tag, u32 val);
 
@@ -2983,11 +2989,12 @@ static void mdss_mdp_defer_kick_fn(struct work_struct *work)
 	driver_deferred_probe_trigger();
 }
 
-/* DEBUG run117: markers bypass the VFS entirely (see the slot table
- * above mdss_hw_rev_init). Every absolute open from deferred-probe
- * context failed: run112 ENOENT on plain filp_open, run116 ENOENT on
- * file_open_root with init's borrowed root (mechanism unexplained),
- * while init's own opens of the same nodes succeed every boot.
+/* DEBUG run117: markers bypass the VFS entirely (see the MDSS_MARK_*
+ * slot table near the top of this file). Every absolute open from
+ * deferred-probe context failed: run112 ENOENT on plain filp_open,
+ * run116 ENOENT on file_open_root with init's borrowed root
+ * (mechanism unexplained), while init's own opens of the same nodes
+ * succeed every boot.
  */
 static void mdss_mdp_debug_emmc_mark(loff_t slot, u32 tag, u32 val)
 {
@@ -3156,8 +3163,8 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 	mdss_mdp_footswitch_ctrl_splash(true);
 	/* DEBUG run111/run117: per-access markers (tag+value pairs in the
 	 * ramoops reservation tail via ramoops_diag_mark). Last non-zero
-	 * slot of the previous boot names the hanging access; see the slot
-	 * table above mdss_hw_rev_init.
+	 * slot of the previous boot names the hanging access; see the
+	 * MDSS_MARK_* slot table near the top of this file.
 	 */
 	mdss_mdp_debug_emmc_marker(mdata);
 	mdss_hw_rev_init(mdata);

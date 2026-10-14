@@ -10,6 +10,7 @@
 #include <linux/major.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
+#include <linux/pstore_ram.h>
 #include <linux/uaccess.h>
 #include <linux/delay.h>
 #include <linux/msm_mdp.h>
@@ -1506,7 +1507,13 @@ int mdss_mdp_overlay_start(struct msm_fb_data_type *mfd)
 			pr_err("iommu attach failed rc=%d\n", rc);
 			goto end;
 		}
-		mdss_hw_init(mdss_res);
+		if (pm_runtime_status_suspended(&mfd->pdev->dev)) {
+			pr_err("mdss_mdp: hw_init skipped, MDSS runtime-suspended\n");
+			/* MDSS_MARK_SKIP 0x80, tag "MSKP"; table in mdss_mdp.c */
+			ramoops_diag_mark(0x80, 0x504B534D, 0);
+		} else {
+			mdss_hw_init(mdss_res);
+		}
 		/*
 		 * As splash is not enabled, disable EARLY_MAP setting which was
 		 * enabled through DT before first kickoff.
