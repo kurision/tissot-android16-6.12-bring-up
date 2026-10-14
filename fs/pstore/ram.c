@@ -42,6 +42,7 @@
 #include <linux/kthread.h>
 #include <linux/timekeeping.h>
 #include <linux/vmalloc.h>
+#include <linux/random.h>
 
 #include "internal.h"
 #include "ram_internal.h"
@@ -477,6 +478,8 @@ static struct ramoops_context oops_cxt = {
 
 #define RAMOOPS_RAW_PHYS 0x86800000ULL
 #define RAMOOPS_RAW_CONSOLE 0x77000
+/* 119 4K zones before run117; the last is now the diag mark page. */
+#define RAMOOPS_RAW_DMESG_CNT 118
 #define RAMOOPS_RAW_PMSG 0xf7000
 #define RAMOOPS_RAW_FTRACE 0xff000
 
@@ -495,17 +498,23 @@ static bool ramoops_raw_geometry_valid(struct ramoops_context *cxt)
 	    cxt->phys_addr != RAMOOPS_RAW_PHYS || cxt->size != SZ_1M ||
 	    cxt->record_size != SZ_4K || cxt->console_size != SZ_512K ||
 	    cxt->pmsg_size != SZ_32K || cxt->ftrace_size != SZ_4K ||
-	    cxt->max_dump_cnt != 119 || cxt->max_ftrace_cnt != 1 ||
+	    cxt->max_dump_cnt != RAMOOPS_RAW_DMESG_CNT ||
+	    cxt->max_ftrace_cnt != 1 || !ramoops_diag_marks ||
+	    ramoops_diag_phys != RAMOOPS_RAW_PHYS +
+				 RAMOOPS_RAW_DMESG_CNT * SZ_4K ||
 	    !cxt->dprzs || !cxt->fprzs || cxt->ecc_info.ecc_size ||
 	    (cxt->flags & RAMOOPS_FLAG_FTRACE_PER_CPU))
 		return false;
-	for (i = 0; i < 119; i++)
+	for (i = 0; i < RAMOOPS_RAW_DMESG_CNT; i++)
 		if (!ramoops_raw_zone_valid(cxt->dprzs[i], i * SZ_4K, SZ_4K))
 			return false;
 	return ramoops_raw_zone_valid(cxt->cprz, RAMOOPS_RAW_CONSOLE, SZ_512K) &&
 		ramoops_raw_zone_valid(cxt->mprz, RAMOOPS_RAW_PMSG, SZ_32K) &&
 		ramoops_raw_zone_valid(cxt->fprzs[0], RAMOOPS_RAW_FTRACE, SZ_4K);
 }
+
+static void __iomem *ramoops_diag_marks;
+static phys_addr_t ramoops_diag_phys;
 
 /* Copy live, non-atomic bytes, including each zone's persistent-RAM header. */
 static ssize_t ramoops_raw_copy(struct ramoops_context *cxt, char *buf,
@@ -521,6 +530,18 @@ static ssize_t ramoops_raw_copy(struct ramoops_context *cxt, char *buf,
 		if (pos < RAMOOPS_RAW_CONSOLE) {
 			unsigned int index = pos / SZ_4K;
 
+			/* The diag mark page sits right after the last
+			 * dmesg zone; snapshots must carry it to logdump.
+			 */
+			if (index == cxt->max_dump_cnt && ramoops_diag_marks) {
+				start = index * SZ_4K;
+				n = min(count - copied,
+					RAMOOPS_DIAG_MARK_SIZE - (pos - start));
+				memcpy_fromio(buf + copied,
+					      ramoops_diag_marks + (pos - start), n);
+				copied += n;
+				continue;
+			}
 			if (!cxt->dprzs || index >= cxt->max_dump_cnt)
 				return -EIO;
 			prz = cxt->dprzs[index];
@@ -1577,21 +1598,33 @@ static void ramoops_debug_apps_wdt(void)
 		en2, sts2, bark2, bite2);
 }
 
-static void __iomem *ramoops_diag_marks;
-static phys_addr_t ramoops_diag_phys;
-
 static void __iomem *ramoops_diag_map(void)
 {
+	struct page *page;
+
 	/* Marks live in 4K carved from the dmesg area (between the dmesg
 	 * and console zones), since the 1MB reservation packs zones with
 	 * zero slack. The carve happens in ramoops_probe below; until it
 	 * succeeds there is no window and marks refuse loudly.
+	 *
+	 * The reservation is linear-mapped RAM ("map non-reusable"), which
+	 * arm64 ioremap() rejects with a WARN; vmap it write-combined like
+	 * persistent_ram_vmap() does for the other zones. Probe maps it
+	 * first, so later marks never reach the (sleeping) vmap.
 	 */
 	if (!ramoops_diag_phys)
 		return NULL;
-	if (!ramoops_diag_marks)
-		ramoops_diag_marks = ioremap(ramoops_diag_phys,
-					     RAMOOPS_DIAG_MARK_SIZE);
+	if (!ramoops_diag_marks) {
+		if (pfn_valid(PHYS_PFN(ramoops_diag_phys))) {
+			page = pfn_to_page(PHYS_PFN(ramoops_diag_phys));
+			ramoops_diag_marks = (void __iomem *)vmap(&page, 1,
+					VM_MAP | VM_IOREMAP,
+					pgprot_writecombine(PAGE_KERNEL));
+		} else {
+			ramoops_diag_marks = ioremap_wc(ramoops_diag_phys,
+							RAMOOPS_DIAG_MARK_SIZE);
+		}
+	}
 	return ramoops_diag_marks;
 }
 
@@ -1600,7 +1633,7 @@ void ramoops_diag_mark(loff_t slot, u32 tag, u32 val)
 	void __iomem *pos;
 	u32 check_tag, check_val;
 
-	if (slot < 0 || slot + 8 > RAMOOPS_DIAG_MARK_SIZE) {
+	if (slot < 0 || slot + 8 > RAMOOPS_DIAG_MARK_HDR) {
 		pr_err("ramoops: diag mark slot out of range (%llx)\n", slot);
 		return;
 	}
@@ -1623,24 +1656,45 @@ void ramoops_diag_mark(loff_t slot, u32 tag, u32 val)
 }
 EXPORT_SYMBOL_GPL(ramoops_diag_mark);
 
-/* Dump the previous boot's marks (if DRAM survived the reset) before
- * this boot writes its own. Runs at every probe, ~0.4 s, long before
- * any mark site.
+/* Dump the previous boot's marks before this boot writes its own, then
+ * reset the page. Only a page carrying the mark magic is trusted: after
+ * a silent reset the phone boots stock 4.19, which does not reserve
+ * this range, so the next port boot usually finds stock's leftovers.
+ * The reliable read path is the logdump snapshot, which copies this
+ * page every RAMOOPS_SNAP_INTERVAL_MS; the boot id ties those copies
+ * to this boot's log.
  */
 static void ramoops_diag_dump_prev(void)
 {
+	void __iomem *page = ramoops_diag_map();
+	u32 magic, boot_id;
 	loff_t slot;
 
-	if (!ramoops_diag_map())
+	if (!page) {
+		pr_err("ramoops: diag mark page unmapped\n");
 		return;
-	for (slot = 0; slot + 8 <= RAMOOPS_DIAG_MARK_SIZE; slot += 8) {
-		u32 tag = readl_relaxed(ramoops_diag_marks + slot);
-		u32 val = readl_relaxed(ramoops_diag_marks + slot + 4);
-
-		if (tag || val)
-			pr_info("DIAG mark prev slot %02llx tag %08x val %08x\n",
-				slot, tag, val);
 	}
+	magic = readl_relaxed(page + RAMOOPS_DIAG_MARK_HDR);
+	boot_id = readl_relaxed(page + RAMOOPS_DIAG_MARK_HDR + 4);
+	if (magic != RAMOOPS_DIAG_MARK_MAGIC) {
+		pr_info("DIAG mark prev none (magic %08x)\n", magic);
+	} else {
+		pr_info("DIAG mark prev boot_id %08x\n", boot_id);
+		for (slot = 0; slot < RAMOOPS_DIAG_MARK_HDR; slot += 8) {
+			u32 tag = readl_relaxed(page + slot);
+			u32 val = readl_relaxed(page + slot + 4);
+
+			if (tag || val)
+				pr_info("DIAG mark prev slot %02llx tag %08x val %08x\n",
+					slot, tag, val);
+		}
+	}
+
+	boot_id = get_random_u32();
+	memset_io(page, 0, RAMOOPS_DIAG_MARK_HDR);
+	writel_relaxed(boot_id, page + RAMOOPS_DIAG_MARK_HDR + 4);
+	writel_relaxed(RAMOOPS_DIAG_MARK_MAGIC, page + RAMOOPS_DIAG_MARK_HDR);
+	pr_info("DIAG mark boot_id %08x\n", boot_id);
 }
 
 static int ramoops_probe(struct platform_device *pdev)

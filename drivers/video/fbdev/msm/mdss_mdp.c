@@ -2274,9 +2274,10 @@ static void mdss_mdp_hw_rev_caps_init(struct mdss_data_type *mdata)
  * Run110/114 proved the reset needs no display userspace and no MDP
  * re-probe, but an early-path death with working markers still names
  * the exact hanging access. Slots are 8-byte tag+value pairs in 4K
- * carved from the ramoops dmesg area (see ramoops_diag_mark); the
- * previous boot's slots print as "DIAG mark prev" lines at ~0.4 s of
- * the next boot, which is the only post-reset read path. Last
+ * carved from the ramoops dmesg area (see ramoops_diag_mark). The
+ * logdump snapshot copies the page every 2 s (decode-pstore.py prints
+ * it); a reset that returns to stock usually loses the RAM copy, so
+ * "DIAG mark prev" at the next port boot is best-effort. Last
  * non-zero slot names the hanging access.
  */
 #define MDSS_MARK_S1_PRECLK		0x00

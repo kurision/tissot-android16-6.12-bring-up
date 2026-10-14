@@ -44,11 +44,14 @@ struct ramoops_platform_data {
  * the ramoops dmesg area (between dmesg and console zones; the 1MB
  * reservation packs zones with zero slack). Works from any context
  * (no sleep, no VFS); slots are disjoint and idempotent so no
- * locking. The previous boot's slots dump at probe, since that is
- * the only post-reset read path. Implemented in fs/pstore/ram.c;
+ * locking. The logdump snapshot copies the page every 2 s; a page
+ * with valid magic also dumps at the next port boot's probe. The last
+ * 8 bytes hold magic + boot id. Implemented in fs/pstore/ram.c;
  * out-of-range slots warn and drop.
  */
 #define RAMOOPS_DIAG_MARK_SIZE	SZ_4K
+#define RAMOOPS_DIAG_MARK_HDR	(RAMOOPS_DIAG_MARK_SIZE - 8)
+#define RAMOOPS_DIAG_MARK_MAGIC	0x4B52414D	/* "MARK" */
 void ramoops_diag_mark(loff_t slot, u32 tag, u32 val);
 
 #endif
