@@ -1536,6 +1536,37 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 	return 0;
 }
 
+/* DEBUG run115: silent resets are traceless and now proven independent
+ * of any MDSS/display path (runs 110/114). Stock 4.19 pets the APPS WDT
+ * from its msm_watchdog thread; this tree builds no watchdog driver at
+ * all, so a firmware-armed WDT would bark unheard and bite silently.
+ * Snapshot the KPSS WDT block (stock: b017000.qcom,wdt) at probe time.
+ * Pure reads; no side effects.
+ */
+#define TISSOT_APPS_WDT_BASE	0xb017000
+#define TISSOT_APPS_WDT_EN	0x40
+#define TISSOT_APPS_WDT_STS	0x44
+#define TISSOT_APPS_WDT_BARK	0x4c
+#define TISSOT_APPS_WDT_BITE	0x5c
+static void ramoops_debug_apps_wdt(void)
+{
+	void __iomem *wdt;
+	u32 en, sts, bark, bite;
+
+	wdt = ioremap(TISSOT_APPS_WDT_BASE, SZ_4K);
+	if (!wdt) {
+		pr_info("DIAG apps_wdt ioremap failed\n");
+		return;
+	}
+	en = readl_relaxed(wdt + TISSOT_APPS_WDT_EN);
+	sts = readl_relaxed(wdt + TISSOT_APPS_WDT_STS);
+	bark = readl_relaxed(wdt + TISSOT_APPS_WDT_BARK);
+	bite = readl_relaxed(wdt + TISSOT_APPS_WDT_BITE);
+	iounmap(wdt);
+	pr_info("DIAG apps_wdt en=%08x sts=%08x bark=%08x bite=%08x\n",
+		en, sts, bark, bite);
+}
+
 static int ramoops_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -1554,6 +1585,8 @@ static int ramoops_probe(struct platform_device *pdev)
 		pr_err("already initialized\n");
 		goto fail_out;
 	}
+
+	ramoops_debug_apps_wdt();
 
 	if (dev_of_node(dev) && !pdata) {
 		pdata = &pdata_local;
