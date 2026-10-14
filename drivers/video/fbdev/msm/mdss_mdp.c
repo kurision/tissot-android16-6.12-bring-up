@@ -29,7 +29,6 @@
 #include <linux/mutex.h>
 #include <linux/sched.h>
 #include <linux/time.h>
-#include <linux/ktime.h>
 #include <linux/spinlock.h>
 #include <linux/semaphore.h>
 #include <linux/uaccess.h>
@@ -3084,15 +3083,6 @@ int mdss_panel_get_intf_status(u32 disp_num, u32 intf_type)
 
 	return rc;
 }
-/* declared in drivers/base/base.h (not exported to modules, but this
- * driver is built in); DEBUG-only late re-probe kick, see below. */
-extern void driver_deferred_probe_trigger(void);
-static struct delayed_work mdss_mdp_defer_kick_work;
-static void mdss_mdp_defer_kick_fn(struct work_struct *work)
-{
-	pr_info("mdss_mdp: kicking late deferred re-probe\n");
-	driver_deferred_probe_trigger();
-}
 
 /* DEBUG run117: markers bypass the VFS entirely (see the MDSS_MARK_*
  * slot table near the top of this file). Every absolute open from
@@ -3124,21 +3114,15 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 	uint32_t split_display = 0;
 	int num_of_display_on = 0;
 	int i = 0;
-	/* DEBUG run68: defer the full probe until power suppliers have
-	 * settled (the early probe hangs on unpowered MDP registers
-	 * instead of deferring), and kick one late re-probe at 60 s since
-	 * nothing else retriggers the deferred queue that late. */
-	if (ktime_get_boottime_seconds() < 45) {
-		static bool defer_kick_armed;
-		if (!defer_kick_armed) {
-			defer_kick_armed = true;
-			INIT_DELAYED_WORK(&mdss_mdp_defer_kick_work,
-					  mdss_mdp_defer_kick_fn);
-			schedule_delayed_work(&mdss_mdp_defer_kick_work,
-					      60 * HZ);
-		}
-		return -EPROBE_DEFER;
-	}
+	/* No time-based gate: probe ordering comes from the power-domains
+	 * device link and -EPROBE_DEFER from missing suppliers (clocks in
+	 * res_init below, GDSC domain check before the first register
+	 * read). Stock 4.19 probes MDP at ~1.2 s once the MDSS GDSC
+	 * supplier exists, with LK splash holding power; supplier probes
+	 * re-trigger the deferred queue, so no blind re-probe kick is
+	 * needed. Holding fb0 back only forces the composer onto a
+	 * backend that cannot serve this panel.
+	 */
 	if (!pdev->dev.of_node) {
 		pr_err("MDP driver only supports device tree probe\n");
 		return -ENOTSUPP;
@@ -3266,6 +3250,20 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 	 * kernel is up.
 	 */
 	mdss_mdp_footswitch_ctrl_splash(true);
+	/* Stock relies on LK splash holding MDSS powered here; fastboot
+	 * leaves it off (run124: intf_sel=0), so the resume above is what
+	 * makes the reads below safe. A register access with the domain
+	 * down hangs the bus without faulting, so verify the resume took
+	 * and defer, letting the supplier re-trigger the probe, rather
+	 * than risk the hang the old time gate papered over. The
+	 * probe_done path balances the splash votes via splash(false).
+	 */
+	if (pm_runtime_status_suspended(&pdev->dev)) {
+		pr_err("mdss_mdp: MDSS power domain not active, deferring probe\n");
+		pm_runtime_disable(&pdev->dev);
+		rc = -EPROBE_DEFER;
+		goto probe_done;
+	}
 	/* DEBUG run111/run117: per-access markers (tag+value pairs in the
 	 * ramoops reservation tail via ramoops_diag_mark). Last non-zero
 	 * slot of the previous boot names the hanging access; see the

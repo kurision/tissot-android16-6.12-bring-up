@@ -2839,8 +2839,7 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 	atomic_set(&mfd->kickoff_pending, 0);
 	atomic_set(&mfd->resume_pending, 0);
 
-	timer_setup(&mfd->no_update.timer, mdss_fb_no_update_notify_timer_cb,
-			 (unsigned long)mfd);
+	timer_setup(&mfd->no_update.timer, mdss_fb_no_update_notify_timer_cb, 0);
 	mfd->update.ref_count = 0;
 	mfd->no_update.ref_count = 0;
 	mfd->update.init_done = false;
