@@ -15,6 +15,7 @@
  * at post-fs-data, writing bounded logs in /data/local/tmp without ADB.
  */
 #define _GNU_SOURCE
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -1745,6 +1746,123 @@ done:
 	}
 }
 
+/* Validate the complete property before changing any bytes. */
+static int patch_usb_controller(char *text, size_t *size)
+{
+	static const char key[] = "vendor.usb.controller";
+	static const char old[] = "vendor.usb.controller=7000000.dwc3";
+	static const char new[] = "vendor.usb.controller=7000000.usb";
+	size_t offset = 0, match = 0;
+	int found = 0, changed = 0;
+
+	if (memchr(text, '\0', *size))
+		goto invalid;
+	while (offset < *size) {
+		char *line = text + offset;
+		char *end = memchr(line, '\n', *size - offset);
+		size_t len = end ? (size_t)(end - line) : *size - offset;
+		size_t value_len = len;
+		char *start = line;
+		char *equals = memchr(line, '=', len);
+		char *key_end = equals;
+
+		if (value_len && line[value_len - 1] == '\r')
+			value_len--;
+		if (equals) {
+			while (start < equals && isspace((unsigned char)*start))
+				start++;
+			while (key_end > start &&
+			       isspace((unsigned char)key_end[-1]))
+				key_end--;
+		}
+		if (equals && (size_t)(key_end - start) == sizeof(key) - 1 &&
+		    !memcmp(start, key, sizeof(key) - 1)) {
+			if (found++)
+				goto invalid;
+			if (value_len == sizeof(old) - 1 &&
+			    !memcmp(line, old, sizeof(old) - 1)) {
+				match = offset;
+				changed = 1;
+			} else if (value_len != sizeof(new) - 1 ||
+				   memcmp(line, new, sizeof(new) - 1)) {
+				goto invalid;
+			}
+		}
+		offset += len + !!end;
+	}
+	if (!found)
+		goto invalid;
+	if (changed) {
+		memmove(text + match + sizeof(new) - 1,
+			text + match + sizeof(old) - 1,
+			*size - match - (sizeof(old) - 1));
+		memcpy(text + match, new, sizeof(new) - 1);
+		*size -= sizeof(old) - sizeof(new);
+	}
+	return changed;
+invalid:
+	errno = EINVAL;
+	return -1;
+}
+
+static int guard_usb_controller(int proc, int log)
+{
+	static char text[128 * 1024];
+	const char *target = "/vendor/build.prop";
+	struct stat st;
+	char message[128];
+	off_t offset = 0;
+	size_t size;
+	int in = -1, fd = -1, error = 0, changed;
+
+	in = open(target, O_RDONLY | O_CLOEXEC);
+	if (in < 0 || fstat(in, &st)) {
+		error = errno;
+		goto done;
+	}
+	if (!S_ISREG(st.st_mode) || st.st_size <= 0 ||
+	    st.st_size > sizeof(text)) {
+		error = EINVAL;
+		goto done;
+	}
+	while (offset < st.st_size) {
+		ssize_t n = pread(in, text + offset,
+				  (size_t)(st.st_size - offset), offset);
+
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0) {
+			error = n < 0 ? errno : EIO;
+			goto done;
+		}
+		offset += n;
+	}
+	size = (size_t)st.st_size;
+	changed = patch_usb_controller(text, &size);
+	if (changed < 0) {
+		error = errno;
+		goto done;
+	}
+	if (!changed)
+		goto done;
+	fd = memfd_create("ack-usb-controller-prop", MFD_CLOEXEC);
+	if (fd < 0 || write_all(fd, text, size) ||
+	    guard_bind_config(proc, fd, "/dev/block/ack-usb-controller.prop",
+			      target))
+		error = errno;
+done:
+	if (in >= 0)
+		close(in);
+	if (fd >= 0)
+		close(fd);
+	snprintf(message, sizeof(message),
+		 "DIAG: USB controller 7000000.dwc3 -> 7000000.usb errno=%d\n",
+		 error);
+	say(log, message);
+	errno = error;
+	return error ? -1 : 0;
+}
+
 static int guard_bootdevice(int proc)
 {
 	struct stat st;
@@ -1824,6 +1942,9 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	step = "install read-only vendor contexts";
 	if (guard_bind_config(proc, contexts, GUARDED_CONTEXTS,
 			      "/vendor/etc/selinux/vendor_file_contexts"))
+		goto failed;
+	step = "install read-only USB controller property";
+	if (guard_usb_controller(proc, log))
 		goto failed;
 #ifdef ANDROID_EARLY_LOGCAT
 	guard_early_logcat(proc, log);
