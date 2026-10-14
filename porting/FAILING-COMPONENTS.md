@@ -474,3 +474,12 @@ userspace ever running. The resetter sits in the kernel MDSS re-probe
 path, not the display HALs. Next: eMMC markers around each re-probe
 register access. Details: `TRACKER-kgsl-port.md`, "Run110".
 
+## Run112 — re-probe passes by luck; marker writes land nowhere
+
+Marker kernel (`0f72ccf3…`) booted fine and the deferred re-probe passed
+(framebuffer 68.6 s); silent reset at 132.4 s with the display gate
+still held. Marker code ran (pr_infos present) but all eMMC slots zero
+— the `/dev` open path fails in kernel context. Next: multi-path open
+with error logging + readback verify. Details: `TRACKER-kgsl-port.md`,
+"Run112".
+
