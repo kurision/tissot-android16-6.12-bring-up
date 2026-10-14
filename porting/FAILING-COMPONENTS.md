@@ -511,3 +511,14 @@ cause reads with no bootloader in between. APCS-layout second line
 queued to close the offsets hole. Details: `TRACKER-kgsl-port.md`,
 "Run115".
 
+## Run116 — VFS abandoned, PON exhausted, KPSS layout proven
+
+Root-fix kernel (`2fc6e428…`) died at ~134.3 s after an `mdss_fb_open`
+by `mm-pp-dpps` (coincidence-grade; run110 had none). Borrowed-root
+opens still ENOENT, so markers move to reserved-RAM writes. APCS
+reads prove the KPSS layout is real (WDT truly off); PON A/B dumps
+are identical, closing the register path. Open defect split out: DSI
+PLL clock imbalance (`pll0_pixel already disabled` WARN, ~30x lock
+failures) — display issue, not reset. Details: `TRACKER-kgsl-port.md`,
+"Run116".
+
