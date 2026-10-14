@@ -189,13 +189,30 @@ static const struct iommu_flush_ops qcom_flush_ops = {
 static irqreturn_t qcom_iommu_fault(int irq, void *dev)
 {
 	struct qcom_iommu_ctx *ctx = dev;
+	struct device *iommu_dev = ctx->dev->parent;
 	u32 fsr, fsynr;
 	u64 iova;
 
+	/*
+	 * The IOMMU's clocks are only held around attach/map/unmap; reading
+	 * CB_FSR while it is runtime-suspended is an unclocked access, which
+	 * on msm8953 raises a synchronous external abort (run118/run119:
+	 * readl_relaxed in IRQ context, FAR = ctx@15000 + CB_FSR, MDSS cb).
+	 * Same guard as the upstream arm-smmu fault-handler fix.
+	 */
+	if (pm_runtime_get_if_active(iommu_dev) <= 0) {
+		dev_err_ratelimited(ctx->dev,
+				    "context fault IRQ while IOMMU suspended, cb=%d\n",
+				    ctx->asid);
+		return IRQ_NONE;
+	}
+
 	fsr = iommu_readl(ctx, ARM_SMMU_CB_FSR);
 
-	if (!(fsr & ARM_SMMU_CB_FSR_FAULT))
+	if (!(fsr & ARM_SMMU_CB_FSR_FAULT)) {
+		pm_runtime_put(iommu_dev);
 		return IRQ_NONE;
+	}
 
 	fsynr = iommu_readl(ctx, ARM_SMMU_CB_FSYNR0);
 	iova = iommu_readq(ctx, ARM_SMMU_CB_FAR);
@@ -209,6 +226,7 @@ static irqreturn_t qcom_iommu_fault(int irq, void *dev)
 
 	iommu_writel(ctx, ARM_SMMU_CB_FSR, fsr);
 	iommu_writel(ctx, ARM_SMMU_CB_RESUME, ARM_SMMU_RESUME_TERMINATE);
+	pm_runtime_put(iommu_dev);
 
 	return IRQ_HANDLED;
 }

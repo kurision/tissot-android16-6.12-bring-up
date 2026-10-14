@@ -1698,6 +1698,61 @@ static void ramoops_diag_dump_prev(void)
 	pr_info("DIAG mark boot_id %08x\n", boot_id);
 }
 
+/*
+ * DEBUG run120 (tissot): what clock the CPUs really run at. The port has
+ * no msm8953 CPU clock/cpufreq/CPR driver, so the bootloader's setting
+ * stands. Layout from stock 4.19 clock-cpu-8953.c / msm8953.dtsi:975:
+ * one APCS HF PLL (rate = 19.2 MHz * L), and per-cluster RCG muxes
+ * whose CFG (CMD_RCGR + 4) holds SRC_SEL[10:8] and a half-integer
+ * divider DIV[4:0] (divide by (DIV + 1) / 2). Stock selects SRC 5
+ * (PLL early) for both clusters and CCI. Reads only.
+ */
+static void ramoops_debug_cpuclk(void)
+{
+	static const struct {
+		const char *name;
+		phys_addr_t rcgr;
+	} mux[] = {
+		{ "c0", 0xb111050 },	/* little cluster, CPU0-3 */
+		{ "c1", 0xb011050 },	/* big cluster, CPU4-7 */
+		{ "cci", 0xb1d1050 },
+	};
+	void __iomem *pll, *rcg;
+	u32 mode, l_val, user, cmd, cfg, src, div;
+	unsigned long pll_khz;
+	int i;
+
+	pll = ioremap(0xb116000, SZ_4K);
+	if (!pll) {
+		pr_info("DIAG cpuclk pll ioremap failed\n");
+		return;
+	}
+	mode = readl_relaxed(pll + 0x0);
+	l_val = readl_relaxed(pll + 0x8);
+	user = readl_relaxed(pll + 0x18);
+	iounmap(pll);
+	pll_khz = 19200UL * l_val;
+	pr_info("DIAG cpuclk pll mode=%08x lock=%u l=%u user=%08x rate=%lu kHz\n",
+		mode, !!(mode & BIT(31)), l_val, user, pll_khz);
+
+	for (i = 0; i < ARRAY_SIZE(mux); i++) {
+		rcg = ioremap(mux[i].rcgr & ~(phys_addr_t)0xfff, SZ_4K);
+		if (!rcg) {
+			pr_info("DIAG cpuclk %s ioremap failed\n", mux[i].name);
+			continue;
+		}
+		cmd = readl_relaxed(rcg + (mux[i].rcgr & 0xfff));
+		cfg = readl_relaxed(rcg + (mux[i].rcgr & 0xfff) + 4);
+		iounmap(rcg);
+		src = (cfg >> 8) & 0x7;
+		div = cfg & 0x1f;
+		pr_info("DIAG cpuclk %s cmd=%08x cfg=%08x src=%u div=%u rate=%lu kHz%s\n",
+			mux[i].name, cmd, cfg, src, div,
+			src == 5 ? pll_khz * 2 / (div + 1) : 0,
+			src == 5 ? "" : " (src not PLL: rate unknown)");
+	}
+}
+
 static int ramoops_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -1718,6 +1773,7 @@ static int ramoops_probe(struct platform_device *pdev)
 	}
 
 	ramoops_debug_apps_wdt();
+	ramoops_debug_cpuclk();
 
 	if (dev_of_node(dev) && !pdata) {
 		pdata = &pdata_local;
