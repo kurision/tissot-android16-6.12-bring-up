@@ -2270,7 +2270,6 @@ static void mdss_mdp_hw_rev_caps_init(struct mdss_data_type *mdata)
 }
 
 #define MDSS_EMMC_MARK_DEV		"/dev/block/by-name/logdump"
-#define MDSS_EMMC_MARK_DEV_FALLBACK	"/dev/mmcblk0p48"
 #define MDSS_EMMC_MARK_BASE		0x3F80000
 #define MDSS_MARK_S1_PRECLK		0x00
 #define MDSS_MARK_S2_POSTCLK		0x08
@@ -3002,16 +3001,39 @@ static void mdss_mdp_defer_kick_fn(struct work_struct *work)
 #include <linux/file.h>
 static void mdss_mdp_debug_emmc_write(u32 val, loff_t off)
 {
-	struct file *f;
+	static const char *const devs[] = {
+		MDSS_EMMC_MARK_DEV,
+		"/dev/mmcblk0p48",
+		"/dev/mmcblk1p48",
+	};
+	struct file *f = ERR_PTR(-ENOENT);
 	loff_t pos = off;
+	unsigned int i;
+	u32 check = 0;
 
-	f = filp_open(MDSS_EMMC_MARK_DEV, O_WRONLY | O_DSYNC, 0);
-	if (IS_ERR(f))
-		f = filp_open(MDSS_EMMC_MARK_DEV_FALLBACK,
-			      O_WRONLY | O_DSYNC, 0);
-	if (IS_ERR(f))
+	/* Run112 wrote zero tags with this same body: the open path, not
+	 * the probe, was broken. Cover both mmc enumerations and say why
+	 * loudly; pr_err lands in ramoops even when eMMC stays silent.
+	 */
+	for (i = 0; i < ARRAY_SIZE(devs); i++) {
+		f = filp_open(devs[i], O_RDWR | O_DSYNC, 0);
+		if (!IS_ERR(f))
+			break;
+	}
+	if (IS_ERR(f)) {
+		pr_err("mdss_mdp: marker open failed err=%ld\n", PTR_ERR(f));
 		return;
-	kernel_write(f, &val, sizeof(val), &pos);
+	}
+	if (kernel_write(f, &val, sizeof(val), &pos) != sizeof(val)) {
+		pr_err("mdss_mdp: marker write failed off=%llx\n", off);
+		filp_close(f, NULL);
+		return;
+	}
+	pos = off;
+	if (kernel_read(f, &check, sizeof(check), &pos) != sizeof(check) ||
+	    check != val)
+		pr_err("mdss_mdp: marker readback off=%llx got=%08x want=%08x\n",
+		       off, check, val);
 	filp_close(f, NULL);
 }
 
