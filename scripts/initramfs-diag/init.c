@@ -1185,6 +1185,45 @@ static void guard_halgate(int proc, int log)
 	}
 }
 #endif
+#ifdef ANDROID_DISPLAY_GATE
+/*
+ * Display-gate probe (run110): stub the display stack only, to test whether
+ * the 107-160 s silent resets correlate with first MDSS hardware use.
+ * hwcomposer and display-color-hal probe MDSS sysfs/framebuffer/PP ioctls;
+ * surfaceflinger opens the GPU. Everything else in the boot sequence is kept.
+ */
+static const char *const displaygate_rc[][2] = {
+	{ "/dev/block/ack-displaygate-composer.rc",
+	  "/vendor/etc/init/android.hardware.graphics.composer@2.1-service.rc" },
+	{ "/dev/block/ack-displaygate-color.rc",
+	  "/vendor/etc/init/vendor.display.color@1.0-service.rc" },
+	{ "/dev/block/ack-displaygate-surfaceflinger.rc",
+	  "/system/etc/init/surfaceflinger.rc" },
+};
+
+static void guard_displaygate(int proc, int log)
+{
+	static const char stub[] = "# disabled by ACK diag display gate probe\n";
+	char message[256];
+	size_t i;
+
+	for (i = 0; i < sizeof(displaygate_rc) / sizeof(displaygate_rc[0]); i++) {
+		int fd = memfd_create("ack-displaygate-rc", MFD_CLOEXEC);
+		int error = 0;
+
+		if (fd < 0 || write_all(fd, stub, sizeof(stub) - 1) ||
+		    guard_bind_config(proc, fd, displaygate_rc[i][0],
+				      displaygate_rc[i][1]))
+			error = errno;
+		if (fd >= 0)
+			close(fd);
+		snprintf(message, sizeof(message),
+			 "DIAG: display gate rc override %s errno=%d\n",
+			 displaygate_rc[i][1], error);
+		say(log, message);
+	}
+}
+#endif
 /*
  * GPU firmware staging. Upstream adreno requests qcom/a530_pm4.fw,
  * filesystem firmware loader, which this early only searches the ramdisk
@@ -1802,6 +1841,9 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 #endif
 #ifdef ANDROID_HALGATE
 	guard_halgate(proc, log);
+#endif
+#ifdef ANDROID_DISPLAY_GATE
+	guard_displaygate(proc, log);
 #endif
 	guard_firmware(log);
 	harvest_modem_firmware(log);
