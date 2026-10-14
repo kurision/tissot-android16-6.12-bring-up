@@ -483,6 +483,9 @@ static struct ramoops_context oops_cxt = {
 #define RAMOOPS_RAW_PMSG 0xf7000
 #define RAMOOPS_RAW_FTRACE 0xff000
 
+static void __iomem *ramoops_diag_marks;
+static phys_addr_t ramoops_diag_phys;
+
 static bool ramoops_raw_zone_valid(struct persistent_ram_zone *prz,
 				  size_t offset, size_t size)
 {
@@ -513,8 +516,6 @@ static bool ramoops_raw_geometry_valid(struct ramoops_context *cxt)
 		ramoops_raw_zone_valid(cxt->fprzs[0], RAMOOPS_RAW_FTRACE, SZ_4K);
 }
 
-static void __iomem *ramoops_diag_marks;
-static phys_addr_t ramoops_diag_phys;
 
 /* Copy live, non-atomic bytes, including each zone's persistent-RAM header. */
 static ssize_t ramoops_raw_copy(struct ramoops_context *cxt, char *buf,
