@@ -1552,6 +1552,7 @@ static void ramoops_debug_apps_wdt(void)
 {
 	void __iomem *wdt;
 	u32 en, sts, bark, bite;
+	u32 en2, sts2, bark2, bite2;
 
 	wdt = ioremap(TISSOT_APPS_WDT_BASE, SZ_4K);
 	if (!wdt) {
@@ -1562,9 +1563,18 @@ static void ramoops_debug_apps_wdt(void)
 	sts = readl_relaxed(wdt + TISSOT_APPS_WDT_STS);
 	bark = readl_relaxed(wdt + TISSOT_APPS_WDT_BARK);
 	bite = readl_relaxed(wdt + TISSOT_APPS_WDT_BITE);
+	/* Same block, APCS-timer layout (used by newer low-tier APSS
+	 * WDTs): disambiguates "disabled" from "wrong offsets".
+	 */
+	en2 = readl_relaxed(wdt + 0x8);
+	sts2 = readl_relaxed(wdt + 0xc);
+	bark2 = readl_relaxed(wdt + 0x10);
+	bite2 = readl_relaxed(wdt + 0x14);
 	iounmap(wdt);
 	pr_info("DIAG apps_wdt en=%08x sts=%08x bark=%08x bite=%08x\n",
 		en, sts, bark, bite);
+	pr_info("DIAG apps_wdt2 en=%08x sts=%08x bark=%08x bite=%08x\n",
+		en2, sts2, bark2, bite2);
 }
 
 static int ramoops_probe(struct platform_device *pdev)
