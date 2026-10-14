@@ -2999,31 +2999,56 @@ static void mdss_mdp_defer_kick_fn(struct work_struct *work)
  */
 #include <linux/fs.h>
 #include <linux/file.h>
-static void mdss_mdp_debug_emmc_write(u32 val, loff_t off)
+#include <linux/fs_struct.h>
+#include <linux/sched/task.h>
+static struct file *mdss_mdp_debug_emmc_open(void)
 {
 	static const char *const devs[] = {
 		MDSS_EMMC_MARK_DEV,
 		"/dev/mmcblk0p48",
 		"/dev/mmcblk1p48",
 	};
+	struct path root;
 	struct file *f = ERR_PTR(-ENOENT);
-	loff_t pos = off;
 	unsigned int i;
-	u32 check = 0;
 
-	/* Run112 wrote zero tags with this same body: the open path, not
-	 * the probe, was broken. Cover both mmc enumerations and say why
-	 * loudly; pr_err lands in ramoops even when eMMC stays silent.
+	/* Run113: every absolute filp_open from this path fails ENOENT.
+	 * The deferred probe runs in a kworker, which has no fs_struct,
+	 * so path resolution has no root to start from (init's own opens
+	 * of the same nodes succeed). Borrow init's root and open
+	 * relative to it instead. PID 1 never exits, so init_task.fs is
+	 * stable under task_lock here.
 	 */
+	task_lock(&init_task);
+	if (init_task.fs)
+		get_fs_root(init_task.fs, &root);
+	else
+		root.mnt = NULL;
+	task_unlock(&init_task);
+	if (!root.mnt) {
+		pr_err("mdss_mdp: marker has no init root\n");
+		return ERR_PTR(-ENOENT);
+	}
 	for (i = 0; i < ARRAY_SIZE(devs); i++) {
-		f = filp_open(devs[i], O_RDWR | O_DSYNC, 0);
+		f = file_open_root(&root, devs[i], O_RDWR | O_DSYNC, 0);
 		if (!IS_ERR(f))
 			break;
 	}
-	if (IS_ERR(f)) {
+	path_put(&root);
+	if (IS_ERR(f))
 		pr_err("mdss_mdp: marker open failed err=%ld\n", PTR_ERR(f));
+	return f;
+}
+
+static void mdss_mdp_debug_emmc_write(u32 val, loff_t off)
+{
+	struct file *f;
+	loff_t pos = off;
+	u32 check = 0;
+
+	f = mdss_mdp_debug_emmc_open();
+	if (IS_ERR(f))
 		return;
-	}
 	if (kernel_write(f, &val, sizeof(val), &pos) != sizeof(val)) {
 		pr_err("mdss_mdp: marker write failed off=%llx\n", off);
 		filp_close(f, NULL);
