@@ -5413,13 +5413,12 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	spin_lock_init(&device->timelines_lock);
 
 	/*
-	 * The default request type PM_QOS_REQ_ALL_CORES is
-	 * applicable to all CPU cores that are online and
-	 * would have a power impact when there are more
-	 * number of CPUs. PM_QOS_REQ_AFFINE_IRQ request
-	 * type shall update/apply the vote only to that CPU to
-	 * which IRQ's affinity is set to.
+	 * adreno_start/stop update this request; 6.12 has no per-IRQ
+	 * affine request type, so it applies to all CPUs.
 	 */
+	cpu_latency_qos_add_request(&device->pwrctrl.pm_qos_req_dma,
+				    PM_QOS_DEFAULT_VALUE);
+
 	/* Initialize the snapshot engine */
 	kgsl_device_snapshot_init(device);
 
@@ -5454,6 +5453,8 @@ void kgsl_device_platform_remove(struct kgsl_device *device)
 	kgsl_exit_page_pools();
 
 	kgsl_pwrctrl_uninit_sysfs(device);
+
+	cpu_latency_qos_remove_request(&device->pwrctrl.pm_qos_req_dma);
 
 	idr_destroy(&device->context_idr);
 	idr_destroy(&device->timelines);
