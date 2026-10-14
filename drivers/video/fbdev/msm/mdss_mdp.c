@@ -2350,6 +2350,72 @@ void mdss_mdp_diag_pwr(const char *where)
 		"suspended" : "active");
 }
 
+/*
+ * DEBUG run123: dump SSPP fetch state and CTL layer staging. The MDSS
+ * SMMU faults on reads at the cont-splash base (0x90001000); tag SRC0
+ * values inside that 1080x1920 rgb888 buffer (stride 0xca8) as SPLASH.
+ * Read-only; callers hold MDP_BLOCK_POWER_ON.
+ */
+#define MDSS_DIAG_SPLASH_BASE	0x90001000
+#define MDSS_DIAG_SPLASH_SIZE	0x5eec00
+static void mdss_mdp_diag_pipe_arr(const char *where, const char *kind,
+				   struct mdss_mdp_pipe *pipes, u32 npipes)
+{
+	struct mdss_mdp_pipe *p;
+	u32 i, src0;
+
+	for (i = 0; pipes && i < npipes; i++) {
+		p = &pipes[i];
+		if (!p->base)
+			continue;
+		src0 = readl_relaxed(p->base + MDSS_MDP_REG_SSPP_SRC0_ADDR);
+		if (!src0)
+			continue;
+		pr_info("DIAG123 %s: %s%u ndx=0x%x src0=%08x%s size=%08x fmt=%08x op=%08x\n",
+			where, kind, i, p->ndx, src0,
+			src0 >= MDSS_DIAG_SPLASH_BASE &&
+			src0 - MDSS_DIAG_SPLASH_BASE < MDSS_DIAG_SPLASH_SIZE ?
+			" SPLASH" : "",
+			readl_relaxed(p->base + MDSS_MDP_REG_SSPP_SRC_SIZE),
+			readl_relaxed(p->base + MDSS_MDP_REG_SSPP_SRC_FORMAT),
+			readl_relaxed(p->base + MDSS_MDP_REG_SSPP_SRC_OP_MODE));
+	}
+}
+
+void mdss_mdp_diag_pipes(const char *where)
+{
+	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
+	struct mdss_mdp_ctl *ctl;
+	char buf[96];
+	int len;
+	u32 i, lm;
+
+	if (!mdata) {
+		pr_info("DIAG123 %s: no mdata\n", where);
+		return;
+	}
+	mdss_mdp_diag_pipe_arr(where, "vig", mdata->vig_pipes,
+			       mdata->nvig_pipes);
+	mdss_mdp_diag_pipe_arr(where, "rgb", mdata->rgb_pipes,
+			       mdata->nrgb_pipes);
+	mdss_mdp_diag_pipe_arr(where, "dma", mdata->dma_pipes,
+			       mdata->ndma_pipes);
+
+	for (i = 0; mdata->ctl_off && i < mdata->nctl; i++) {
+		ctl = &mdata->ctl_off[i];
+		if (!ctl->base)
+			continue;
+		len = 0;
+		buf[0] = '\0';
+		for (lm = 0; lm < mdata->nmixers_intf; lm++)
+			len += scnprintf(buf + len, sizeof(buf) - len,
+					 " lm%u=%08x", lm,
+					 readl_relaxed(ctl->base +
+						MDSS_MDP_REG_CTL_LAYER(lm)));
+		pr_info("DIAG123 %s: ctl%u%s\n", where, i, buf);
+	}
+}
+
 /**
  * mdss_hw_init() - Initialize MDSS target specific register settings
  * @mdata: MDP private data

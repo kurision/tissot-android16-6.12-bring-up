@@ -635,8 +635,8 @@ int mdss_smmu_fault_handler(struct iommu_domain *domain, struct device *dev,
 	if (mdss_smmu->mmu_base) {
 		fsynr1 = readl_relaxed(mdss_smmu->mmu_base + SMMU_CBN_FSYNR1);
 		mid = fsynr1 & 0xff;
-		pr_err("mdss_smmu: iova:0x%lx flags:0x%x fsynr1: 0x%x mid: 0x%x\n",
-			iova, flags, fsynr1, mid);
+		pr_err_ratelimited("mdss_smmu: iova:0x%lx flags:0x%x fsynr1: 0x%x mid: 0x%x\n",
+				   iova, flags, fsynr1, mid);
 
 		/* get domain id information */
 		for (i = 0; i < MDSS_IOMMU_MAX_DOMAIN; i++) {
@@ -649,8 +649,8 @@ int mdss_smmu_fault_handler(struct iommu_domain *domain, struct device *dev,
 
 		mdss_mdp_debug_mid(mid);
 	} else {
-		pr_err("mdss_smmu: iova:0x%lx flags:0x%x\n",
-			iova, flags);
+		pr_err_ratelimited("mdss_smmu: iova:0x%lx flags:0x%x\n",
+				   iova, flags);
 		MDSS_XLOG_TOUT_HANDLER("mdp");
 	}
 end:

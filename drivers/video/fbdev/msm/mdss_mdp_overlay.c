@@ -1528,6 +1528,7 @@ int mdss_mdp_overlay_start(struct msm_fb_data_type *mfd)
 	 */
 	atomic_inc(&mdp5_data->mdata->active_intf_cnt);
 	mdss_mdp_diag_pwr("overlay_start ctl_start pre");
+	mdss_mdp_diag_pipes("overlay_start pre");
 	rc = mdss_mdp_ctl_start(ctl, false);
 	pr_info("DIAG118 overlay_start ctl_start rc=%d\n", rc);
 	if (rc == 0) {
@@ -2526,6 +2527,7 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
 	int ret = 0;
 	struct mdss_mdp_commit_cb commit_cb;
+	static unsigned int diag123_kickoffs; /* DEBUG run123; per-fb ov_lock */
 
 	if (!ctl || !ctl->mixer_left)
 		return -ENODEV;
@@ -2623,6 +2625,11 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 		ret = mdss_mdp_display_commit(mdp5_data->ctl, NULL,
 			&commit_cb);
 		ATRACE_END("display_commit");
+		/* DEBUG run123: first two kernel flushes only */
+		if (diag123_kickoffs < 2) {
+			diag123_kickoffs++;
+			mdss_mdp_diag_pipes("kickoff post-commit");
+		}
 	}
 	__vsync_set_vsync_handler(mfd);
 

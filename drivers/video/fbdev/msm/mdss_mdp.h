@@ -1837,6 +1837,7 @@ int mdss_mdp_smp_setup(struct mdss_data_type *mdata, u32 cnt, u32 size);
 
 void mdss_hw_init(struct mdss_data_type *mdata);
 void mdss_mdp_diag_pwr(const char *where);
+void mdss_mdp_diag_pipes(const char *where);
 
 int mdss_mdp_mfd_valid_dspp(struct msm_fb_data_type *mfd);
 
