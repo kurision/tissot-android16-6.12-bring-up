@@ -22,10 +22,17 @@
  *   IDs from dt-bindings/clock/qcom,mdss-dsi-pll-8953.h; no shadow clocks
  *   (static panel, DFPS-gated init never runs).
  * - DSI1 kept disabled (single_dsi, like the donor common glue).
- * - No cont-splash-memory: splash is disabled, the kernel re-inits the
- *   panel (one blank flash expected). No secure context banks.
- * - SMMU children carry iommus = <&apps_iommu 0x15> (single-cell mainline
- *   binding) plus the clocks the context probe requires.
+ * - No cont-splash-memory child: the driver never frees the no-map splash
+ *   region. LK's splash (a solid blue fill) keeps scanning out until the
+ *   first kernel commit, so cont_splash_mem carries iommu-addresses for
+ *   smmu_mdp_unsec: an IOMMU_RESV_DIRECT 1:1 mapping from the first attach.
+ *   No secure context banks.
+ * - Only smmu_mdp_unsec uses the MDSS stream (iommus = <&apps_iommu 0x15>,
+ *   single-cell mainline binding, plus the clocks the context probe needs).
+ *   The donor has no rotator context bank; a second client on stream 0x15
+ *   got its own group and default domain, reprogrammed the shared context
+ *   bank's TTBR0 and hid every MDP mapping (run125). Without it the rotator
+ *   falls back to the MDP unsecure domain, as on stock.
  * - 32-bit compat, writeback panel extras and ESD stay off.
  */
 
@@ -49,6 +56,10 @@
 		      "dsi0pllbyte",
 		      "dsi1pll",
 		      "dsi1pllbyte";
+};
+
+&cont_splash_mem {
+	iommu-addresses = <&smmu_mdp_unsec 0x90001000 0x13ff000>;
 };
 
 &soc {
@@ -191,14 +202,11 @@
 			clocks = <&gcc GCC_MDSS_AHB_CLK>,
 				 <&gcc GCC_MDSS_AXI_CLK>;
 			clock-names = "iface_clk", "bus_clk";
-		};
-
-		smmu_rot_unsec: qcom,smmu_rot_unsec_cb {
-			compatible = "qcom,smmu_rot_unsec";
-			iommus = <&apps_iommu 0x15>;
-			clocks = <&gcc GCC_MDSS_AHB_CLK>,
-				 <&gcc GCC_MDSS_AXI_CLK>;
-			clock-names = "iface_clk", "bus_clk";
+			/* LK leaves the splash pipe scanning cont_splash_mem;
+			 * its iommu-addresses keep that fetch 1:1 mapped from
+			 * the first attach until the kernel's first commit.
+			 */
+			memory-region = <&cont_splash_mem>;
 		};
 
 		mdss_fb0: qcom,mdss_fb_primary {

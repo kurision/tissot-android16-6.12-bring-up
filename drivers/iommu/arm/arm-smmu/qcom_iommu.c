@@ -30,6 +30,7 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 
+#include "../../dma-iommu.h"
 #include "arm-smmu.h"
 
 #define SMMU_INTR_SEL_NS     0x2000
@@ -613,6 +614,10 @@ static const struct iommu_ops qcom_iommu_ops = {
 	.domain_alloc_paging = qcom_iommu_domain_alloc_paging,
 	.probe_device	= qcom_iommu_probe_device,
 	.device_group	= generic_device_group,
+	/* DT reserved-memory iommu-addresses, e.g. a splash buffer the
+	 * bootloader leaves scanning out through this IOMMU.
+	 */
+	.get_resv_regions = iommu_dma_get_resv_regions,
 	.of_xlate	= qcom_iommu_of_xlate,
 	.pgsize_bitmap	= SZ_4K | SZ_64K | SZ_1M | SZ_16M,
 	.default_domain_ops = &(const struct iommu_domain_ops) {
