@@ -289,6 +289,7 @@ static struct mdss_mdp_irq mdp_irq_map[] =  {
 static struct intr_callback *mdp_intr_cb;
 
 static int mdss_mdp_parse_dt(struct platform_device *pdev);
+static void mdss_mdp_debug_emmc_mark(loff_t slot, u32 tag, u32 val);
 static int mdss_mdp_parse_dt_pipe(struct platform_device *pdev);
 static int mdss_mdp_parse_dt_mixer(struct platform_device *pdev);
 static int mdss_mdp_parse_dt_wb(struct platform_device *pdev);
@@ -2304,8 +2305,6 @@ static void mdss_mdp_hw_rev_caps_init(struct mdss_data_type *mdata)
 			mdata->mdp_rev == MDSS_MDP_HW_REV_200)
 		mdss_set_quirk(mdata, MDSS_QUIRK_FMT_PACK_PATTERN);
 }
-
-static void mdss_mdp_debug_emmc_mark(loff_t slot, u32 tag, u32 val);
 
 static void mdss_hw_rev_init(struct mdss_data_type *mdata)
 {
