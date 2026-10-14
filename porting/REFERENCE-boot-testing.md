@@ -259,6 +259,8 @@ Stock ramoops uses a different reservation from this port. The evidence
 collector now recovers committed raw-console/dmesg slots and separate periodic
 printk tails directly from logdump, with integrity/provenance metadata.
 Full layout and next-image instructions are in `logging/README.md`,
-"Tissot reset persistence after run106". Kernel build and controlled
-orderly-reboot persistence validation remain unexecuted.
+"Tissot reset persistence after run106". Run107 subsequently verified the
+user's rebuilt kernel/DTB: a controlled deadline reboot persisted ACKRESET1
+and four CRC-valid raw/printk slots, recovered after stock returned.
+See `TRACKER-kgsl-port.md`, "Run107". This is not a panic/watchdog verdict.
 

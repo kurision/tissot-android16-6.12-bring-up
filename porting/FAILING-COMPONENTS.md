@@ -171,7 +171,7 @@ recorder is denied `{write}` on `/kmsg` and `/mmcblk0p48` by SELinux, then
 the log ends at ~37 s — before `sys.boot_completed`, so the 360 s watchdog
 reboots the phone back to ROM.
 
-## Reset logging repair after run106 — runtime validation pending
+## Reset logging repair — orderly persistence verified in run107
 
 Late PARTLABEL lookup is repaired; generic pstore-blk is not a panic-safe
 replacement for the existing ramoops/logdump owner. Raw snapshot recovery
@@ -179,9 +179,11 @@ exports two actual run106 console samples, no valid panic/oops dump.
 CRC32-committed snapshots, separate periodic printk tails and a 60 MiB
 userspace prefix cap now protect the reserved diagnostic ranges.
 
-Host regressions and Android ARM64 emulator prefix smoke pass; the full
-kernel has not been built or booted. Linux kernel/DTB rebuild and one
-controlled orderly reboot remain required to prove ACKRESET1 persistence.
-See `TRACKER-kgsl-port.md`, "Reset logging repair after run106", and
-`logging/README.md` for build, packaging, layout and acceptance details.
+Host regressions and ARM64 prefix smoke pass, including physical Tissot.
+User's Linux build of `be63c5ea5` RAM-booted in run107; the controlled 45 s
+deadline invoked the orderly notifier, flushed a genuine ACKRESET1 record,
+and returned to stock. Both console snapshots and periodic printk tails
+passed header/payload CRCs after return. Earlier spontaneous reset cause and
+final panic/watchdog persistence remain unproven.
+See `TRACKER-kgsl-port.md`, "Run107", and `logging/README.md` for evidence.
 
