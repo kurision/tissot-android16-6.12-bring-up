@@ -999,6 +999,8 @@ failed:
  * an action to the vendor USB rc so init itself releases the UDC when the
  * vendor stack switches to configfs ("on boot", before adbd starts). SD
  * and logdump capture are unaffected; the USB serial stream ends there.
+ * This vendor stack sets sys.usb.configfs=2, never =1 (run124), so install
+ * both triggers; the kmsg marker records which one fired in the run log.
  */
 #define USB_RC "/vendor/etc/init/hw/init.qcom.usb.rc"
 
@@ -1007,6 +1009,12 @@ static void guard_usb_handoff(int proc, int log)
 	static const char action[] =
 		"\n# ACK diag: hand the UDC from the diag ACM gadget to adb.\n"
 		"on property:sys.usb.configfs=1\n"
+		"    write /dev/kmsg \"ACK diag: USB handoff configfs=1\"\n"
+		"    write /config/usb_gadget/g1/UDC \"none\"\n"
+		"    rm /config/usb_gadget/g1/configs/c.2/f1\n"
+		"    rmdir /config/usb_gadget/g1/configs/c.2\n"
+		"on property:sys.usb.configfs=2\n"
+		"    write /dev/kmsg \"ACK diag: USB handoff configfs=2\"\n"
 		"    write /config/usb_gadget/g1/UDC \"none\"\n"
 		"    rm /config/usb_gadget/g1/configs/c.2/f1\n"
 		"    rmdir /config/usb_gadget/g1/configs/c.2\n";
@@ -1110,6 +1118,47 @@ done:
 	snprintf(message, sizeof(message),
 		 "DIAG: early logcat rc appended errno=%d\n", error);
 	say(log, message);
+}
+#endif
+
+#ifdef ANDROID_DISPLAY_GATE
+/*
+ * Display-gate probe (run110, reinstated for run125): stub the display stack
+ * only. Run124 ran it and userspace daemons crashed in a SIGSEGV cascade
+ * after the first GPU opens and MDSS SMMU faults; run123 gated it and had
+ * none. hwcomposer and display-color-hal drive MDSS sysfs/framebuffer/PP
+ * ioctls; surfaceflinger opens the GPU. Everything else is kept.
+ */
+static const char *const displaygate_rc[][2] = {
+	{ "/dev/block/ack-displaygate-composer.rc",
+	  "/vendor/etc/init/android.hardware.graphics.composer@2.1-service.rc" },
+	{ "/dev/block/ack-displaygate-color.rc",
+	  "/vendor/etc/init/vendor.display.color@1.0-service.rc" },
+	{ "/dev/block/ack-displaygate-surfaceflinger.rc",
+	  "/system/etc/init/surfaceflinger.rc" },
+};
+
+static void guard_displaygate(int proc, int log)
+{
+	static const char stub[] = "# disabled by ACK diag display gate probe\n";
+	char message[256];
+	size_t i;
+
+	for (i = 0; i < sizeof(displaygate_rc) / sizeof(displaygate_rc[0]); i++) {
+		int fd = memfd_create("ack-displaygate-rc", MFD_CLOEXEC);
+		int error = 0;
+
+		if (fd < 0 || write_all(fd, stub, sizeof(stub) - 1) ||
+		    guard_bind_config(proc, fd, displaygate_rc[i][0],
+				      displaygate_rc[i][1]))
+			error = errno;
+		if (fd >= 0)
+			close(fd);
+		snprintf(message, sizeof(message),
+			 "DIAG: display gate rc override %s errno=%d\n",
+			 displaygate_rc[i][1], error);
+		say(log, message);
+	}
 }
 #endif
 
@@ -1845,6 +1894,9 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	say(log, "DIAG: bootdevice canonical alias and legacy wait path ready\n");
 	/* After the alias release: a late override must never block boot. */
 	guard_usb_handoff(proc, log);
+#ifdef ANDROID_DISPLAY_GATE
+	guard_displaygate(proc, log);
+#endif
 	guard_firmware(log);
 	harvest_modem_firmware(log);
 	adsprpc_compat_fork(log);
