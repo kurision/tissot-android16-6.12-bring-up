@@ -1,7 +1,51 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-15 (snapshot60 run137/run139; both drivers bound, charging values never readable).
+Last update: 2026-10-15 (snapshot60 run141; charging-control HAL blocker cleared, charging confirmed).
+
+## Current evidence — snapshot60 run141 (charging-control blocker cleared)
+
+**The charging-control HAL now registers and the battery is charging.** The
+blocker was SELinux *labelling*, not permission: `vendor_sepolicy.cil` labels
+the power_supply directories with `genfscon` using literal CAF 4.19 sysfs
+paths (`/devices/platform/soc/200f000.qcom,spmi/spmi-0/spmi0-02/...`), which
+no mainline device path can match (`soc@0`, `200f000.spmi`, `spmi-0/0-02`,
+`pmic@2`). The nodes kept the generic `sysfs` label, the HAL's
+`sysfs_battery_supply` allow (vendor_sepolicy.cil:17841) never applied, and
+SystemServer blocked in `ChargingControlController.waitForDeclaredService`
+forever. Fix: three `genfscon` statements in
+`porting/policy/harness-genfs.cil`, appended at packaging time.
+
+| | run137/run140 | run141 |
+|---|---|---|
+| health HAL denials | 17086 | **0** |
+| `IChargingControl` | never registered | `288 ... : []` |
+| `dumpsys battery` | all zeros | `USB powered: true`, `status: 2`, `level: 92`, `voltage: 4145`, `temp: 277`, `health: 2` |
+| SystemServer | blocked, no return | no watchdog kill, no blocked handler |
+
+Charge counter moved 1959547 → 1957591 over 45 s with voltage rising
+4145 → 4150 mV. **Charging is confirmed** — the first verified battery
+reading of any kind on this port.
+
+Two r140-style dead ends are now closed as **not causes**, checked against the
+live stock device: `/sys/class/qcom-battery` does not exist on stock either,
+nor does `power_supply/battery/input_suspend`, and the HAL tolerates both — so
+the donor's 2147-line `battery.c` port is unnecessary. `selinux=0` put the
+phone into recovery 2/2 and must not be retried; `--debuggable` never yielded
+`adb root`.
+
+Still open, in priority order:
+
+| Component | Evidence | Next check |
+|---|---|---|
+| **Boot still does not complete** | run141: `sys.boot_completed` unset, `init.svc.bootanim=running` at 254 s, no SurfaceFlinger errors | The GPU blocker is untested again now that SystemServer is unblocked. Re-examine with fresh evidence before trusting the stale track claim. |
+| Charging current looks low | `dumpsys battery` reports `Max charging current: 100000` µA (100 mA) vs DT `constant-charge-current-max` 1 A | Find which property feeds that field and why it reports 100 mA; charging is real but may be trickling. |
+| ADSP / FastRPC | `open_device_node failed for domain ID 0 (errno 2)` ×21147; firmware is present on the device at `/firmware/image/adsp.mdt` + b00-b14 (10.5 MB), WLAN 4.2 MB, not staged | Stage into the ramdisk with `--firmware-dir`; needs the `firmware_class.path=/vendor/firmware` token dropped. No boot needed to prepare. |
+| GPU | `kgsl-iommu` probe returns early at its clock lookup **on purpose** (`msm8953-xiaomi-tissot.dts`: "DO NOT fix these") → NOMMU → preemption disabled `WARN` at `adreno_ringbuffer.c:396` is a consequence, not a bug | Both are deliberate and documented; do not re-litigate. 5 past boots died when that early return was removed. |
+| Thermal | `StartThermalManager` **succeeds** in run137 — changed since run130 | No longer a failure; verify sensor monitoring separately. |
+| Fingerprint | **No SIGSEGV in run137 logcat**; the run130 `0xc0` crash does not reproduce | Re-check before porting anything; identify the fitted sensor first. |
+| mm-pp-dpps backlight | 135 `avc` denials on `name="brightness"` from `mm-pp-daemon` | Same genfscon mechanism should fix it; add to `porting/policy/` when convenient. |
+| Display helper / camera / vibrator / sensors | unchanged from run130 | Revisit after the boot-completion blocker. |
 
 ## Current evidence — snapshot60 run137/run139 (both QPNP drivers bound)
 
