@@ -1,9 +1,30 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-15 (snapshot60 run141; charging-control HAL blocker cleared, charging confirmed).
+Last update: 2026-10-16 (snapshot60 run143; ADSP firmware staged, boot stalls after enable_screen; run144/run145 packaged untested).
 
-## Current evidence — snapshot60 run141 (charging-control blocker cleared)
+## Current evidence — snapshot60 run143 (ADSP firmware up; boot stalls after enable_screen)
+
+Last confirmed-good image: **run143**. run144 and run145 are packaged and
+structurally verified but **not booted** — the phone went unreachable.
+
+Boot now reaches `boot_progress_ams_ready` and `boot_progress_enable_screen`
+and stops there; `sys.boot_completed` unset at 289 s, `init.svc.bootanim`
+still running. ActivityManager drops `system_server_pre_watchdog` at 10:26:46
+and goes silent.
+
+| Component | Evidence | Status |
+|---|---|---|
+| **SystemServer hang (current boot blocker)** | `ExtconUEventObserver: Unable to read .../qcom,qpnp-smbcharger/extcon/extcon0/cable.1/name` inside `PhoneWindowManager.init` → `WindowManagerService$6.run`; `DropBoxManagerService: add tag=system_server_pre_watchdog` | run144 labels the charger's extcon subtree `sysfs_graphics` (10 `genfscon`). **Untested.** |
+| GPU | `/dev/kgsl-3d0` **exists**; SurfaceFlinger registered; kgsl NOMMU by deliberate design; preemption WARN is a consequence of NOMMU (`adreno_a5xx_preempt.c:598`), not a bug | The tracker's "GPU is the confirmed blocker" is **not supported** by run143 evidence. Do not re-litigate. |
+| ADSP / FastRPC | firmware staged from `/firmware/image` (16 files, MD5-verified); `remoteproc0 ... is now up`, APR audio endpoints created; `no reserved DMA memory for FASTRPC` | DSP works. run145 adds the DMA pool (`fastrpc-rpmsg` probe resolves `memory-region`). **Untested.** |
+| WLAN | `wcnss.mdt ... error -2` | Not staged. Same mechanism as ADSP: `wcnss.mdt` + 4.2 MB of segments on `/firmware/image`. |
+| Display composer / Dpps | `Dpps: main():33 Failed to initialize DPPS`; needs `/sys/class/leds/lcd-backlight/brightness` (**no leds class device exists on this port**), `GetDriverProbe failed to get display 1` (EACCES), and an AD interface | run142's backlight `genfscon` halved denials 61 → 32 but is not sufficient. |
+| Audio | `AudioFlinger: loadHwModule() error -19 loading module primary` → `listAudioPorts failed` at 10 Hz | Should follow from FastRPC; retest after run145. |
+| Charging control | **CLEARED in run141** — `IChargingControl` registers, `dumpsys battery` reports real values | Done. |
+| Charging rate | `Max charging current: 100000` µA vs DT `constant-charge-current-max` 1 A; SOC went 92 → 91 across runs | Unexplained. Charging is real but may be trickling. |
+
+## Superseded — snapshot60 run141 (charging-control blocker cleared)
 
 **The charging-control HAL now registers and the battery is charging.** The
 blocker was SELinux *labelling*, not permission: `vendor_sepolicy.cil` labels
