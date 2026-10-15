@@ -438,6 +438,7 @@
 			qcom,smd-channels = "fastrpcsmd-apps-dsp";
 			label = "adsp";
 			qcom,non-secure-domain;
+			memory-region = <&fastrpc_mem>;
 		};
 	};
 };
