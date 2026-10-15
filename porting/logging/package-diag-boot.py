@@ -13,6 +13,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -35,6 +36,10 @@ S_IFMT, S_IFREG = 0o170000, 0o100000
 
 def die(msg):
     sys.exit(f"package-diag-boot: {msg}")
+
+
+def warn(msg):
+    print(f"package-diag-boot: WARNING: {msg}", file=sys.stderr)
 
 
 def sha256(data):
@@ -223,7 +228,44 @@ def customize_ramdisk(cpio, init, fw_entries, debuggable, policy_append):
                 die("prop.default record mismatch after rebuild")
         elif a["fields"] != b["fields"] or a["data"] != b["data"]:
             die(f"record {i} ({a['name']}) changed")
+    assert_unique_ramdisk(again)
     return out, len(new)
+
+
+def assert_unique_ramdisk(records):
+    """Refuse duplicate cpio names; warn about duplicate genfscon paths.
+
+    Staging firmware onto a base that already carried it added a second
+    lib/firmware/adsp.mdt, which is invisible in the per-record diff below and
+    ships a ramdisk with two files of the same name. That is worth dying for.
+
+    Duplicate genfscon paths are only a warning: appending a cumulative policy
+    fragment to a base that already had part of it does produce them
+    (boot-run142.img has 3, boot-run143.img has 5), and those images boot
+    normally with the labels applied -- secilc accepts a repeated genfscon for
+    the same path. So it is untidy provenance, not a broken policy.
+    """
+    seen = {}
+    for r in records:
+        seen[r["name"]] = seen.get(r["name"], 0) + 1
+    dupes = sorted(n for n, c in seen.items() if c > 1)
+    if dupes:
+        die(f"duplicate ramdisk record names ({len(dupes)}): "
+            + ", ".join(dupes[:6]) + (" ..." if len(dupes) > 6 else ""))
+
+    cil = [r for r in records if r["name"] == POLICY_CIL_RECORD]
+    if cil:
+        paths = re.findall(r'genfscon\s+(\w+)\s+"([^"]*)"',
+                           cil[0]["data"].decode("utf-8", "replace"))
+        counts = {}
+        for key in paths:
+            counts[key] = counts.get(key, 0) + 1
+        dupes = sorted(p for p, c in counts.items() if c > 1)
+        if dupes:
+            warn(f"{len(dupes)} duplicate genfscon path(s); harmless but the "
+                 "base already carried them -- append only the new ones: "
+                 + ", ".join(p[1][:48] for p in dupes[:3])
+                 + (" ..." if len(dupes) > 3 else ""))
 
 
 def new_cmdline(base, keep_console=False):
