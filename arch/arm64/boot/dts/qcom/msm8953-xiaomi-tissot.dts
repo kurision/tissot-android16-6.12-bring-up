@@ -444,6 +444,26 @@
 &gpu {
 	compatible = "qcom,kgsl-3d0", "qcom,adreno-506.0";
 	status = "okay";
+
+	/*
+	 * Drop the SoC dtsi's iommus = <&gpu_iommu 0>.
+	 *
+	 * kgsl does not use the DMA API for GPU memory: it allocates its own
+	 * IOMMU domain and attaches the gfx3d_user child in the kgsl_iommu
+	 * node below (kgsl_iommu.c: _alloc_pt -> iommu_domain_alloc(),
+	 * _attach_pt -> iommu_attach_device()), then maps IOVAs into it. The
+	 * iommus property would give this device a *second* domain on the
+	 * same context bank, so two owners would program bank 0.
+	 *
+	 * It would also make this device a DMA/IOMMU client, so
+	 * dma_alloc_coherent() would hand back IOVAs - but kgsl self-programs
+	 * the bank and needs the physical address for TTBR0
+	 * (kgsl_iommu_set_pt() writes kgsl_mmu_pagetable_get_ttbr0()).
+	 *
+	 * The bank's single owner is the gfx3d_user child in the kgsl_iommu
+	 * node below.
+	 */
+	/delete-property/ iommus;
 	/*
 	 * Vendor chip identity, from the 4.19 donor gpu node
 	 * (msm8953-gpu.dtsi:109, qcom,chipid = <0x05000600> = A506 rev 6.0.0).
@@ -623,40 +643,42 @@
 	/*
 	 * Vendor kgsl-iommu glue from the 4.19 donor
 	 * (kernel_xiaomi_msm8953 msm8953-gpu.dtsi, kgsl_msm_iommu node),
-	 * retargeted to the 6.12 tree's gpu_iommu SMMU handle. Without it
-	 * kgsl_iommu_probe finds no qcom,kgsl-smmu-v2 node and the driver
-	 * cannot bring up its context bank.
+	 * retargeted to the 6.12 tree's gpu_iommu SMMU handle.
+	 *
+	 * kgsl drives this SMMU itself, and that is the stock mode: kgsl_mmu
+	 * selects the "iommu" subtype (KGSL_MMU_TYPE_IOMMU), and kgsl_iommu
+	 * then allocates its own domain and attaches this node's gfx3d_user
+	 * child to it. Only IOMMU mode maps the GPU's sparse iova space; NOMMU
+	 * programs physical addresses straight into the ring.
+	 *
+	 * clock-names are read from THIS node but resolved by devm_clk_get()
+	 * against the *gpu* device, because this node matches no OF bus and so
+	 * never gets a platform device of its own (_kgsl_iommu_probe falls
+	 * back to &device->pdev->dev, and kgsl_mmu_get_ctx() is a stub that
+	 * returns -ENODEV). They must therefore name clocks that exist on the
+	 * gpu node. The two clocks declared here, GCC_OXILI_AHB_CLK and
+	 * GCC_BIMC_GFX_CLK, are the gpu node's "iface_clk" and
+	 * "mem_iface_clk": same phandles, same order.
+	 *
+	 * Naming them anything else fails the lookup, _kgsl_iommu_probe
+	 * returns -ENODEV, and kgsl silently falls back to NOMMU while the
+	 * 6.12 core leaves this context bank translating (qcom_iommu programs
+	 * gfx3d_user from the *gpu* node's iommus). That mismatch is what
+	 * run128 shows: "DIAG kgsl_mmu: subtype='nommu' type=1
+	 * (NOMMU/physical)" with gpuaddr == physaddr at ME_INIT, then "CP
+	 * initialization failed to idle" and "Can't find a memory entry
+	 * containing IB1BASE 0".
+	 *
+	 * Runs 34/36 instead made this probe succeed but left &gpu's own
+	 * iommus in place, so the gpu device and this child both claimed bank
+	 * 0 and two different domains programmed it. &gpu no longer has
+	 * iommus (see the top of that node), so the bank has one owner.
 	 */
 	kgsl_iommu: qcom,kgsl-iommu@1c40000 {
 		compatible = "qcom,kgsl-smmu-v2";
 		reg = <0x01c40000 0x10000>;
 		clocks = <&gcc GCC_OXILI_AHB_CLK>, <&gcc GCC_BIMC_GFX_CLK>;
-		/*
-		 * DO NOT "fix" these to the gpu node's clock-names.
-		 *
-		 * These names are read from THIS node but resolved by
-		 * devm_clk_get() against the *gpu* device, because the
-		 * kgsl-iommu node matches no 6.12 OF bus and so never gets a
-		 * platform device of its own. They therefore do not resolve
-		 * ("dt: Couldn't get clock: gpu_ahb_clk"), and _kgsl_iommu_probe
-		 * returns -ENODEV there.
-		 *
-		 * That early return is load-bearing. Renaming them to the gpu
-		 * node's names ("iface_clk"/"mem_iface_clk") does make the probe
-		 * succeed, and the GPU then binds and works — but the phone dies
-		 * ~60 s into the boot, before the diag init writes anything, twice
-		 * in a row: run34 and run36. With the names left as they are,
-		 * run35 boots to a full 300 s+ Android and /dev/kgsl-3d0 opens.
-		 *
-		 * kgsl_iommu_probe is a separate platform driver, so its -ENODEV
-		 * is non-fatal to the GPU bind. The untested code past the early
-		 * return (of_platform_populate over the CB children, and the
-		 * NULL-pdev fallback passing the live GPU device to
-		 * of_dma_configure(ctx->dev, node, true)) is what kills the
-		 * boot; guarding the of_dma_configure call did not help (run36).
-		 * Investigating that path needs its own evidence, not a guess.
-		 */
-		clock-names = "gpu_ahb_clk", "gcc_bimc_gfx_clk";
+		clock-names = "iface_clk", "mem_iface_clk";
 		qcom,secure_align_mask = <0xfff>;
 		qcom,retention;
 		qcom,global_pt;
@@ -664,7 +686,6 @@
 			compatible = "qcom,smmu-kgsl-cb";
 			label = "gfx3d_user";
 			iommus = <&gpu_iommu 0>;
-			qcom,iommu-dma = "disabled";
 		};
 	};
 };
