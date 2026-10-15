@@ -2693,6 +2693,18 @@ static int _kgsl_iommu_cb_probe(struct kgsl_device *device,
 		}
 	}
 
+	/*
+	 * DIAG (run129): which device is about to become this context bank's
+	 * master. of_dma_configure() is where the 6.12 core configures
+	 * IOMMU/DMA on demand, so this names the owner of the bank: the
+	 * gfx3d_user child (pdev found - correct, it is the node that carries
+	 * iommus) or the live GPU device (NULL-pdev fallback - the gpu node
+	 * used to carry the same iommus stream id, which is the double owner
+	 * the board DT now removes).
+	 */
+	dev_info(device->dev, "DIAG kgsl_iommu_cb: %s pdev=%s dev=%s\n",
+		ctx->name, pdev ? "yes" : "no", dev_name(ctx->dev));
+
 	of_dma_configure(ctx->dev, node, true);
 	return 0;
 }
