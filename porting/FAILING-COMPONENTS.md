@@ -1,7 +1,48 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-15 (snapshot60 run136; fuel gauge bound, charger still not).
+Last update: 2026-10-15 (snapshot60 run137/run139; both drivers bound, charging values never readable).
+
+## Current evidence — snapshot60 run137/run139 (both QPNP drivers bound)
+
+The VADC reference-channel gap named in run136 is fixed; the charger now
+probes and the port exposes the full donor supply set.
+
+| Observation | Evidence | Reading |
+|---|---|---|
+| Charger probes | `run137-usb.log:396`, `run139-usb.log:405`: `SMBCHG successfully probe Charger version=SCHG_LITE Revision DIG:0.0 ANA:0.1 batt=1 dc=0 usb=1` | Reproduced on two runs. `SCHG_LITE` is the branch the subtype fix reaches via PMI8940. |
+| Gauge probes | `run139-usb.log:409`: `FG Probe success - FG Revision DIG:3.1 ANA:1.2 PMIC subtype=64` | Byte-identical to stock `run135-stock-kernel-dmesg.log:769`. |
+| Both bound, three supplies | live `/sys/bus/platform/devices/...:qcom,fg/driver` and `...:qcom,qpnp-smbcharger/driver` both populated; `/sys/class/power_supply/` = `battery`, `bms`, `usb` | The kernel-side objective is met. |
+| Subtype fix works on hardware | `run139-usb.log:404`: `smbchg_hvdcp_enable_cb: HVDCP disabled` | Only reachable when `hvdcp_not_supported` is set, i.e. when the subtype reads PMI8940. |
+| **Charging never measured** | `dumpsys battery` all zeros; every read channel closed | See the table below. |
+
+**`selinux=0` put the phone into recovery, twice, and must not be retried.**
+`package-run138.json` records kernel payload `dabc20b9...` and ramdisk
+`d12d1d73...`, both **identical to run137**, base `boot-run137.img`; the only
+difference in the whole image is one appended cmdline token. run138 and
+run138b both returned `fastboot boot ... OKAY` and then landed in recovery
+with a 0-byte capture, against 0/2 for every image without the token.
+`CONFIG_SECURITY_SELINUX_BOOTPARAM=y` is set and `hooks.c:148` consumes
+`selinux=`, but `selinux_enabled_boot=0` also gates `selinuxfs.c:2148`, so
+`/sys/fs/selinux` never appears. That last step is **unverified**; it is a
+hypothesis consistent with two failures, not a read init source.
+
+Why charging could not be measured, all channels and their evidence:
+
+| Channel | Outcome |
+|---|---|
+| `shell` read of `/sys/class/power_supply/*` | SELinux denied, `avc ... permissive=0`, `getenforce` → `Enforcing` |
+| `dumpsys battery` | all zeros — the Lineage health HAL is the denied party |
+| `adb root` | `uid=2000(shell)` after run139 even with `ro.debuggable=1` |
+| `--debuggable` (`ro.secure=0`, `ro.debuggable=1`) | `ro.debuggable` took (`1` at runtime, late), but init restores `ro.secure=1`; adbd stayed shell |
+| `selinux=0` cmdline | 2/2 recovery, see above |
+| SD mirror `/sdlog/ack-kmsg.log` | no SD card present |
+| `pstore` / `logdump` partition | port kernel cannot open `PARTLABEL=logdump`; no `su` |
+
+`usb=1` at probe means the charger IC saw VBUS, and the phone is cabled, so
+charging is plausible. **Plausible is not measured**, and no live
+`status`, `current_now`, `charge_counter` or `voltage_now` has been read on
+this port.
 
 ## Current evidence — snapshot60 run136 (first boot with both new initcalls enabled)
 
@@ -547,7 +588,7 @@ but on in early-return run105; that selects different handoff paths
 | Component | Symptom (evidence) | Status | Next action |
 |---|---|---|---|
 | ADSP FastRPC channel | run130: firmware load `-2`; late loader-path write EACCES; no `fastrpc-adsp` (L130:565,2583,13604), also observed in run128 | BLOCKED | Restore late firmware path/rebind; reuse the historical alias and label fixes, then verify the actual device/channel |
-| Battery / charging kernel interface | run136: FG bound, `PMIC subtype=64` matching stock (`run136-usb.log:408`); only `bms` supply; charger deferred on `adc@3100` which fails `Please define VDD channel` (`:158`, `:453`) | FIXING | Fuel gauge now works. Charger needs the `VADC_VDD_VADC`/`VADC_GND_REF` reference channels before it can register `battery`/`usb`; real readings and charging/protection behaviour still unverified |
+| Battery / charging kernel interface | run137/run139: both `qcom,fg` and `qcom,qpnp-smbcharger` bound; `battery`/`bms`/`usb` registered; charger probes `SCHG_LITE ... usb=1`; gauge line matches stock | FIXING | Kernel interface complete. Charging/protection behaviour **unmeasured** — every read channel is blocked by SELinux plus the absence of `su`, and `selinux=0` is a dead end (2/2 recovery) |
 | Touchscreen `edt-ft5406` probe | `-110` at 300/500 ms (s50/s52); re-toggle + 500 ms succeeds (s51); bounded retry clean s53–s56 | CLOSED | Fix verified 4 boots; keep in tree |
 | `pclk0 update_config` WARN | `clk-rcg2.c:133` ×2 in 12/16 runs (s48, s49 r4–r6, s51–s57 except s55 r2). Cause: RCG CMD_UPDATE cannot latch while the DSI PLL is unprepared | **CLOSED** | `CLK_OPS_PARENT_ENABLE` (`4c7eb3f0d`) verified: 0 occurrences in s58 run1. Keep in tree |
 | WLAN `wcn36xx` + pronto PIL | run130: `wcnss.mdt` load fails `-2`; late firmware path setup EACCES (L130:562,2583); vendor `/dev/wcnss_ctrl` absent (H130:1713) | BLOCKED | Restore firmware/rebind first, then assess upstream WLAN versus vendor control-node ABI; no Wi-Fi operation verdict yet |

@@ -55,6 +55,27 @@
 				qcom,pre-scaling = <1 1>;
 				label = "chg_temp";
 			};
+
+			/*
+			 * Reference points for ratiometric calibration.
+			 * qcom-spmi-vadc refuses to probe without them
+			 * ("Please define VDD channel", :810-815), and
+			 * binding qcom,spmi-vadc.yaml:66 requires all four.
+			 * Upstream mainline omits them because its driver
+			 * dropped the check; the vendor pmi8950.dtsi carries
+			 * both.
+			 */
+			channel@e {
+				reg = <VADC_GND_REF>;
+				qcom,pre-scaling = <1 1>;
+				label = "ref_gnd";
+			};
+
+			channel@f {
+				reg = <VADC_VDD_VADC>;
+				qcom,pre-scaling = <1 1>;
+				label = "ref_vdd";
+			};
 		};
 
 		pmi8950_mpps: mpps@a000 {
