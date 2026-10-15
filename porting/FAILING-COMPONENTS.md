@@ -1,7 +1,158 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-13 (snapshot60 run90 verdict recorded).
+Last update: 2026-10-15 (snapshot60 run136; fuel gauge bound, charger still not).
+
+## Current evidence — snapshot60 run136 (first boot with both new initcalls enabled)
+
+Run136 reached sustained ADB on `6.12.93-4k-ga54b131a885c-dirty` for the
+whole 150 s poll (`run136-adb-timeline.log:12-37`), init starting services by
+device t=42 s, with **neither** QPNP initcall blacklisted. Runs 131/132
+(same payloads, both drivers enabled) and 135 (`initcall_blacklist=
+smbchg_init`, gauge alone) all stalled with no ADB and no USB capture; run134
+(`initcall_blacklist=smbchg_init,fg_init`) reached ADB at 175.79 s.
+
+| Observation | Evidence | Reading |
+|---|---|---|
+| Fuel gauge bound and probing | `run136-usb.log:408` `FG: fg_probe: FG Probe success - FG Revision DIG:3.1 ANA:1.2 PMIC subtype=64`; live `/sys/bus/platform/devices/200f000.spmi:pmic@2:qcom,fg/driver` present | Byte-identical to stock `run135-stock-kernel-dmesg.log:769`. `PMIC subtype=64` is what the new `qcom-spmi-pmic.c` translation produces; the raw `PMIC_SUBTYPE` register reads `0x11`. |
+| Charger **not** bound | `run136-usb.log:453` `qcom,qpnp-smbcharger: deferred probe pending: ... adc@3100 not ready`; no `driver` symlink on the live device | Blocked one level down, not by the charger itself. |
+| VADC refuses to probe | `run136-usb.log:158` `qcom-spmi-vadc 200f000.spmi:pmic@2:adc@3100: Please define VDD channel` | `drivers/iio/adc/qcom-spmi-vadc.c:810-815` makes `VADC_VDD_VADC`/`VADC_GND_REF` mandatory. The ported `arch/arm64/boot/dts/qcom/pmi8950.dtsi` defined neither. Upstream mainline omits them only because its driver dropped the check; `oc-test/arch/arm64/boot/dts/vendor/qcom/pmi8950.dtsi:84-92` carries both. |
+| Only `bms` supply existed | live `/sys/class/power_supply/` = `bms` only; `H136` health HAL loops on `/sys/class/power_supply/battery/charging_enabled` | No `battery` and no `usb` supply, because the charger registers both. The run130 charging-HAL blocker is therefore **not** resolved by run136. |
+
+**Attribution is not established.** Run136 changed two things at once: the
+`qcom-spmi-pmic.c` PMI8950 subtype translation and `module_init` →
+`late_initcall` in both drivers. The subtype change does not alter the FG
+path (its `case PMI8950:`/`case PMI8940:` arms at `qpnp-fg.c:8318-8320` and
+`:8620-8624` share one `fg_8950_hw_init` call), so the initcall level is the
+likely cause — but there is no oops capture to confirm it.
+`pull-run-evidence.sh` returned 0 bytes for run136 (no `su` on the port
+kernel, `/sys/fs/pstore` denied), which is the documented "no record does not
+exonerate" case. The `late_initcall` move is retained: it is what would make a
+recurrence land in ramoops instead of vanishing.
+
+Provenance: `package-run136.json` (image `5deea6e457ae4ad1b55fdf25c17bf6967ae8e7d8268adca6190c47b320a827cd`,
+ramdisk `d12d1d733d69eb08783b463dbd12b7196d3531fbdff31ef1d4a6d3033c45a6e8` —
+the untouched run130 ramdisk), `run136-build.log`, `run136-adb-timeline.log`,
+`run136-usb.log`, `run136-host-logcat.log`. `boot-run130.img` verified
+unchanged at `30bacf46ecf72dd6ca71de3f83601b7e1e71f8173b59c59326af2eb5f4d1b7f1`.
+
+## Current evidence — snapshot60 run130
+
+Run130 reached sustained ADB on `6.12.93-4k-ga54b131a885c`, still responsive
+at 495.89 s uptime, with a backlit black screen and no `sys.boot_completed`.
+The return to rooted stock was a host-requested normal reboot, not a silent
+reset. This is an ADB milestone; it does not close graphics or Android boot.
+Build/image provenance and persistence checks are in
+`TRACKER-kgsl-port.md`, "Run130: sustained ADB milestone".
+
+Evidence below is under `artifacts/snapshot60/`:
+`L130` = `run130-logdump.log`, `H130` = `run130-host-logcat.log`,
+`D130` = `run130-logcat-deduplicated.log`. D130 reduces 225051 raw lines
+(39166738 bytes) to 8911 entries (2104969 bytes), grouping exact
+level/tag/message matches while retaining counts, first/last timestamps,
+original line numbers and every unparsed line. Counts account for every
+input line; the raw SHA256 is unchanged. Use raw logs for ordering and
+thread/PID attribution; Android wall-clock jumps are preserved.
+
+### Priority and evidence
+
+| Component | Run130 observation | Interpretation / next check |
+|---|---|---|
+| Lineage charging-control HAL / SystemServer | L130:8536-8539: `vendor.lineage.health.IChargingControl/default` is declared but unavailable. H130:137675: watchdog kills SystemServer after a 189 s main-thread block; H130:137693-137697: stack waits in `waitForDeclaredService` from `ChargingControlController`. PID 3400 subsequently waits for the same service (`run130-early-logcat.log.4:559`). | A concrete additional Android boot blocker, independent of the GPU error messages. Missing charging-node warnings repeat 38538 times across four paths (D130:1813-1956); L130:4532 says `No battery devices found`. Check charger/fuel-gauge support and HAL registration together. Fixing this alone has not been shown to complete boot. |
+| GPU command processor / clock | L130:441 selects NOMMU; first `CP initialization failed to idle` at L130:3960, six occurrences. `gfx3d_clk_src` configuration-update WARN repeats eight times from L130:3993. H130:3838 and :6591 show unsignalled SurfaceFlinger/bootanimation KGSL fences. | GPU start remains broken. ME_INIT says `cb=unavailable` (L130:3491); its zero fields are not live SMMU readings. Clock warnings also occur in run128; neither their cause nor the black-screen cause is established by this run. |
+| ADSP / FastRPC / WCNSS | L130:544-565: early `adsp.mdt` and `wcnss.mdt` loads fail `-2`. Modem mounts at L130:1645, but late firmware path setup fails `errno=13` at :2583. L130:13604: `fastrpc-adsp never appeared`. | The existing late-rebind helper exits when setting the path fails (`initramfs-diag/init.c:1479-1489`), before rebind. The same path-write failure and missing device occur in run128 (:2560, :4586). Restore the previously working late-firmware path before assuming a new FastRPC driver defect. |
+| `adsprpcd` log storm | H130:1720 / D130:2697-2698: domain 0 device open fails ENOENT 24010 times; the retry message occurs 12005 times. | These are internal retries from daemon PID 801, not 12005 init service restarts. Missing FastRPC device is observed; live DSP recovery remains untested. |
+| Fingerprint HAL | H130:27573-27603 identifies `android.hardware.biometrics.fingerprint-service.xiaomi`, SIGSEGV at address `0xc0`, in `Session::Session(fingerprint_device*, ...)`. H130:164175-164205 repeats the same fault address and top frames after SystemServer restarts. | Reproduced userspace null dereference. Missing donor fingerprint support is a candidate upstream dependency, not a proven explanation of this exact null pointer. Compare device nodes, HAL initialization and donor driver/DT before proposing a fix. |
+| Vendor thermal service | H130:1625: CPU mitigation initialization fails; :1652: no monitoring sensor set up. D130:2574-2662 also reports missing legacy SoC/cpufreq/thermal paths and denied GPU/backlight access. | Vendor thermal monitoring/mitigation is incomplete. Overall hardware/kernel thermal protection is unverified; do not infer it is absent from these daemon errors alone. |
+| Camera / sensors / vibrator | H130:973: camera `sensor_init` subdevice open fails; :1020: `sns_time_init` fails; :1104: vibrator `activate` path missing. | Additional interface gaps; end-to-end operation and exact causes remain unverified. Sensor failures coexist with absent ADSP; that alone does not prove every sensor error is DSP-caused. |
+| Display policy / helper churn | L130:3571 onward: `mm-pp-dpps` denied backlight read/write and `ppd` exits 255 (:3575). Composer also receives `max_brightness` read denials (:3478). | Repeated permission failures need correct sysfs identities/policy. Do not attribute the whole black screen to these denials; GPU fences are separately unsignalled. |
+
+### Donor and upstream cross-checks
+
+The user-designated donor is **`/home/kurision/development/kernel/oc-test`** (inspected HEAD
+`687ee893ae5d`). This is a source reference, not a claim that its current
+HEAD is the exact stock boot artifact. Its `out-merge/.config` enables
+`CONFIG_QPNP_SMBCHARGER`, `CONFIG_QPNP_FG`, `CONFIG_MSM_ADSPRPC`,
+`CONFIG_FINGERPRINT_FPC1020` and `CONFIG_FINGERPRINT_GOODIX_GF3208`.
+
+- Battery: `oc-test/arch/arm64/boot/dts/vendor/qcom/mi8953/tissot/battery.dtsi`
+  enables `qpnp_smbcharger` and `qpnp_fg` and carries battery profiles,
+  voltage/current limits and thermal coefficients. Donor
+  `drivers/power/supply/qcom/qpnp-smbcharger.c:5703-5709` exports capacity
+  and both charging-enabled properties; :8186 names the battery supply.
+  Preserve these calibration inputs when scoping a port. Run130's DT has
+  no matching charger/fuel-gauge nodes; including `pmi8950.dtsi` alone does
+  not provide those drivers/interfaces.
+- Fingerprint: donor `arch/arm64/configs/vendor/tissot.config:37-38` enables
+  Goodix/FPC; `mi8953/tissot/fingerprint.dtsi` supplies both DT candidates.
+  `techpack/xiaomi-msm8953/fingerprint/goodix/gf_spi.c:47` defines
+  `/dev/goodix_fp`. Run130 has neither candidate node in its board DT.
+  The actual fitted sensor and failing HAL initialization step still need
+  evidence before choosing a port.
+- [Lineage HAL constructor](https://github.com/LineageOS/android_hardware_lineage_interfaces/blob/lineage-24.0/health/aidl/default/ChargingControl.cpp#L60)
+  loops over missing charging nodes; its
+  [service entry point](https://github.com/LineageOS/android_hardware_lineage_interfaces/blob/lineage-24.0/health/aidl/default/service.cpp#L15)
+  constructs that object before registering Binder. The
+  [framework controller](https://github.com/LineageOS/android_lineage-sdk/blob/lineage-22.2/lineage/lib/main/java/org/lineageos/platform/internal/health/ChargingControlController.java#L72)
+  waits for the declared service. This is a source-supported mechanism
+  matching the log sequence; the exact vendor binary revision is unverified.
+- [Upstream FastRPC](https://github.com/torvalds/linux/blob/master/drivers/misc/fastrpc.c)
+  creates its misc device from RPMsg probe; this tree does so at
+  `drivers/misc/fastrpc.c:2270-2275,2286`. Historical commits `1039261ce`,
+  `ec6c8ea78`, `0f552dc87` and `7406c35ae` document working late firmware
+  loading, channel creation, legacy device-name alias and stock labeling.
+  Reuse that evidence rather than rewriting the already-solved alias.
+- [Upstream RCG update](https://github.com/torvalds/linux/blob/master/drivers/clk/qcom/clk-rcg2.c#L106)
+  waits for CMD_UPDATE to clear and returns `-EBUSY` on timeout, matching
+  the local :113-134 path. This proves the warning is a clock-update
+  failure, not why hardware failed to acknowledge it.
+
+Next investigation order: charging HAL registration/battery support, GPU
+start/fences, late firmware permissions/rebind, then fingerprint and the
+remaining vendor interfaces. No new boot, rebuild or source fix was made
+for that log analysis. The subsequent source port is recorded below.
+Earlier sections below retain their historical scope;
+the snapshot58 "single boot blocker" finding is not the run130 verdict.
+
+### First repair — battery/charging source port prepared (unverified)
+
+The working tree now ports `oc-test`'s QPNP SMBCHARGER and FG drivers,
+PMIC voting and battery-data helpers into `drivers/power/supply/`, with
+built-in Kconfig selections in `scripts/tissot-ack.config`. The board's new
+`msm8953-xiaomi-tissot-battery.dtsi` carries the donor charger limits,
+thermal coefficients and three byte-identical battery profiles. VCHG uses
+PMI8950 ADC channel 3 (`SPARE1_03`), processed voltage with 1/3 prescaling,
+matching the donor legacy channel. The ADC table now exposes that reading.
+Power-supply properties and sysfs formatting include the donor charging
+interface while preserving all existing enum values.
+
+The drivers use the current PMIC, IIO, RTC and power-supply APIs. Probe
+errors propagate, IRQ cleanup tracks successful requests, and work is
+cancelled before resources are released. Asynchronous gauge-init failure
+reports an error instead of freeing its resources from its own worker.
+
+Static validation: all seven affected C units pass Clang syntax checking
+against the existing run130 headers; temporary Kconfig resolution retains
+FG, SMBCHARGER and both helpers as built-ins. DT preprocessing/dtc succeeds,
+and decoded values match the donor's 4380 mV float limit, thermal table,
+FG coefficients and channel-3 wiring. Profile bytes, existing enum values,
+property/sysfs coverage and work-cancellation coverage were checked.
+Host assertions exercise the actual voter functions and charger IRQ helper,
+including error propagation, capacity limits and lock release. ASan/UBSan
+pass for voting; leak sanitizer is unavailable under host ptrace.
+
+**No kernel build, link or phone boot has tested this port.** Battery
+readings, charging/protection behaviour and HAL registration remain
+unverified. The donor's disabled BCL provider is still unavailable for
+flash-current estimation. The downstream USB DPDM regulator bridge is not
+ported; DPDM/HVDCP and OTG operation remain unverified. USB peripheral
+configuration is unchanged.
+
+The next authorized build/boot must verify real `battery`, `bms` and `usb`
+supplies, plausible calibrated readings, writable charging-control nodes
+with correct labels/permissions, charging HAL registration and absence of
+the missing-node retry storm and charging-related SystemServer watchdog.
+Graphics and the other run130 failures remain separate open work.
 
 ## Snapshot58 run1 — what changed
 
@@ -395,10 +546,11 @@ but on in early-return run105; that selects different handoff paths
 
 | Component | Symptom (evidence) | Status | Next action |
 |---|---|---|---|
-| ADSP FastRPC channel | s58: `adsp.mdt` fails `-2` — firmware missing, so no channel and no alias this run. The s57 label fix is untested | BLOCKED | Unblock needs the ADSP firmware harvest; the `qdsp_device` label patch stays in tree for when it lands |
+| ADSP FastRPC channel | run130: firmware load `-2`; late loader-path write EACCES; no `fastrpc-adsp` (L130:565,2583,13604), also observed in run128 | BLOCKED | Restore late firmware path/rebind; reuse the historical alias and label fixes, then verify the actual device/channel |
+| Battery / charging kernel interface | run136: FG bound, `PMIC subtype=64` matching stock (`run136-usb.log:408`); only `bms` supply; charger deferred on `adc@3100` which fails `Please define VDD channel` (`:158`, `:453`) | FIXING | Fuel gauge now works. Charger needs the `VADC_VDD_VADC`/`VADC_GND_REF` reference channels before it can register `battery`/`usb`; real readings and charging/protection behaviour still unverified |
 | Touchscreen `edt-ft5406` probe | `-110` at 300/500 ms (s50/s52); re-toggle + 500 ms succeeds (s51); bounded retry clean s53–s56 | CLOSED | Fix verified 4 boots; keep in tree |
 | `pclk0 update_config` WARN | `clk-rcg2.c:133` ×2 in 12/16 runs (s48, s49 r4–r6, s51–s57 except s55 r2). Cause: RCG CMD_UPDATE cannot latch while the DSI PLL is unprepared | **CLOSED** | `CLK_OPS_PARENT_ENABLE` (`4c7eb3f0d`) verified: 0 occurrences in s58 run1. Keep in tree |
-| WLAN `wcn36xx` + pronto PIL | s58: `CFG80211/MAC80211/WCN36XX` now genuinely `=y` (was `=m`, silently). `wcnss.mdt` still fails `-2`, so remoteproc1 powers up with no firmware | FIXING | Config gates fixed; the remaining blocker is the firmware harvest, same as ADSP |
+| WLAN `wcn36xx` + pronto PIL | run130: `wcnss.mdt` load fails `-2`; late firmware path setup EACCES (L130:562,2583); vendor `/dev/wcnss_ctrl` absent (H130:1713) | BLOCKED | Restore firmware/rebind first, then assess upstream WLAN versus vendor control-node ABI; no Wi-Fi operation verdict yet |
 | QSEE listener registration | SMC `0x32000206` `ret=-5` ×8/boot; 8 siblings succeed same path | CLOSED | TZ refuses those IDs; tolerated; no kernel fix applies |
 | `mdp5 INTF1_UNDER_RUN` | Single `errors: 04000000` at first modeset, panel healthy after | CLOSED | Benign bringup transient |
 | Coldboot time | 34.3 / 11.1 / 13.7 / 13.7 / 12.6 / 16.4 s vs stock 2.8 s (s50–s56) | WATCH | ~11–18 s band; s50 34 s the outlier. Bisect if a run exceeds ~25 s |
@@ -406,13 +558,16 @@ but on in early-return run105; that selects different handoff paths
 
 | Component | Symptom (evidence) | Status | Next action |
 |---|---|---|---|
-| GPU 3D (`kgsl`, EGL blob `libGLESv2_adreno.so`) | s58 run5: `surfaceflinger` SIGABRT ×4, 3 pids, `no suitable EGLConfig found` — **the confirmed reason `sys.boot_completed` never fires** | PARKED (blocker) | kgsl rewrite, backlog #1. Confirmed reachable via adb on the port kernel; no longer a guess |
-| ADSP firmware (`adsp.mdt`+segs) | remoteproc `-2`; absent from `/vendor/firmware` (18 files, no adsp) | BLOCKED | Harvest from modem partition or payload.bin (backlog #2 pattern) |
-| WCNSS firmware (`wcnss.mdt`+`.bXX`) | Not in vendor; stock serves from `/firmware/image` (modem partition) | BLOCKED | Same harvest as ADSP; pronto fails fast until staged |
+| GPU 3D (`kgsl`, EGL blob `libGLESv2_adreno.so`) | run130: NOMMU selected, CP idle timeout x6, gfx clock-update WARN x8, unsignalled SF/bootanimation fences; see current evidence above | BLOCKED | Resolve GPU start with actual mapping/clock evidence; zero fields from `cb=unavailable` are not SMMU readback |
+| Lineage charging-control HAL / SystemServer | run130: declared charging HAL unavailable; SystemServer watchdog stack waits in `ChargingControlController` (H130:137675-137697); replacement PID waits again | FIXING | Battery/charging source port prepared; HAL registration, node permissions and watchdog recovery remain unverified |
+| ADSP firmware (`adsp.mdt`+segs) | run130: modem partition mounts, but late firmware path write fails EACCES (L130:1645,2583), before rebind | BLOCKED | Check the helper's actual write credentials/policy and loader path; historical late-load success exists in `1039261ce` / `ec6c8ea78` |
+| WCNSS firmware (`wcnss.mdt`+`.bXX`) | run130: early load `-2`, same late-path EACCES; no successful boot of WCNSS observed | BLOCKED | Same late firmware/rebind repair as ADSP; firmware presence alone will not prove WLAN ready |
 | Camera stack (`msm_camera`, CPP, sensors, HAL) | Nothing probed; blobs (`cpp_firmware_*`) present but no kernel side | PARKED | CAMSS/Venus 8953 variant + sensor/HAL project (backlog #4) |
-| Fingerprint (`goodix_fp`) | Stock `/dev/goodix_fp`; no in-tree driver, no DT node | SCOPED | Downstream driver port + DT (backlog #7) |
+| Fingerprint (`goodix_fp` / FPC candidate) | run130: fingerprint HAL SIGSEGV at `0xc0` in `Session::Session` twice (H130:27573-27603,164175-164205); donor drivers/DT exist in `oc-test` | PARKED | Identify fitted sensor and HAL initialization failure; scope donor driver/DT port, preserving GPIO/clock/pinctrl inputs |
+| Vendor thermal service | run130: CPU mitigation initialization fails and no monitoring sensor is set up (H130:1625,1652) | SCOPED | Compare donor SoC/cpufreq/thermal interfaces and policy; full thermal protection remains unverified |
+| Sensors / vibrator | run130: `sns_time_init` failure and missing vibrator `activate` path (H130:1020,1104) | WATCH | Separate DSP-dependent sensor failures from missing downstream device/sysfs interfaces; verify each independently |
 | Modem packet path (IPA/RMNET) | QRTR signalling works; no IPA v2 in-tree, RMNET off | SCOPED | IPA-v2 backport (backlog #6) |
-| EGL/GLES userspace | Present on vendor, aborts without `/dev/kgsl-3d0` | PARKED | Unblocked by kgsl rewrite, nothing to do meanwhile |
+| EGL/GLES userspace | run130: Adreno 506 renderer initializes, but SF and bootanimation wait on unsignalled KGSL fences (H130:1373,3838,6591) | BLOCKED | Keep userspace fence evidence alongside the GPU-start investigation; no successful rendered frame established |
 
 ## Working (do not regress)
 wled OVP IRQ pairing (0 `enable_irq` WARN s50–s52) · GPU fw load

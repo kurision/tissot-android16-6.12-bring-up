@@ -8,6 +8,7 @@
 #include "msm8953.dtsi"
 #include "pm8953.dtsi"
 #include "pmi8950.dtsi"
+#include "msm8953-xiaomi-tissot-battery.dtsi"
 #include "msm8953-xiaomi-tissot-mdss.dtsi"
 #include <dt-bindings/leds/common.h>
 

@@ -21,11 +21,26 @@
 #define PMIC_REV4		0x103
 #define PMIC_TYPE		0x104
 #define PMIC_SUBTYPE		0x105
+#define PMIC_SPARE_0		0x160
 #define PMIC_FAB_ID		0x1f2
 
 #define PMIC_TYPE_VALUE		0x51
 
 #define PMIC_REV4_V2		0x02
+
+/*
+ * PMI8950 is a family ID. spare0 names the sibling part: 0x37 is PMI8937 and
+ * 0x40 is PMI8940. The vendor driver translates this in its revision-id
+ * module ("special case for PMI8937/PMI8940/PMI8950"), and the qpnp-smbcharger
+ * and qpnp-fg drivers here compare against the translated value (PMI8937 =
+ * 55, PMI8940 = 64), not against PMIC_SUBTYPE. Without the translation the
+ * charger's HVDCP check at qpnp-smbcharger.c never fires.
+ *
+ * Vendor offsets are this driver's offsets minus 0x100 (vendor REVID_SPARE_0
+ * 0x60, REVID_FAB_ID 0xf2), hence 0x160 here.
+ */
+#define PMI8937_SUBTYPE_8950	0x37
+#define PMI8940_SUBTYPE_8950	0x40
 
 struct qcom_spmi_dev {
 	int num_usids;
@@ -165,6 +180,7 @@ static int pmic_spmi_load_revid(struct regmap *map, struct device *dev,
 				 struct qcom_spmi_pmic *pmic)
 {
 	int ret;
+	unsigned int spare0;
 
 	ret = regmap_read(map, PMIC_TYPE, &pmic->type);
 	if (ret < 0)
@@ -176,6 +192,19 @@ static int pmic_spmi_load_revid(struct regmap *map, struct device *dev,
 	ret = regmap_read(map, PMIC_SUBTYPE, &pmic->subtype);
 	if (ret < 0)
 		return ret;
+
+	if (pmic->subtype == PMI8950_SUBTYPE) {
+		ret = regmap_read(map, PMIC_SPARE_0, &spare0);
+		if (ret < 0)
+			return ret;
+
+		/* An unrecognised spare0 leaves the family ID alone, as
+		 * the vendor driver does (it only warns).
+		 */
+		if (spare0 == PMI8937_SUBTYPE_8950 ||
+		    spare0 == PMI8940_SUBTYPE_8950)
+			pmic->subtype = spare0;
+	}
 
 	pmic->name = of_match_device(pmic_spmi_id_table, dev)->compatible;
 
