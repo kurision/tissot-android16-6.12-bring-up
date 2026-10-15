@@ -750,11 +750,27 @@ int kgsl_mmu_probe(struct kgsl_device *device)
 			mmu->type = kgsl_mmu_subtypes[i].type;
 			mmu->mmu_ops = kgsl_mmu_subtypes[i].ops;
 
+			/*
+			 * DIAG (run127): which MMU implementation kgsl landed on.
+			 * type == KGSL_MMU_TYPE_NONE means the GPU is programmed
+			 * with physical addresses (NOMMU pass-through), which is
+			 * only correct if the GPU context bank is NOT translating.
+			 */
+			dev_info(device->dev,
+				 "DIAG kgsl_mmu: subtype='%s' type=%u (%s)\n",
+				 kgsl_mmu_subtypes[i].name, mmu->type,
+				 mmu->type == KGSL_MMU_TYPE_NONE ?
+					"NOMMU/physical" : "IOMMU/translated");
+
 			if (MMU_OP_VALID(mmu, mmu_init))
 				return mmu->mmu_ops->mmu_init(mmu);
 
 			return 0;
 		}
+
+		dev_info(device->dev,
+			 "DIAG kgsl_mmu: subtype '%s' probe failed: %d\n",
+			 kgsl_mmu_subtypes[i].name, ret);
 	}
 
 	dev_err(device->dev, "mmu: couldn't detect any known MMU types\n");

@@ -4,9 +4,12 @@
  */
 
 #include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/io.h>
 #include <linux/delay.h>
 #include <linux/firmware.h>
 #include <linux/slab.h>
+#include <linux/scatterlist.h>
 #include <soc/qcom/scm.h>
 
 #include "adreno.h"
@@ -1961,6 +1964,98 @@ int a5xx_critical_packet_submit(struct adreno_device *adreno_dev,
 }
 
 /*
+ * DIAG (run127): read the GPU (gfx3d_user) SMMU context bank straight from
+ * the hardware at the moment of the first CP submission.
+ *
+ * kgsl runs NOMMU here: the legacy qcom,kgsl-smmu-v2 probe deliberately fails
+ * on gpu_ahb_clk (see msm8953-xiaomi-tissot.dts) so kgsl_mmu_probe falls
+ * through to kgsl_nommu_ops, and nommu_get_gpuaddr() hands the GPU *physical*
+ * addresses (sg_phys()). If that context bank is translating (SCTLR.M=1) the
+ * GPU interprets those physical addresses as IOVAs -> it can write anywhere.
+ * This dump proves or kills that theory in one boot.
+ *
+ * Safe to read: the qcom_iommu bring-up hack keeps this IOMMU powered
+ * (pm_runtime_forbid), and at ME_INIT the GPU and its CX power domain are on.
+ * Read-only; success-path behaviour is unchanged.
+ *
+ * Register offsets are from drivers/iommu/arm/arm-smmu/arm-smmu.h (CB block):
+ * SCTLR 0x0, TTBR0 0x20, FSR 0x58.
+ */
+#define DIAG_CB_SCTLR	0x0
+#define DIAG_CB_TTBR0	0x20
+#define DIAG_CB_FSR	0x58
+
+static void __iomem *diag_gpu_cb;
+static bool diag_gpu_cb_done;
+
+static void __iomem *diag_gpu_cb_base(struct kgsl_device *device)
+{
+	struct device_node *iommu_np, *child;
+	struct resource res;
+
+	if (diag_gpu_cb_done)
+		return diag_gpu_cb;
+	diag_gpu_cb_done = true;
+
+	iommu_np = of_parse_phandle(device->pdev->dev.of_node, "iommus", 0);
+	if (!iommu_np)
+		return NULL;
+
+	for_each_child_of_node(iommu_np, child) {
+		if (!of_device_is_compatible(child, "qcom,msm-iommu-v2-ns"))
+			continue;
+		if (of_address_to_resource(child, 0, &res) == 0)
+			diag_gpu_cb = ioremap(res.start, resource_size(&res));
+		of_node_put(child);
+		break;
+	}
+
+	of_node_put(iommu_np);
+	return diag_gpu_cb;
+}
+
+static u64 diag_memdesc_phys(const struct kgsl_memdesc *memdesc)
+{
+	if (memdesc->sgt && memdesc->sgt->sgl)
+		return (u64)sg_phys(memdesc->sgt->sgl);
+	return 0;
+}
+
+static void diag_gpu_smmu_state(struct adreno_device *adreno_dev,
+		struct adreno_ringbuffer *rb)
+{
+	struct kgsl_device *device = &adreno_dev->dev;
+	struct kgsl_memdesc *pm4 = &ADRENO_FW(adreno_dev, ADRENO_FW_PM4)->memdesc;
+	struct kgsl_memdesc *pfp = &ADRENO_FW(adreno_dev, ADRENO_FW_PFP)->memdesc;
+	void __iomem *cb = diag_gpu_cb_base(device);
+	u32 sctlr = 0, fsr = 0;
+	u64 ttbr0 = 0;
+
+	if (cb) {
+		sctlr = readl_relaxed(cb + DIAG_CB_SCTLR);
+		ttbr0 = readq_relaxed(cb + DIAG_CB_TTBR0);
+		fsr = readl_relaxed(cb + DIAG_CB_FSR);
+	}
+
+	dev_info(device->dev,
+		 "DIAG gpu_smmu: cb=%s sctlr=%08x translating=%u ttbr0=%016llx fsr=%08x mmu_type=%u\n",
+		 cb ? "gfx3d_user" : "unavailable", sctlr, !!(sctlr & 0x1),
+		 (unsigned long long)ttbr0, fsr, device->mmu.type);
+
+	dev_info(device->dev,
+		 "DIAG gpu_memdesc: rb{gpu=%016llx phys=%016llx sz=%llu} memstore{gpu=%016llx phys=%016llx} pm4{gpu=%016llx phys=%016llx} pfp{gpu=%016llx phys=%016llx}\n",
+		 (unsigned long long)rb->buffer_desc.gpuaddr,
+		 (unsigned long long)diag_memdesc_phys(&rb->buffer_desc),
+		 (unsigned long long)rb->buffer_desc.size,
+		 (unsigned long long)device->memstore.gpuaddr,
+		 (unsigned long long)diag_memdesc_phys(&device->memstore),
+		 (unsigned long long)pm4->gpuaddr,
+		 (unsigned long long)diag_memdesc_phys(pm4),
+		 (unsigned long long)pfp->gpuaddr,
+		 (unsigned long long)diag_memdesc_phys(pfp));
+}
+
+/*
  * a5xx_send_me_init() - Initialize ringbuffer
  * @adreno_dev: Pointer to adreno device
  * @rb: Pointer to the ringbuffer of device
@@ -1994,6 +2089,8 @@ static int a5xx_send_me_init(struct adreno_device *adreno_dev,
 			kgsl_pwrctrl_active_freq(&device->pwrctrl), rbbm,
 			device->mmu.secured, pm4_fw->memdesc.hostptr,
 			pfp_fw->memdesc.hostptr, adreno_dev->zap_loaded);
+
+		diag_gpu_smmu_state(adreno_dev, rb);
 	}
 
 	cmds = adreno_ringbuffer_allocspace(rb, 9);
