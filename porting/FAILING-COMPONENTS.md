@@ -1,11 +1,11 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-16 (snapshot60 run147 booted: audio livelock gone, fastrpc binds but node misnamed; run148 staged with the name fixed).
+Last update: 2026-10-16 (snapshot60 run148 booted: node name fixed, adsprpcd errno 2 -> 16 EBUSY; run149 adds the missing session, untested).
 
-## Current evidence — snapshot60 run147 (audio livelock gone; ADSP node misnamed; boot still stalls)
+## Current evidence — snapshot60 run148 (node name fixed; adsprpcd now EBUSY; boot still stalls)
 
-Last confirmed-good image: **run147**. run148 is packaged, **not booted**.
+Last confirmed-good image: **run148**. run149 is packaged, **not booted**.
 
 Boot reaches `boot_progress_enable_screen` and stops; `sys.boot_completed`
 unset at 310 s, `init.svc.bootanim` still running, ActivityManager drops
@@ -14,8 +14,8 @@ unset at 310 s, `init.svc.bootanim` still running, ActivityManager drops
 | Component | Evidence | Status |
 |---|---|---|
 | **SystemServer hang (current boot blocker)** | `DropBoxManagerService: add tag=system_server_pre_watchdog`; boot never passes `enable_screen` | **Open, not yet diagnosed.** The extcon denial was a *real* cause of `PhoneWindowManager.init` trouble but fixing it (run144) did **not** clear the hang. At least one further cause remains unidentified. |
-| **Audio** | run144: 308 `AudioSystem: listAudioPorts failed` + 134 `loadHwModule error -19`, looping at 10 Hz. run147: **0** of both | **CLEARED in run147.** The DSP side initialises — `rpcmem_init_internal: opened ION device fd 4`, `fastrpc_apps_user_init done with default domain:0`. The 10 Hz CPU livelock through SystemServer startup is gone. |
-| **ADSP / FastRPC node name** | `fastrpc` **binds correctly**: `.../smd-edge.fastrpcsmd-apps-dsp.-1.-1/driver -> .../qcom,fastrpc`. Registered node is `/dev/fastrpc-adsprpc-smd` — a third spelling. adsprpcd still `apps_dev_init failed for domain 0, errno 2` (8960 lines) | run148 drops the redundant `fastrpc-` prefix so the node is `adsprpc-smd`, the donor constant at `oc-test/drivers/char/adsprpc_shared.h:31`. **Untested.** |
+| **Audio** | run144: 308 `AudioSystem: listAudioPorts failed` + 134 `loadHwModule error -19`, at 10 Hz. run147: 0. run148: **381** | **NOT cleared — my earlier claim was wrong.** Both logcat dumps span the whole boot (checked first/last timestamps, not a rolled-over window), so run147's zero was real *for that run* but does not hold generally. The count tracks how far `adsprpcd` gets before failing: at ENOENT it dies early and audio errors never accumulate; at EBUSY it gets further and then fails differently. Do not record audio as fixed until adsprpcd actually connects. |
+| **ADSP / FastRPC session** | run148: node is now correctly `/dev/adsprpc-smd` and fastrpc binds, but errno moved 2 → **16 `Device or resource busy`**. `fastrpc_device_open()` → `fastrpc_session_alloc()` walks `cctx->sesscount` entries and returns NULL on an empty table → `-EBUSY` | run149 adds a `cb@0` child (`qcom,fastrpc-compute-cb`, `reg = <0>`); `fastrpc_cb_probe()` adds one session per cb child. This dtsi had none because an old comment conflated cb children with the LPASS SMMU they may carry — `fastrpc_cb_probe()` never reads `iommus`. **Untested.** |
 | ADSP / FastRPC DMA pool | `no reserved DMA memory for FASTRPC` is `dev_info`; probe completes and registers a device with **no pool at all** | **Not a defect.** The reserved-memory pool added for it in `5080f3fab` was reverted (`a7fe6fb5a`) — the diagnosis was wrong and it added risk. |
 | GPU | `/dev/kgsl-3d0` **exists**; SurfaceFlinger registered; kgsl NOMMU by deliberate design; preemption WARN is a consequence of NOMMU (`adreno_a5xx_preempt.c:598`), not a bug | The tracker's "GPU is the confirmed blocker" is **not supported** by evidence. Do not re-litigate. |
 | WLAN | `wcnss.mdt ... error -2` | Not staged. Same mechanism as ADSP: `wcnss.mdt` + 4.2 MB of segments on `/firmware/image`. |
