@@ -2069,7 +2069,7 @@ static void diag_gpu_smmu_state(struct adreno_device *adreno_dev,
  * address of the ring.
  */
 static void a5xx_dump_cp_state(struct adreno_device *adreno_dev,
-		struct adreno_ringbuffer *rb)
+			       struct adreno_ringbuffer *rb)
 {
 	struct kgsl_device *device = &adreno_dev->dev;
 	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
@@ -2087,15 +2087,17 @@ static void a5xx_dump_cp_state(struct adreno_device *adreno_dev,
 	kgsl_regread(device, A5XX_RBBM_AHB_ME_SPLIT_STATUS, &me_split);
 
 	dev_err(device->dev,
-		 "DIAG CP state: ib_base=%08X%08X want=%08X%08X rb_cntl=%08X rb_ptr=%X/%X\n",
-		 basehi, base,
-		 (unsigned int)(rb->buffer_desc.gpuaddr >> 32),
-		 (unsigned int)rb->buffer_desc.gpuaddr, cntl, rptr, wptr);
+		"DIAG CP state: cp_rb_base=%08X%08X want=%08X%08X rb_cntl=%08X rb_ptr=%X/%X\n",
+		basehi, base,
+		(unsigned int)(rb->buffer_desc.gpuaddr >> 32),
+		(unsigned int)rb->buffer_desc.gpuaddr, cntl, rptr, wptr);
 	dev_err(device->dev,
-		 "DIAG CP state: cp_status_1=%08X cp_ahb_fault=%08X rbbm_ahb_err=%08X me_split=%08X rb_size=%llu gfx_rate=%lu\n",
-		 status1, ahbfault, ahberr, me_split,
-		 (unsigned long long)rb->buffer_desc.size,
-		 kgsl_get_clkrate(pwr->grp_clks[0]));
+		"DIAG CP state: cp_status_1=%08X cp_ahb_fault=%08X me_split=%08X\n",
+		status1, ahbfault, me_split);
+	dev_err(device->dev,
+		"DIAG CP state: rbbm_ahb_err=%08X rb_size=%llu gfx_rate=%lu\n",
+		ahberr, (unsigned long long)rb->buffer_desc.size,
+		kgsl_get_clkrate(pwr->grp_clks[0]));
 }
 
 /*

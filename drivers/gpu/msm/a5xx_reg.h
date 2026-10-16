@@ -99,6 +99,7 @@
 #define A5XX_CP_INTERRUPT_STATUS         0xB18
 #define A5XX_CP_HW_FAULT                 0xB1A
 #define A5XX_CP_PROTECT_STATUS           0xB1C
+#define A5XX_CP_STATUS_1                 0xB1D
 #define A5XX_CP_IB1_BASE                 0xB1F
 #define A5XX_CP_IB1_BASE_HI              0xB20
 #define A5XX_CP_IB1_BUFSZ                0xB21
@@ -108,7 +109,6 @@
 #define A5XX_CP_PROTECT_REG_0            0x880
 #define A5XX_CP_PROTECT_CNTL             0x8A0
 #define A5XX_CP_AHB_FAULT                0xB1B
-#define A5XX_CP_STATUS_1                    0xB1D
 #define A5XX_CP_PERFCTR_CP_SEL_0         0xBB0
 #define A5XX_CP_PERFCTR_CP_SEL_1         0xBB1
 #define A5XX_CP_PERFCTR_CP_SEL_2         0xBB2
