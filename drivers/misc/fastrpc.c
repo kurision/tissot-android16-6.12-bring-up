@@ -2296,7 +2296,13 @@ static int fastrpc_device_register(struct device *dev, struct fastrpc_channel_ct
 	fdev->cctx = cctx;
 	fdev->miscdev.minor = MISC_DYNAMIC_MINOR;
 	fdev->miscdev.fops = &fastrpc_fops;
-	fdev->miscdev.name = devm_kasprintf(dev, GFP_KERNEL, "fastrpc-%s%s",
+	/*
+	 * devnames[] already carries the full node name including its prefix,
+	 * so this must not prepend "fastrpc-": that yields
+	 * "fastrpc-adsprpc-smd", a third spelling that nothing opens. Verified
+	 * on run147, which is where the extra prefix came from.
+	 */
+	fdev->miscdev.name = devm_kasprintf(dev, GFP_KERNEL, "%s%s",
 					    domain, is_secured ? "-secure" : "");
 	if (!fdev->miscdev.name)
 		return -ENOMEM;
