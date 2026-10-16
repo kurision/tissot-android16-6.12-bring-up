@@ -108,6 +108,7 @@
 #define A5XX_CP_PROTECT_REG_0            0x880
 #define A5XX_CP_PROTECT_CNTL             0x8A0
 #define A5XX_CP_AHB_FAULT                0xB1B
+#define A5XX_CP_STATUS_1                    0xB1D
 #define A5XX_CP_PERFCTR_CP_SEL_0         0xBB0
 #define A5XX_CP_PERFCTR_CP_SEL_1         0xBB1
 #define A5XX_CP_PERFCTR_CP_SEL_2         0xBB2

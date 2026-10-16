@@ -2056,6 +2056,49 @@ static void diag_gpu_smmu_state(struct adreno_device *adreno_dev,
 }
 
 /*
+ * a5xx_dump_cp_state() - Diagnostic dump of the CP state after a failed
+ * spin-for-idle
+ * @adreno_dev: Pointer to adreno device
+ * @rb: Pointer to the ringbuffer the CP was pointed at
+ *
+ * Read-only. adreno_spin_idle_debug() prints RBBM_STATUS/INT_0_STATUS and
+ * stops there; on A506 both are latched from the hang itself, so they do not
+ * say whether the CP ever fetched the ring buffer or stalled on a bad AHB
+ * transaction. CP_STATUS_1/CP_AHB_FAULT and the programmed CP_RB_BASE tell us
+ * which, and whether the address the driver wrote matches the GPU-visible
+ * address of the ring.
+ */
+static void a5xx_dump_cp_state(struct adreno_device *adreno_dev,
+		struct adreno_ringbuffer *rb)
+{
+	struct kgsl_device *device = &adreno_dev->dev;
+	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
+	unsigned int base, basehi, cntl, rptr, wptr;
+	unsigned int status1, ahbfault, ahberr, me_split;
+
+	kgsl_regread(device, A5XX_CP_RB_BASE, &base);
+	kgsl_regread(device, A5XX_CP_RB_BASE_HI, &basehi);
+	kgsl_regread(device, A5XX_CP_RB_CNTL, &cntl);
+	kgsl_regread(device, A5XX_CP_RB_RPTR, &rptr);
+	kgsl_regread(device, A5XX_CP_RB_WPTR, &wptr);
+	kgsl_regread(device, A5XX_CP_STATUS_1, &status1);
+	kgsl_regread(device, A5XX_CP_AHB_FAULT, &ahbfault);
+	kgsl_regread(device, A5XX_RBBM_AHB_ERROR_STATUS, &ahberr);
+	kgsl_regread(device, A5XX_RBBM_AHB_ME_SPLIT_STATUS, &me_split);
+
+	dev_err(device->dev,
+		 "DIAG CP state: ib_base=%08X%08X want=%08X%08X rb_cntl=%08X rb_ptr=%X/%X\n",
+		 basehi, base,
+		 (unsigned int)(rb->buffer_desc.gpuaddr >> 32),
+		 (unsigned int)rb->buffer_desc.gpuaddr, cntl, rptr, wptr);
+	dev_err(device->dev,
+		 "DIAG CP state: cp_status_1=%08X cp_ahb_fault=%08X rbbm_ahb_err=%08X me_split=%08X rb_size=%llu gfx_rate=%lu\n",
+		 status1, ahbfault, ahberr, me_split,
+		 (unsigned long long)rb->buffer_desc.size,
+		 kgsl_get_clkrate(pwr->grp_clks[0]));
+}
+
+/*
  * a5xx_send_me_init() - Initialize ringbuffer
  * @adreno_dev: Pointer to adreno device
  * @rb: Pointer to the ringbuffer of device
@@ -2104,9 +2147,11 @@ static int a5xx_send_me_init(struct adreno_device *adreno_dev,
 	_set_ordinals(adreno_dev, cmds, 8);
 
 	ret = adreno_ringbuffer_submit_spin(rb, NULL, 2000);
-	if (ret)
+	if (ret) {
+		a5xx_dump_cp_state(adreno_dev, rb);
 		adreno_spin_idle_debug(adreno_dev,
 				"CP initialization failed to idle\n");
+	}
 
 	return ret;
 }
