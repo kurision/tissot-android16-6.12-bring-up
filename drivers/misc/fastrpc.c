@@ -108,6 +108,35 @@
 
 static const char *domains[FASTRPC_DEV_MAX] = { "adsp", "mdsp",
 						"sdsp", "cdsp", "cdsp1" };
+
+/*
+ * Device node names, which do not follow from the domain name above.
+ *
+ * adsprpcd opens the ADSP channel at a hardcoded "adsprpc-smd" -- the donor
+ * constant, drivers/char/adsprpc_shared.h:31 DEVICE_NAME, with :32
+ * DEVICE_NAME_SECURE "adsprpc-smd-secure" for the secure channel. The
+ * "fastrpc-%s" spelling this driver uses otherwise produces
+ * /dev/fastrpc-adsp, a path nothing in the vendor stack opens, so adsprpcd
+ * fails open_device_node for domain 0 with ENOENT and restarts in a tight
+ * loop:
+ *
+ *   avc: denied { read } for comm="adsprpcd" name="adsprpc-smd"
+ *        dev="tmpfs" tcontext=u:object_r:tmpfs:s0 tclass=chr_file
+ *
+ * Note that "smd" here is the CAF name for the apps-DSP subsystem, so it is
+ * not simply the "adsp" domain string with a different prefix.
+ *
+ * The other domains keep the mainline spelling. They are not enabled on this
+ * SoC, and their vendor node names have not been checked against a donor, so
+ * they are left as upstream has them rather than guessed at.
+ */
+static const char *const devnames[FASTRPC_DEV_MAX] = {
+	"adsprpc-smd",	/* adsp  -- must match DEVICE_NAME above */
+	"fastrpc-mdsp",
+	"fastrpc-sdsp",
+	"fastrpc-cdsp",
+	"fastrpc-cdsp1",
+};
 struct fastrpc_phy_page {
 	u64 addr;		/* physical address */
 	u64 size;		/* size of contiguous region */
@@ -2362,7 +2391,7 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
 	case SDSP_DOMAIN_ID:
 		/* Unsigned PD offloading is only supported on CDSP and CDSP1 */
 		data->unsigned_support = false;
-		err = fastrpc_device_register(rdev, data, secure_dsp, domains[domain_id]);
+		err = fastrpc_device_register(rdev, data, secure_dsp, devnames[domain_id]);
 		if (err)
 			goto fdev_error;
 		break;
@@ -2370,11 +2399,11 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
 	case CDSP1_DOMAIN_ID:
 		data->unsigned_support = true;
 		/* Create both device nodes so that we can allow both Signed and Unsigned PD */
-		err = fastrpc_device_register(rdev, data, true, domains[domain_id]);
+		err = fastrpc_device_register(rdev, data, true, devnames[domain_id]);
 		if (err)
 			goto fdev_error;
 
-		err = fastrpc_device_register(rdev, data, false, domains[domain_id]);
+		err = fastrpc_device_register(rdev, data, false, devnames[domain_id]);
 		if (err)
 			goto populate_error;
 		break;
