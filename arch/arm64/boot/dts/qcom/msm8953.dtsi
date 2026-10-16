@@ -269,33 +269,6 @@
 			no-map;
 		};
 
-		/*
-		 * DMA pool for the FastRPC/ADSP channel.
-		 *
-		 * fastrpc_rpmsg_probe() calls
-		 * of_reserved_mem_device_init_by_idx(dev, dev->of_node, 0),
-		 * which resolves the node's "memory-region" phandle and
-		 * looks the region up (drivers/of/of_reserved_mem.c:583). With
-		 * no such phandle the probe still succeeds but logs "no
-		 * reserved DMA memory for FASTRPC" and the channel has no
-		 * buffer pool; userspace adsprpc then fails open_device_node
-		 * with ENOENT for domain 0 and restarts every 25 ms.
-		 *
-		 * Deliberately a dynamically-allocated shared-dma-pool with
-		 * no fixed reg, matching the vendor bengal.dtsi adsp_region,
-		 * rather than a carved-out address: an invented address that
-		 * overlapped an existing reserved region would take out the
-		 * regulators along with it.
-		 */
-		fastrpc_mem: fastrpc-pool {
-			compatible = "shared-dma-pool";
-			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
-			reusable;
-			alignment = <0x0 0x1000>;
-			size = <0x0 0x800000>;
-			no-map;
-		};
-
 		qseecom_mem: qseecom@85b00000 {
 			reg = <0x0 0x85b00000 0x0 0x800000>;
 			no-map;
