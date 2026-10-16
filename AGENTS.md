@@ -1,5 +1,10 @@
 # Working rules for this repo
 
+## Agent workflow
+
+Superpowers is disabled for this project. Do not invoke the Superpowers plugin
+or its separately installed skills unless the user explicitly re-enables it.
+
 ## Boot testing + kernel-log evidence
 
 `porting/REFERENCE-boot-testing.md` is the operational reference: tooling
@@ -8,6 +13,8 @@
 trap that turns a driver-probe panic into a completely silent failed boot
 (`pstore_blk` is level 7, driver probes are level 6). Read it before any
 boot cycle; boot cycles are the scarce resource.
+
+Before coming to conclusion do a online research for cross-verification always. And please dont add assisted-by /co-authors in commits.
 
 ## Verify before concluding
 
