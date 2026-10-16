@@ -1443,28 +1443,28 @@ static void _setup_throttling_counters(struct adreno_device *adreno_dev)
  * @adreno_dev: Pointer to adreno device
  * @stage: Name of the bring-up step just reached
  *
- * Read-only. RBBM_STATUS bit 31 is already latched by the time
- * a5xx_send_me_init() runs, so the hang starts somewhere between power-on and
- * the first command and ME_INIT is not where it begins. Sampling the same
- * registers at each step of a5xx_start() makes the next boot name the step
- * that latched it.
+ * Read-only. The hang is already latched by the time a5xx_send_me_init()
+ * runs, so sampling the same registers at each bring-up step is what makes
+ * the next boot name the step that latched it. CP_STATUS_1 carries the CP's
+ * own view (and its AHB error fields once the CP is running).
  */
 static void a5xx_dump_bringup(struct adreno_device *adreno_dev,
 			      const char *stage)
 {
 	struct kgsl_device *device = &adreno_dev->dev;
 	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
-	unsigned int status, intstatus, rptr, wptr, base;
+	unsigned int status, intstatus, rptr, wptr, base, cp_status;
 
 	kgsl_regread(device, A5XX_RBBM_STATUS, &status);
 	kgsl_regread(device, A5XX_RBBM_INT_0_STATUS, &intstatus);
 	kgsl_regread(device, A5XX_CP_RB_RPTR, &rptr);
 	kgsl_regread(device, A5XX_CP_RB_WPTR, &wptr);
 	kgsl_regread(device, A5XX_CP_RB_BASE, &base);
+	kgsl_regread(device, A5XX_CP_STATUS_1, &cp_status);
 
 	dev_info(device->dev,
-		 "DIAG bringup[%s]: rbbm=%08X int0=%08X rb_ptr=%X/%X rb_base=%08X gfx_rate=%lu\n",
-		stage, status, intstatus, rptr, wptr, base,
+		 "DIAG bringup[%s]: rbbm=%08X int0=%08X rb_ptr=%X/%X rb_base=%08X cp_status_1=%08X gfx_rate=%lu\n",
+		stage, status, intstatus, rptr, wptr, base, cp_status,
 		kgsl_get_clkrate(pwr->grp_clks[0]));
 }
 
@@ -2219,10 +2219,12 @@ static int a5xx_rb_start(struct adreno_device *adreno_dev)
 
 	adreno_writereg64(adreno_dev, ADRENO_REG_CP_RB_BASE,
 			ADRENO_REG_CP_RB_BASE_HI, rb->buffer_desc.gpuaddr);
+	a5xx_dump_bringup(adreno_dev, "rb-programmed");
 
 	ret = a5xx_microcode_load(adreno_dev);
 	if (ret)
 		return ret;
+	a5xx_dump_bringup(adreno_dev, "microcode-loaded");
 
 	/* clear ME_HALT to start micro engine */
 	adreno_writereg(adreno_dev, ADRENO_REG_CP_ME_CNTL, 0);
