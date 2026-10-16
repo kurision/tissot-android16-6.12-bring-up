@@ -1998,6 +1998,15 @@ static bool regulators_left_on(struct kgsl_device *device)
 	if (gmu_core_gpmu_isenabled(device))
 		return false;
 
+	/*
+	 * Without a GPU supply the rail is owned by the GX power domain,
+	 * which runtime PM keeps on across KGSL's own power transitions, so
+	 * the core may still hold the previous start's state. Assume it was
+	 * left on so _adreno_start() soft resets it before reprogramming.
+	 */
+	if (IS_ERR_OR_NULL(device->pwrctrl.regulators[0].reg))
+		return true;
+
 	for (i = 0; i < KGSL_MAX_REGULATORS; i++) {
 		struct kgsl_regulator *regulator =
 			&device->pwrctrl.regulators[i];
