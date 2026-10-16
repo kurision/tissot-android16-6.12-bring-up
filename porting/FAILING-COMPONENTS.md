@@ -1,28 +1,79 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-16 (snapshot60 run143; ADSP firmware staged, boot stalls after enable_screen; run144/run145 packaged untested).
+Last update: 2026-10-16 (snapshot60 run147 booted: audio livelock gone, fastrpc binds but node misnamed; run148 staged with the name fixed).
 
-## Current evidence — snapshot60 run143 (ADSP firmware up; boot stalls after enable_screen)
+## Current evidence — snapshot60 run147 (audio livelock gone; ADSP node misnamed; boot still stalls)
 
-Last confirmed-good image: **run143**. run144 and run145 are packaged and
-structurally verified but **not booted** — the phone went unreachable.
+Last confirmed-good image: **run147**. run148 is packaged, **not booted**.
 
-Boot now reaches `boot_progress_ams_ready` and `boot_progress_enable_screen`
-and stops there; `sys.boot_completed` unset at 289 s, `init.svc.bootanim`
-still running. ActivityManager drops `system_server_pre_watchdog` at 10:26:46
-and goes silent.
+Boot reaches `boot_progress_enable_screen` and stops; `sys.boot_completed`
+unset at 310 s, `init.svc.bootanim` still running, ActivityManager drops
+`system_server_pre_watchdog` and goes silent. **Still unexplained.**
 
 | Component | Evidence | Status |
 |---|---|---|
-| **SystemServer hang (current boot blocker)** | `ExtconUEventObserver: Unable to read .../qcom,qpnp-smbcharger/extcon/extcon0/cable.1/name` inside `PhoneWindowManager.init` → `WindowManagerService$6.run`; `DropBoxManagerService: add tag=system_server_pre_watchdog` | run144 labels the charger's extcon subtree `sysfs_graphics` (10 `genfscon`). **Untested.** |
-| GPU | `/dev/kgsl-3d0` **exists**; SurfaceFlinger registered; kgsl NOMMU by deliberate design; preemption WARN is a consequence of NOMMU (`adreno_a5xx_preempt.c:598`), not a bug | The tracker's "GPU is the confirmed blocker" is **not supported** by run143 evidence. Do not re-litigate. |
-| ADSP / FastRPC | firmware staged from `/firmware/image` (16 files, MD5-verified); `remoteproc0 ... is now up`, APR audio endpoints created; `no reserved DMA memory for FASTRPC` | DSP works. run145 adds the DMA pool (`fastrpc-rpmsg` probe resolves `memory-region`). **Untested.** |
+| **SystemServer hang (current boot blocker)** | `DropBoxManagerService: add tag=system_server_pre_watchdog`; boot never passes `enable_screen` | **Open, not yet diagnosed.** The extcon denial was a *real* cause of `PhoneWindowManager.init` trouble but fixing it (run144) did **not** clear the hang. At least one further cause remains unidentified. |
+| **Audio** | run144: 308 `AudioSystem: listAudioPorts failed` + 134 `loadHwModule error -19`, looping at 10 Hz. run147: **0** of both | **CLEARED in run147.** The DSP side initialises — `rpcmem_init_internal: opened ION device fd 4`, `fastrpc_apps_user_init done with default domain:0`. The 10 Hz CPU livelock through SystemServer startup is gone. |
+| **ADSP / FastRPC node name** | `fastrpc` **binds correctly**: `.../smd-edge.fastrpcsmd-apps-dsp.-1.-1/driver -> .../qcom,fastrpc`. Registered node is `/dev/fastrpc-adsprpc-smd` — a third spelling. adsprpcd still `apps_dev_init failed for domain 0, errno 2` (8960 lines) | run148 drops the redundant `fastrpc-` prefix so the node is `adsprpc-smd`, the donor constant at `oc-test/drivers/char/adsprpc_shared.h:31`. **Untested.** |
+| ADSP / FastRPC DMA pool | `no reserved DMA memory for FASTRPC` is `dev_info`; probe completes and registers a device with **no pool at all** | **Not a defect.** The reserved-memory pool added for it in `5080f3fab` was reverted (`a7fe6fb5a`) — the diagnosis was wrong and it added risk. |
+| GPU | `/dev/kgsl-3d0` **exists**; SurfaceFlinger registered; kgsl NOMMU by deliberate design; preemption WARN is a consequence of NOMMU (`adreno_a5xx_preempt.c:598`), not a bug | The tracker's "GPU is the confirmed blocker" is **not supported** by evidence. Do not re-litigate. |
 | WLAN | `wcnss.mdt ... error -2` | Not staged. Same mechanism as ADSP: `wcnss.mdt` + 4.2 MB of segments on `/firmware/image`. |
-| Display composer / Dpps | `Dpps: main():33 Failed to initialize DPPS`; needs `/sys/class/leds/lcd-backlight/brightness` (**no leds class device exists on this port**), `GetDriverProbe failed to get display 1` (EACCES), and an AD interface | run142's backlight `genfscon` halved denials 61 → 32 but is not sufficient. |
-| Audio | `AudioFlinger: loadHwModule() error -19 loading module primary` → `listAudioPorts failed` at 10 Hz | Should follow from FastRPC; retest after run145. |
+| Display composer / Dpps | `Dpps: main():33 Failed to initialize DPPS`; needs `/sys/class/leds/lcd-backlight/brightness` (**no leds class device exists on this port**), `GetDriverProbe failed to get display 1` (EACCES), and an AD interface | run142 labelled only the backlight **directory**; `genfscon` does not cascade to attribute files, so the `brightness` denial survived into run144. run146's fix (`harness-genfs-backlight-attrs.cil`) is written and **not yet in any booted image**. |
 | Charging control | **CLEARED in run141** — `IChargingControl` registers, `dumpsys battery` reports real values | Done. |
-| Charging rate | `Max charging current: 100000` µA vs DT `constant-charge-current-max` 1 A; SOC went 92 → 91 across runs | Unexplained. Charging is real but may be trickling. |
+| Charging rate | Same cable, same moment: stock `Max charging current: 500000`, port `100000` µA. Port DT sets `constant-charge-current-max` 1 A, so the observed value is neither the DT nor the stock figure | Unexplained. Which property the health HAL reads (usb `INPUT_CURRENT_LIMIT` vs bms `CONSTANT_CHARGE_CURRENT_MAX`) has not been checked. |
+
+## Process notes — faults of mine that produced false evidence
+
+Recorded because each one cost a boot cycle or nearly caused a wrong conclusion:
+
+1. **A background capture script was left running across a later boot**
+   (`sh_1421b9a0f001FCyq40J3ZHp0Wx`, run146). It kept polling for a diag device
+   while run147 was being booted, so two capture processes were competing.
+   Anything concluded from run146's outcome is confounded. **Always confirm
+   `pgrep -af usb-boot-capture` is empty before booting.**
+2. **Clearing the logdump before a boot with no capture path.** run147's first
+   attempt died at the splash with 0 bytes of kernel log and the persistent
+   evidence had already been zeroed. When a boot is going to be run blind,
+   leave the logdump intact.
+3. **`service list | grep composer` is the wrong test** for a composer2 HAL —
+   it registers with hwservicemanager, not the legacy service manager. The
+   composer was running all along (`init: starting service
+   'vendor.hwcomposer-2-1' ... pid 670`).
+4. **"The GPU is the blocker" was asserted without checking for
+   `/dev/kgsl-3d0`.** It exists.
+5. **The splash hang and a later successful boot of the same image are the same
+   event at different times.** run147 went `18d1:d00d` (EDL) at 06:54:00, then
+   came up on the port kernel minutes later by itself. Do not record an image
+   as determinately bad from one splash.
+
+## Superseded — snapshot60 run144 (extcon denial removed; audio still broken)
+
+run144 booted and proved the extcon labelling correct and effective --
+`grep -c ExtconUEventObserver` is 0 where run143 logged the failure plus the
+`PhoneWindowManager.init` frames. It did **not** clear the SystemServer hang:
+`system_server_pre_watchdog` still fires and `boot_completed` stays unset.
+
+Also settled here, and previously wrong: the fingerprint SIGSEGV **does**
+reproduce -- `Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0xc0
+in tid 881 (android.hardware.biometrics.fingerprint...)`. The earlier "no
+SIGSEGV in run137" came from a logcat window that had already rolled over.
+
+## Superseded — snapshot60 run143 (ADSP firmware up; boot stalls after enable_screen)
+
+Boot reached `boot_progress_ams_ready` and `boot_progress_enable_screen`, then
+stopped; `sys.boot_completed` unset at 289 s. ADSP firmware was harvested off
+the device itself (`/firmware/image`, 16 files, MD5-verified) and staged with
+`--firmware-dir`, and the DSP came up for the first time:
+
+    remoteproc0: Booting fw image adsp.mdt, size 7516
+    remoteproc0: remote processor c200000.remoteproc is now up
+    qcom,apr remoteproc0:smd-edge.apr_audio_svc: Adding APR/GPR dev: service:4:3
+
+`firmware_class.path` had to become `/lib/firmware,/vendor/firmware` rather than
+being dropped -- comma-delimited paths are supported and take priority
+(`drivers/base/firmware_loader/main.c:541`), and kgsl probes at 1.4 s needing
+`/vendor/firmware` for `qcom/a530_pfp.fw`.
 
 ## Superseded — snapshot60 run141 (charging-control blocker cleared)
 
