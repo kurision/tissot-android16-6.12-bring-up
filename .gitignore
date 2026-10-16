@@ -208,3 +208,14 @@ porting/artifacts/snapshot*/run*-*.txt
 !porting/artifacts/snapshot43/run11-*.status
 !porting/artifacts/snapshot43/run10-logdump.bin
 !porting/artifacts/snapshot43/run11-logdump.bin
+
+# Bulk evidence stays local, same reasoning as the rules above. ANR traces,
+# pulled sepolicy dumps and build outputs (vmlinux, System.map, Image.gz-dtb)
+# are reproducible from one boot and together run to several hundred MB.
+porting/artifacts/**/anr/
+porting/artifacts/**/*-anr*/
+porting/artifacts/sepolicy/
+porting/artifacts/**/vmlinux
+porting/artifacts/**/System.map
+porting/artifacts/**/*.tb
+__pycache__/
