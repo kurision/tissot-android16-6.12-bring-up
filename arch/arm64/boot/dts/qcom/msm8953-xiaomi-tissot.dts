@@ -428,16 +428,47 @@
 
 	smd-edge {
 		/*
-		 * FastRPC compute channel (mirrors msm8996.dtsi): label
-		 * must match the ADSP domain; no cb children (no LPASS
-		 * SMMU on 8953). Creates /dev/adsprpc-smdX once ADSP
-		 * announces the channel.
+		 * FastRPC compute channel (mirrors msm8996.dtsi). The label
+		 * must match the ADSP domain.
 		 */
 		fastrpc {
 			compatible = "qcom,fastrpc";
 			qcom,smd-channels = "fastrpcsmd-apps-dsp";
 			label = "adsp";
 			qcom,non-secure-domain;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/*
+			 * The compute-bank child is what creates the session
+			 * table, and without a session the node cannot be
+			 * opened. fastrpc_cb_probe() adds one entry per child
+			 * (sesscount++), and fastrpc_device_open() ends in
+			 * fastrpc_session_alloc(), which walks sesscount
+			 * entries looking for an unused-but-valid one and
+			 * returns NULL on an empty table -- which surfaces as
+			 * open() failing EBUSY, not ENOENT.
+			 *
+			 * run148 evidence, node name already corrected there:
+			 *   /dev/adsprpc-smd exists, fastrpc is bound to
+			 *   remoteproc0:smd-edge.fastrpcsmd-apps-dsp, and yet
+			 *   adsprpcd logs, thousands of times,
+			 *     apps_dev_init failed for domain 0,
+			 *     errno 16 (Device or resource busy)
+			 *
+			 * The iommus that upstream's msm8996 dtsi attaches to
+			 * each cb node are deliberately absent: there is no
+			 * LPASS SMMU on 8953, and fastrpc_cb_probe() does not
+			 * require one -- it only calls
+			 * dma_set_mask(dev, DMA_BIT_MASK(32)) and reads the
+			 * optional "reg" session id. The previous comment here
+			 * claimed cb children were only about the SMMU, which
+			 * is what left the session table empty.
+			 */
+			cb@0 {
+				compatible = "qcom,fastrpc-compute-cb";
+				reg = <0>;
+			};
 		};
 	};
 };
