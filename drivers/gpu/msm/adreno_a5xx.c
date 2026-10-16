@@ -1453,7 +1453,7 @@ static void a5xx_dump_bringup(struct adreno_device *adreno_dev,
 {
 	struct kgsl_device *device = &adreno_dev->dev;
 	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
-	unsigned int status, intstatus, rptr, wptr, base, cp_status;
+	unsigned int status, intstatus, rptr, wptr, base, cp_status, hw_fault;
 
 	kgsl_regread(device, A5XX_RBBM_STATUS, &status);
 	kgsl_regread(device, A5XX_RBBM_INT_0_STATUS, &intstatus);
@@ -1461,10 +1461,11 @@ static void a5xx_dump_bringup(struct adreno_device *adreno_dev,
 	kgsl_regread(device, A5XX_CP_RB_WPTR, &wptr);
 	kgsl_regread(device, A5XX_CP_RB_BASE, &base);
 	kgsl_regread(device, A5XX_CP_STATUS_1, &cp_status);
+	kgsl_regread(device, A5XX_CP_HW_FAULT, &hw_fault);
 
 	dev_info(device->dev,
-		 "DIAG bringup[%s]: rbbm=%08X int0=%08X rb_ptr=%X/%X rb_base=%08X cp_status_1=%08X gfx_rate=%lu\n",
-		stage, status, intstatus, rptr, wptr, base, cp_status,
+		 "DIAG bringup[%s]: rbbm=%08X int0=%08X rb_ptr=%X/%X rb_base=%08X cp_status_1=%08X cp_hw_fault=%08X gfx_rate=%lu\n",
+		stage, status, intstatus, rptr, wptr, base, cp_status, hw_fault,
 		kgsl_get_clkrate(pwr->grp_clks[0]));
 }
 
@@ -2228,6 +2229,7 @@ static int a5xx_rb_start(struct adreno_device *adreno_dev)
 
 	/* clear ME_HALT to start micro engine */
 	adreno_writereg(adreno_dev, ADRENO_REG_CP_ME_CNTL, 0);
+	a5xx_dump_bringup(adreno_dev, "me-unhalted");
 
 	ret = a5xx_send_me_init(adreno_dev, rb);
 	if (ret)
