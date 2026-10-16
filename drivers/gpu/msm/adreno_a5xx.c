@@ -1439,6 +1439,36 @@ static void _setup_throttling_counters(struct adreno_device *adreno_dev)
 }
 
 /*
+ * a5xx_dump_bringup() - Diagnostic dump of RBBM/CP state during bring-up
+ * @adreno_dev: Pointer to adreno device
+ * @stage: Name of the bring-up step just reached
+ *
+ * Read-only. RBBM_STATUS bit 31 is already latched by the time
+ * a5xx_send_me_init() runs, so the hang starts somewhere between power-on and
+ * the first command and ME_INIT is not where it begins. Sampling the same
+ * registers at each step of a5xx_start() makes the next boot name the step
+ * that latched it.
+ */
+static void a5xx_dump_bringup(struct adreno_device *adreno_dev,
+			      const char *stage)
+{
+	struct kgsl_device *device = &adreno_dev->dev;
+	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
+	unsigned int status, intstatus, rptr, wptr, base;
+
+	kgsl_regread(device, A5XX_RBBM_STATUS, &status);
+	kgsl_regread(device, A5XX_RBBM_INT_0_STATUS, &intstatus);
+	kgsl_regread(device, A5XX_CP_RB_RPTR, &rptr);
+	kgsl_regread(device, A5XX_CP_RB_WPTR, &wptr);
+	kgsl_regread(device, A5XX_CP_RB_BASE, &base);
+
+	dev_info(device->dev,
+		 "DIAG bringup[%s]: rbbm=%08X int0=%08X rb_ptr=%X/%X rb_base=%08X gfx_rate=%lu\n",
+		stage, status, intstatus, rptr, wptr, base,
+		kgsl_get_clkrate(pwr->grp_clks[0]));
+}
+
+/*
  * a5xx_start() - Device start
  * @adreno_dev: Pointer to adreno device
  *
@@ -1451,6 +1481,7 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 	const struct adreno_a5xx_core *a5xx_core = to_a5xx_core(adreno_dev);
 	unsigned int bit;
 	int ret;
+	a5xx_dump_bringup(adreno_dev, "start-entry");
 
 	if (adreno_is_a530(adreno_dev) && ADRENO_FEATURE(adreno_dev, ADRENO_LM)
 			&& adreno_dev->lm_threshold_count == 0) {
@@ -1481,6 +1512,7 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 	 * useful information on failure
 	 */
 	kgsl_regwrite(device, A5XX_RBBM_AHB_CNTL0, 0x00000001);
+	a5xx_dump_bringup(adreno_dev, "ahb-reporting-on");
 
 	if (ADRENO_QUIRK(adreno_dev, ADRENO_QUIRK_FAULT_DETECT_MASK)) {
 		/*
@@ -1676,6 +1708,7 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 
 	a5xx_preemption_start(adreno_dev);
 	a5xx_protect_init(adreno_dev);
+	a5xx_dump_bringup(adreno_dev, "preemption-done");
 }
 
 /*
