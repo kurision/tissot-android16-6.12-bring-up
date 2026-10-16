@@ -530,6 +530,17 @@
 	qcom,highest-bank-bit = <14>;
 
 	/*
+	 * A506 hardware workarounds, verbatim from the 4.19 donor gpu node
+	 * (msm8953-gpu.dtsi:165-167). adreno.c reads them only from DT, so
+	 * without them every A506 start skipped the two-pass WFI, RB DP2
+	 * clock-gating and VPC local-memory-load-kill workarounds; run158
+	 * draws then hung mid-IB with RBBM_STATUS 800001C1.
+	 */
+	qcom,gpu-quirk-two-pass-use-wfi;
+	qcom,gpu-quirk-dp2clockgating-disable;
+	qcom,gpu-quirk-lmloadkill-disable;
+
+	/*
 	 * Donor GPU clock names, verbatim from the 4.19 gpu node
 	 * (msm8953-gpu.dtsi:128-130). _get_clocks() matches DT clock-names
 	 * against the driver's table (kgsl_pwrctrl.c:37-56) and skips every
