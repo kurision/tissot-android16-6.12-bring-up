@@ -1721,6 +1721,58 @@ static inline const char *_kgsl_context_comm(struct kgsl_context *context)
 		pid_nr((_c)->context->proc_priv->pid), ##args)
 
 
+/*
+ * adreno_fault_dump_ib() - Diagnostic dump of the words around a fault IB
+ * @device: KGSL device
+ * @process: Process that owns the faulting context
+ * @name: Label for the log ("ib1"/"ib2")
+ * @gpuaddr: Current CP fetch pointer for that IB
+ *
+ * Read-only. Run159 shows every new GL context hanging on the same IB
+ * addresses; the commands themselves say what the CP was waiting on. Logs
+ * 16 dwords before and after @gpuaddr, clamped to the owning allocation,
+ * and only for the first few faults of the boot.
+ */
+static void adreno_fault_dump_ib(struct kgsl_device *device,
+				 struct kgsl_process_private *process,
+				 const char *name, u64 gpuaddr)
+{
+	static atomic_t dumps = ATOMIC_INIT(0);
+	struct kgsl_mem_entry *entry;
+	u64 base, start, end, addr;
+	u32 *src;
+
+	if (!gpuaddr || atomic_inc_return(&dumps) > 16)
+		return;
+
+	entry = kgsl_sharedmem_find(process, gpuaddr);
+	if (!entry) {
+		dev_err(device->dev, "DIAG %s %llx: no owning allocation\n",
+			name, gpuaddr);
+		return;
+	}
+
+	base = entry->memdesc.gpuaddr;
+	start = max(gpuaddr & ~15ULL, base + 64) - 64;
+	end = min(gpuaddr + 64, base + entry->memdesc.size);
+
+	src = kgsl_gpuaddr_to_vaddr(&entry->memdesc, start);
+	if (!src) {
+		dev_err(device->dev, "DIAG %s %llx: cannot map\n",
+			name, gpuaddr);
+		kgsl_mem_entry_put(entry);
+		return;
+	}
+
+	for (addr = start; addr + 16 <= end; addr += 16, src += 4)
+		dev_err(device->dev, "DIAG %s %llx%s: %08x %08x %08x %08x\n",
+			name, addr, addr == (gpuaddr & ~15ULL) ? "*" : " ",
+			src[0], src[1], src[2], src[3]);
+
+	kgsl_memdesc_unmap(&entry->memdesc);
+	kgsl_mem_entry_put(entry);
+}
+
 static void adreno_fault_header(struct kgsl_device *device,
 		struct adreno_ringbuffer *rb, struct kgsl_drawobj_cmd *cmdobj,
 		int fault)
@@ -1779,6 +1831,11 @@ static void adreno_fault_header(struct kgsl_device *device,
 			pr_fault(device, drawobj,
 				"%s fault rb %d rb sw r/w %4.4x/%4.4x\n",
 				type, rb->id, rptr, rb->wptr);
+
+		adreno_fault_dump_ib(device, drawobj->context->proc_priv,
+				     "ib1", ib1base);
+		adreno_fault_dump_ib(device, drawobj->context->proc_priv,
+				     "ib2", ib2sz ? ib2base : 0);
 	} else {
 		dev_err(device->dev,
 			"RB[%d] : %s fault status %8.8X rb %4.4x/%4.4x ib1 %16.16llX/%4.4x ib2 %16.16llX/%4.4x\n",
