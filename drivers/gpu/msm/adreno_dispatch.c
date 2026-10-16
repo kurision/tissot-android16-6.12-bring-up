@@ -1773,6 +1773,41 @@ static void adreno_fault_dump_ib(struct kgsl_device *device,
 	kgsl_mem_entry_put(entry);
 }
 
+/*
+ * adreno_fault_ib1_pos() - Locate the CP inside the faulting IB1
+ * @device: KGSL device
+ * @cmdobj: Faulting command object
+ * @ib1base: CP_IB1_BASE at fault time (start of the IB being executed)
+ * @ib1sz: CP_IB1_BUFSZ at fault time (dwords not yet fetched)
+ *
+ * Read-only diagnostic. CP_IB1_BASE does not advance on A5xx, so the fetch
+ * position is the IB start plus its size minus the remaining dwords. Logs
+ * every IB of the command object and returns that position, or @ib1base
+ * when the IB is not in the list.
+ */
+static u64 adreno_fault_ib1_pos(struct kgsl_device *device,
+				struct kgsl_drawobj_cmd *cmdobj,
+				u64 ib1base, unsigned int ib1sz)
+{
+	struct kgsl_memobj_node *ib;
+	u64 pos = ib1base;
+	int i = 0;
+
+	list_for_each_entry(ib, &cmdobj->cmdlist, node) {
+		u64 dwords = ib->size >> 2;
+
+		dev_err(device->dev, "DIAG ibs[%d]: %llx dwords=%llx%s\n",
+			i++, ib->gpuaddr, dwords,
+			ib->gpuaddr == ib1base ? " <- ib1" : "");
+		if (ib->gpuaddr == ib1base && dwords >= ib1sz)
+			pos = ib1base + ((dwords - ib1sz) << 2);
+	}
+
+	dev_err(device->dev, "DIAG ib1 fetch position %llx (offset %llx dwords)\n",
+		pos, (pos - ib1base) >> 2);
+	return pos;
+}
+
 static void adreno_fault_header(struct kgsl_device *device,
 		struct adreno_ringbuffer *rb, struct kgsl_drawobj_cmd *cmdobj,
 		int fault)
@@ -1833,7 +1868,8 @@ static void adreno_fault_header(struct kgsl_device *device,
 				type, rb->id, rptr, rb->wptr);
 
 		adreno_fault_dump_ib(device, drawobj->context->proc_priv,
-				     "ib1", ib1base);
+				     "ib1", adreno_fault_ib1_pos(device, cmdobj,
+								 ib1base, ib1sz));
 		adreno_fault_dump_ib(device, drawobj->context->proc_priv,
 				     "ib2", ib2sz ? ib2base : 0);
 	} else {
