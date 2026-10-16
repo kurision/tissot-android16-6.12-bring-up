@@ -1,11 +1,28 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-16 (snapshot60 run148 booted: node name fixed, adsprpcd errno 2 -> 16 EBUSY; run149 adds the missing session, untested).
+Last update: 2026-10-16 (snapshot60 run149 booted: session allocated, adsprpc now fails on unimplemented ioctl 12; run150 re-applies the orphaned backlight labels, untested).
 
-## Current evidence — snapshot60 run148 (node name fixed; adsprpcd now EBUSY; boot still stalls)
+## Current evidence — snapshot60 run149 (session allocated; adsprpc fails at ioctl 12; boot still stalls)
 
-Last confirmed-good image: **run148**. run149 is packaged, **not booted**.
+Last confirmed-good image: **run149**. run150 is packaged, **not booted**.
+
+### FastRPC/adsprpc: three separate defects, all now closed except the last
+
+Each run moved the failure one layer down, which is the only reason the chain is
+known at all:
+
+| run | errno | Meaning | Fixed by |
+|---|---|---|---|
+| run147 | 2 `ENOENT` | node was `/dev/fastrpc-adsprpc-smd`, nothing opens it | run148 — drop the redundant `fastrpc-` prefix (`devnames[]`) |
+| run148 | 16 `EBUSY` | node correct, but `fastrpc_session_alloc()` on an empty table | run149 — add `cb@0`, one session per cb child |
+| run149 | `ENOTTY` | open succeeds; ioctl 12 is not implemented | **open — see the row below** |
+
+Two earlier conclusions were wrong and are retracted: that adsprpc needed a
+reserved-memory **DMA pool** (it does not — that message is `dev_info` and the
+probe completes fine without one, reverted in `a7fe6fb5a`), and that **audio
+was fixed** (it is not; the error count only tracks how far adsprpcd gets before
+failing — see the Audio row).
 
 Boot reaches `boot_progress_enable_screen` and stops; `sys.boot_completed`
 unset at 310 s, `init.svc.bootanim` still running, ActivityManager drops
@@ -15,7 +32,7 @@ unset at 310 s, `init.svc.bootanim` still running, ActivityManager drops
 |---|---|---|
 | **SystemServer hang (current boot blocker)** | `DropBoxManagerService: add tag=system_server_pre_watchdog`; boot never passes `enable_screen` | **Open, not yet diagnosed.** The extcon denial was a *real* cause of `PhoneWindowManager.init` trouble but fixing it (run144) did **not** clear the hang. At least one further cause remains unidentified. |
 | **Audio** | run144: 308 `AudioSystem: listAudioPorts failed` + 134 `loadHwModule error -19`, at 10 Hz. run147: 0. run148: **381** | **NOT cleared — my earlier claim was wrong.** Both logcat dumps span the whole boot (checked first/last timestamps, not a rolled-over window), so run147's zero was real *for that run* but does not hold generally. The count tracks how far `adsprpcd` gets before failing: at ENOENT it dies early and audio errors never accumulate; at EBUSY it gets further and then fails differently. Do not record audio as fixed until adsprpcd actually connects. |
-| **ADSP / FastRPC session** | run148: node is now correctly `/dev/adsprpc-smd` and fastrpc binds, but errno moved 2 → **16 `Device or resource busy`**. `fastrpc_device_open()` → `fastrpc_session_alloc()` walks `cctx->sesscount` entries and returns NULL on an empty table → `-EBUSY` | run149 adds a `cb@0` child (`qcom,fastrpc-compute-cb`, `reg = <0>`); `fastrpc_cb_probe()` adds one session per cb child. This dtsi had none because an old comment conflated cb children with the LPASS SMMU they may carry — `fastrpc_cb_probe()` never reads `iommus`. **Untested.** |
+| **ADSP / FastRPC `FASTRPC_IOCTL_CONTROL` (12)** | run149: errno moved 2 → 16 → **"Inappropriate ioctl for device"**, i.e. open succeeds and the failure is at ioctl dispatch. `adsprpcd: apps_dev_init: failed to setup fastrpc session in kernel`; `remote_get_info failed to get attribute 257`. Our `include/uapi/misc/fastrpc.h` **has no definition for ioctl 12**, and `fastrpc_device_ioctl()` ends `default: return -ENOTTY`. CAF issues it: `oc-test/drivers/char/adsprpc_shared.h:24 #define FASTRPC_IOCTL_CONTROL _IOWR('R', 12, struct fastrpc_ioctl_control)`, handled at `oc-test/drivers/char/adsprpc.c:4755` | **The real remaining FastRPC blocker, and it is a porting task not a cycle.** `fastrpc_control()` → `fastrpc_internal_control()` dispatches on `req`: `KALLOC` is one flag, `WAKELOCK`/`PM` are small, but `LATENCY` needs PM QoS **plus** `fastrpc_send_cpuinfo_to_dsp()` — a message to the remote DSP that mainline fastrpc has no infrastructure for. `FREE_DMA_BUFF` (2) is also unimplemented. Not blocking `boot_completed`. |
 | ADSP / FastRPC DMA pool | `no reserved DMA memory for FASTRPC` is `dev_info`; probe completes and registers a device with **no pool at all** | **Not a defect.** The reserved-memory pool added for it in `5080f3fab` was reverted (`a7fe6fb5a`) — the diagnosis was wrong and it added risk. |
 | GPU | `/dev/kgsl-3d0` **exists**; SurfaceFlinger registered; kgsl NOMMU by deliberate design; preemption WARN is a consequence of NOMMU (`adreno_a5xx_preempt.c:598`), not a bug | The tracker's "GPU is the confirmed blocker" is **not supported** by evidence. Do not re-litigate. |
 | WLAN | `wcnss.mdt ... error -2` | Not staged. Same mechanism as ADSP: `wcnss.mdt` + 4.2 MB of segments on `/firmware/image`. |
