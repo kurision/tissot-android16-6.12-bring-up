@@ -1,11 +1,42 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-16 (boot blocker IDENTIFIED from /data/anr: SystemServer blocks in waitForDeclaredService waiting for IChargingControl; FastRPC scope corrected to a CAF ABI translation task).
+Last update: 2026-10-16, after run158 (GPU start fixed by soft reset `4aafe26dc`; boot completes at ~104 s without watchdog; draws still hang and the screen is black).
 
-## Current evidence — snapshot60 run149 (session allocated; adsprpc fails at ioctl 12; boot still stalls)
+## Current evidence — snapshot60 run158 (boot completes; GPU starts; display black)
 
-Last confirmed-good image: **run149**. run150 is packaged, **not booted**.
+- **Boot**: `sys.boot_completed=1` at ~104 s on the first SystemServer, no
+  watchdog kill, no new `/data/anr` files. bootanim played and `stopped`.
+- **GPU**: starts reliably now (`TRACKER-kgsl-port.md`, "Run156-158"), but
+  rendering contexts fault repeatedly (`GPU hang detected`, status
+  `800001C1`, fault threshold exceeded for surfaceflinger and the launcher).
+  Run159's restored A506 DT quirks did not change this. Every new launcher
+  GL context hangs on its first submissions. **Open.**
+- **Black screen, two causes in run158 logcat**:
+  1. Backlight: `hal_light_default` is denied `write` on `brightness`
+     (ino 29836, `tcontext=u:object_r:sysfs:s0`), composer/thermal denied
+     `max_brightness`, `mm-pp-daemon` denied `read write`. Android cannot
+     set the panel brightness. Same unlabeled-sysfs problem as the Dpps row.
+  2. Launcher GPU contexts are killed by the fault threshold, so even a lit
+     panel would have nothing rendered.
+  `screen_toggled: 0` at 10:25:11 also shows the display was turned off
+  shortly after boot.
+
+## Current evidence — snapshot60 run153/run154 (boot completes; GPU never starts)
+
+Last confirmed-good image: **run154** (kernel-only delta over run150). Two
+corrections that override older sections below:
+
+- **`sys.boot_completed` is set**, at ~484 s, after the watchdog kills
+  SystemServer for a 191 s block and Zygote forks a replacement. The restart,
+  not a fix, is what lets the boot finish; `init.svc.bootanim` is still
+  `running` afterwards, so no frame ever completed.
+- **The GPU is the blocker**, reversing the "not supported by evidence" row
+  below. Every start ends in `CP initialization failed to idle` with
+  `kgsl_3d0_irq` counting 0 for the whole boot, so no timeline fence is ever
+  signalled and `HardwareRenderer.nSyncAndDrawFrame` never returns. Full
+  evidence and the open question (where the hang latches) are in
+  `TRACKER-kgsl-port.md`, "Run154".
 
 ### FastRPC/adsprpc: three separate defects, all now closed except the last
 
@@ -33,11 +64,12 @@ unset at 310 s, `init.svc.bootanim` still running, ActivityManager drops
 | **SystemServer hang -- ROOT CAUSE FOUND** | `/data/anr/ss-anr-102533.txt`, subject `Blocked in handler on main thread (main) for 45s`: `ServiceManager.waitForDeclaredService` <- `ChargingControlController.<init>` <- `HealthInterfaceService.onStart` <- `LineageSystemServer.startServices` <- `SystemServer.startOtherServices`. Declared at `vendor/etc/vintf/manifest/vendor.lineage.health-service.default.xml:9` as `IChargingControl/default` | **IDENTIFIED, not yet fixed.** `waitForDeclaredService` has no timeout, so `startOtherServices` never returns and `enable_screen` is the last milestone forever. Confirmed across 8 ANR traces spanning 10:25:33-10:28:00, so not one boot. Next boot must answer: what does the servicemanager hold for `IChargingControl/default`, and is the health HAL alive? |
 | **Audio** | run144: 308 `AudioSystem: listAudioPorts failed` + 134 `loadHwModule error -19`, at 10 Hz. run147: 0. run148: **381** | **NOT cleared — my earlier claim was wrong.** Both logcat dumps span the whole boot (checked first/last timestamps, not a rolled-over window), so run147's zero was real *for that run* but does not hold generally. The count tracks how far `adsprpcd` gets before failing: at ENOENT it dies early and audio errors never accumulate; at EBUSY it gets further and then fails differently. Do not record audio as fixed until adsprpcd actually connects. |
 | **ADSP / FastRPC CAF ABI mismatch (the real blocker)** | Not a single missing ioctl. CAF numbers ioctls differently from mainline: CAF `adsprpc_shared.h:10-27` has `6 INIT, 2 MMAP, 3 MUNMAP, 1 INVOKE, 8 GETINFO`; mainline `include/uapi/misc/fastrpc.h:8-19` has `6 MMAP, 2 FREE_DMA_BUFF, 3 INVOKE, 1 ALLOC_DMA_BUFF`. Only nr 13 coincides, payload differs even there, and `_IOC` encodes size in bits 16-29 so the `cmd` integers barely overlap (CAF INIT `0xd0285206` vs mainline nr-6 MMAP `0xc0205206`) | **Scope corrected.** A CAF-built `adsprpcd` hits `-ENOTTY` on INIT/MMAP/MUNMAP/INVOKE/GETINFO regardless of what this driver implements, because mainline's ABI matches Qualcomm's open-source `external/fastrpc`, not the vendor binary. The real task is a per-`cmd` translation layer or making the node speak the CAF ABI. An ioctl-12 implementation exists at `porting/staged/fastrpc-ioctl12-control.patch` (ABI verified byte-identical to the donor, KALLOC/DSPPROCESS_CLEAN real, rest `-EOPNOTSUPP`), unapplied and **not** expected to fix this. |
-| GPU | `/dev/kgsl-3d0` **exists**; SurfaceFlinger registered; kgsl NOMMU by deliberate design; preemption WARN is a consequence of NOMMU (`adreno_a5xx_preempt.c:598`), not a bug | The tracker's "GPU is the confirmed blocker" is **not supported** by evidence. Do not re-litigate. |
-| WLAN | `wcnss.mdt ... error -2` | Not staged. Same mechanism as ADSP: `wcnss.mdt` + 4.2 MB of segments on `/firmware/image`. |
-| Display composer / Dpps | `Dpps: main():33 Failed to initialize DPPS`; needs `/sys/class/leds/lcd-backlight/brightness` (**no leds class device exists on this port**), `GetDriverProbe failed to get display 1` (EACCES), and an AD interface | run142 labelled only the backlight **directory**; `genfscon` does not cascade to attribute files, so the `brightness` denial survived into run144. run146's fix (`harness-genfs-backlight-attrs.cil`) is written and **not yet in any booted image**. |
-| Charging control | **CLEARED in run141** — `IChargingControl` registers, `dumpsys battery` reports real values | Done. |
-| Charging rate | Same cable, same moment: stock `Max charging current: 500000`, port `100000` µA. Port DT sets `constant-charge-current-max` 1 A, so the observed value is neither the DT nor the stock figure | Unexplained. Which property the health HAL reads (usb `INPUT_CURRENT_LIMIT` vs bms `CONSTANT_CHARGE_CURRENT_MAX`) has not been checked. |
+| GPU 3D (`kgsl`) | run154: 57 starts, all `CP initialization failed to idle`; `rb_ptr=C/C`; `RBBM_STATUS` bit31 already set at ME_INIT submit; `kgsl_3d0_irq` 0 for the whole boot; ring base programmed correctly (`cp_rb_base == want`, all buffers `gpu == phys`) | **BLOCKED, and now the confirmed blocker** — the row below claiming otherwise is withdrawn. No completion means no fence, so SurfaceFlinger and SystemServer both stall; that is the whole boot stall. Ring programming and NOMMU addressing are exonerated; firmware is the right one (`adreno-gpulist.h:311-322` uses `a530_pm4.fw` by design, 19,652 bytes exfiltrated). Open: which bring-up step latches bit31 — `c2dd623be` samples RBBM at three points of `a5xx_start()`. |
+| WLAN `wcn36xx` + pronto PIL | run154: `remoteproc1: Direct firmware load for wcnss.mdt failed with error -2`, remoteproc probes fine | **BLOCKED on blobs only.** The driver asks for `wcnss.mdt` + `wcnss.b02,b04,b06,b09,b10,b11,b12` (8 files, names confirmed from a working mainline boot of this board); none are staged. `wcnss_fw_mem` reserved region and the DT wiring are already correct. Same mechanism as the working ADSP set: stage with `--firmware-dir`. No kernel change needed. |
+| Display composer | run128/run154: `HWDevice::Init: access(/dev/graphics/fb0) successful`, `SDE Version = 5`; **no** `HWInfoDRM` | **CLOSED.** The SIGSEGV at `sdm::HWInfoDRM::GetHWResourceInfo+208` was backend selection: sdm picks DRM unless `/sys/devices/virtual/graphics/fb0/mdp/caps` exists, and the MDSS fbdev port added it (run126). The tracker's "unverified contract" is resolved. |
+| Display policy / Dpps backlight | `Dpps: main():33 Failed to initialize DPPS`; denial on `brightness`, `tcontext=u:object_r:sysfs:s0` | **BLOCKED on a wrong path, not the wrong label.** `sysfs_leds` *is* a valid allow target — `mm-pp-daemon` reaches it through the `sysfs_leds_202604` typeattribute (`system_etc_selinux_plat_pub_versioned.cil:1231-1233`). The shipped `harness-genfs-backlight-attrs.cil` points at `/devices/platform/soc@0/200f000.spmi/spmi-0/0-03/200f000.spmi:pmic@3:leds@d800/...`, but **this DT has no backlight or leds node at all** (`msm8953*.dtsi`, `msm8953-xiaomi-tissot.dts`), so the path can never match. Next step is one `readlink -f` on a port boot to learn the real path — no kernel change. |
+| Charging control | run153/run154: `android.hardware.health.IChargingControl/default` **and** `android.hardware.health-service.qti` both register; `dumpsys battery` live | **CLOSED.** The "HAL never registers" symptom does not reproduce. |
+| Charging rate | port reads `100000` µA on older runs, `1500000` µA on run153; stock `500000` | **Explained, not a defect.** The field is the USB supply's input current limit (`qpnp-smbcharger.c:5623`), one client's vote chosen by BC1.2 type: SDP 100 mA, CDP 1500 mA, DCP 1800 mA (`:4227-4258`). run153's 1500000 = CDP, corroborated by `AC powered: true / USB powered: false`. Stock's 500000 is CAF's DCP default for this board. The DT property the older note blamed does not exist in this DT. |
 
 ## Process notes — faults of mine that produced false evidence
 
