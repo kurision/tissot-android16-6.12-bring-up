@@ -34,6 +34,8 @@
 #include <linux/reboot.h>
 #include <linux/sched.h>
 #include <linux/mutex.h>
+#include <linux/spinlock.h>
+#include <linux/workqueue.h>
 #include <linux/sched/signal.h>
 #include <trace/events/signal.h>
 #include <trace/events/sched.h>
@@ -1161,9 +1163,10 @@ int ramoops_witness_write(const void *data, size_t len)
 EXPORT_SYMBOL_GPL(ramoops_witness_write);
 
 /*
- * Stage records (run205 diagnostic): a few FUA-written 512-byte slots in
- * the free gap between the witness and the QSEE ring, for code that must
- * leave evidence immediately before a call that can reset the board.
+ * Stage records occupy the gap between the witness and the QSEE ring.
+ * GPU callers only enqueue owned copies; a storage stall must not hold
+ * their device mutex.
+ * shortcut: best-effort queue; revisit if reset-time durability is required.
  */
 #define RAMOOPS_STAGE_OFFSET	0x3f01000ULL
 #define RAMOOPS_STAGE_SLOTS	32
@@ -1173,17 +1176,104 @@ static_assert(RAMOOPS_STAGE_OFFSET >=
 static_assert(RAMOOPS_STAGE_OFFSET + RAMOOPS_STAGE_SLOTS *
 	      RAMOOPS_WITNESS_LEN <= RAMOOPS_QTRACE_OFFSET);
 
-int ramoops_stage_write(unsigned int slot, const void *data, size_t len)
+struct ramoops_stage_entry {
+	unsigned int slot;
+	size_t len;
+	u8 data[RAMOOPS_WITNESS_LEN];
+};
+
+static struct ramoops_stage_entry ramoops_stage_queue[RAMOOPS_STAGE_SLOTS];
+static unsigned int ramoops_stage_head, ramoops_stage_tail, ramoops_stage_count;
+static DEFINE_SPINLOCK(ramoops_stage_lock);
+static struct workqueue_struct *ramoops_stage_wq;
+
+static void ramoops_stage_worker(struct work_struct *work)
 {
+	struct ramoops_stage_entry entry;
+	unsigned long flags;
 	int err;
 
-	if (slot >= RAMOOPS_STAGE_SLOTS)
+	for (;;) {
+		spin_lock_irqsave(&ramoops_stage_lock, flags);
+		if (!ramoops_stage_count) {
+			spin_unlock_irqrestore(&ramoops_stage_lock, flags);
+			return;
+		}
+		entry = ramoops_stage_queue[ramoops_stage_head];
+		ramoops_stage_head = (ramoops_stage_head + 1) % RAMOOPS_STAGE_SLOTS;
+		ramoops_stage_count--;
+		spin_unlock_irqrestore(&ramoops_stage_lock, flags);
+
+		mutex_lock(&ramoops_witness_lock);
+		err = ramoops_witness_write_at(RAMOOPS_STAGE_OFFSET +
+				entry.slot * RAMOOPS_WITNESS_LEN,
+				REQ_OP_WRITE | REQ_SYNC | REQ_FUA,
+				entry.data, entry.len);
+		mutex_unlock(&ramoops_witness_lock);
+		pr_info("DIAG stage slot=%u write_ret=%d\n", entry.slot, err);
+	}
+}
+
+static DECLARE_WORK(ramoops_stage_work, ramoops_stage_worker);
+
+static void ramoops_stage_start(void)
+{
+	struct workqueue_struct *wq;
+	unsigned long flags;
+
+	wq = alloc_ordered_workqueue("ramoops_stage", 0);
+	if (!wq) {
+		pr_warn("stage worker unavailable; stage capture disabled\n");
+		return;
+	}
+	spin_lock_irqsave(&ramoops_stage_lock, flags);
+	ramoops_stage_head = 0;
+	ramoops_stage_tail = 0;
+	ramoops_stage_count = 0;
+	ramoops_stage_wq = wq;
+	spin_unlock_irqrestore(&ramoops_stage_lock, flags);
+}
+
+static void ramoops_stage_stop(void)
+{
+	struct workqueue_struct *wq;
+	unsigned long flags;
+
+	spin_lock_irqsave(&ramoops_stage_lock, flags);
+	wq = ramoops_stage_wq;
+	ramoops_stage_wq = NULL;
+	spin_unlock_irqrestore(&ramoops_stage_lock, flags);
+	/* Removal drains accepted records; in-flight I/O can delay removal. */
+	if (wq)
+		destroy_workqueue(wq);
+}
+
+int ramoops_stage_write(unsigned int slot, const void *data, size_t len)
+{
+	struct ramoops_stage_entry *entry;
+	unsigned long flags;
+	int err = 0;
+
+	if (slot >= RAMOOPS_STAGE_SLOTS || len > RAMOOPS_WITNESS_LEN)
 		return -EINVAL;
-	mutex_lock(&ramoops_witness_lock);
-	err = ramoops_witness_write_at(RAMOOPS_STAGE_OFFSET +
-			slot * RAMOOPS_WITNESS_LEN,
-			REQ_OP_WRITE | REQ_SYNC | REQ_FUA, data, len);
-	mutex_unlock(&ramoops_witness_lock);
+	spin_lock_irqsave(&ramoops_stage_lock, flags);
+	if (!ramoops_stage_wq) {
+		err = -ENODEV;
+		goto out;
+	}
+	if (ramoops_stage_count == RAMOOPS_STAGE_SLOTS) {
+		err = -ENOSPC;
+		goto out;
+	}
+	entry = &ramoops_stage_queue[ramoops_stage_tail];
+	entry->slot = slot;
+	entry->len = len;
+	memcpy(entry->data, data, len);
+	ramoops_stage_tail = (ramoops_stage_tail + 1) % RAMOOPS_STAGE_SLOTS;
+	ramoops_stage_count++;
+	queue_work(ramoops_stage_wq, &ramoops_stage_work);
+out:
+	spin_unlock_irqrestore(&ramoops_stage_lock, flags);
 	return err;
 }
 EXPORT_SYMBOL_GPL(ramoops_stage_write);
@@ -2021,8 +2111,10 @@ static int ramoops_probe(struct platform_device *pdev)
 	 * and the same validated geometry backed the exporter, so it can
 	 * only copy mappings that are actually live.
 	 */
-	if (cxt->raw_published)
+	if (cxt->raw_published) {
+		ramoops_stage_start();
 		ramoops_snap_start(cxt);
+	}
 #endif
 
 	/*
@@ -2058,6 +2150,7 @@ static void ramoops_remove(struct platform_device *pdev)
 	struct ramoops_context *cxt = &oops_cxt;
 
 #if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
+	ramoops_stage_stop();
 	/*
 	 * Drain the snapshot worker first: it reads the same zone mappings
 	 * the exporter serves, and kthread_stop() waits for the in-flight

@@ -37,9 +37,10 @@
 
 /*
  * run203 reset the board ~41 s into boot, at the first GPU start, with no
- * log surviving. Each stage below is written with FUA to the logdump
- * (fs/pstore/ram.c ramoops_stage_write). Slots 7-15 follow GPU startup and
- * fault capture after authentication; slots 16-30 follow first-open and power
+ * log surviving. Stages are queued for FUA writes to the logdump by
+ * fs/pstore/ram.c; enqueue completion does not establish persistence.
+ * Slots 7-15 follow GPU startup and fault capture after authentication;
+ * slots 16-30 follow first-open and power
  * transitions. Each has one call site. Slot = stage.
  * Slots 16-22 use mem_phys/size for PID/current state; slots 23-30 use them
  * for current/requested state. These are software values, not register reads.
@@ -108,17 +109,13 @@ static inline void adreno_zap_stage(struct device *dev,
 		.mem_phys = cpu_to_le64(phys),
 		.size = cpu_to_le64(size),
 	};
-	int err;
 
 	/* Preserve the first visit when recovery restarts the GPU. */
 	if (stage >= ZAP_STAGE_UNSECURE_DONE &&
 	    test_and_set_bit(stage, &recorded))
 		return;
 
-	err = ramoops_stage_write(stage, &rec, sizeof(rec));
-
-	dev_info(dev, "DIAG zap stage=%d ret=%d witness=%d\n", stage, ret,
-		 err);
+	ramoops_stage_write(stage, &rec, sizeof(rec));
 }
 
 static inline void *adreno_zap_subsystem_get(struct device *dev,
