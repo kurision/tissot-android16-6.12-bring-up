@@ -1,22 +1,24 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-17, after run198. The display bring-up defect is found and
-fixed; the screen is still black because the GPU produces no pixels. The UCHE
-fault survives a correct software walk and a correct hardware address mode.
+Last update: 2026-10-17, after run199. The display bring-up defect is found and
+fixed; the screen is still black because the GPU produces no pixels. Both
+hardware/software-agreement axes on the UCHE fault — hardware address mode and
+page-table format — are now closed and neither was the cause.
 
-## Current evidence — snapshot60 run198 (2026-10-17)
+## Current evidence — snapshot60 run199 (2026-10-17)
 
-Full analysis: `artifacts/snapshot60/run198-live/gpu-analysis.md` (GPU) and
-`artifacts/snapshot60/run196-live/display-analysis.md` (display, includes the
-framebuffer decode).
+Full analysis: `artifacts/snapshot60/run198-live/gpu-analysis.md` (GPU, all
+three runs) and `artifacts/snapshot60/run196-live/display-analysis.md`
+(display, includes the framebuffer decode).
 
 | Component | Evidence | Current status / next action |
 |---|---|---|
 | Display bring-up | run194 showed `mdss_dsi_panel_power_on: failed to enable vregs for PANEL_PM`, `mdss_dsi_on:Panel power on failed. rc=-110`, `mdss_mdp_video_display: intf #2 link ready error (-110)`, `mdss_fb_open: can't turn on fb0! rc=-110`. run196 with the failure made non-fatal: `DIAG dsi_on: done ctrl=0 rc=0 state=0x4 pwr=1 clk_rate=802589760`, and **0** `turn on fb0` / `link ready error` in the whole log | **FIXED.** CAF aborts `mdss_dsi_on()` when the RPM-served panel `vdd` rail fails to enable; the bootloader has already supplied that rail, so the abort is wrong. Do not re-open: the video bring-up path is byte-identical to CAF 4.19 and the byte clock 802,589,760 is exactly `1148*1942*60*24/4`. |
 | Panel regulator refcount | run196 `WARNING ... unbalanced disables for l6` from `_regulator_disable`: the tissot power-off branch disabled the rails when `acc_vreg == 0` and decremented to -1 | **Fixed in run197** (`acc_vreg > 0` is now the only condition), untested in isolation — run197 shipped the fix together with the GPU change. |
-| Visible rendering / GPU | run198: `UCHE: Out of bounds access addr=0000000000139000`, `addr_mode=0`, `cp_status=80423c68`, first fault at t=41.87 s on `surfaceflinger[716]` — the first GL context ever to submit. 937 `GPU hang detected`, 593 `gpu fault ctx`, 2 `gpu fault threshold exceeded` in ~700 s | **OPEN.** A software walk proves the buffer maps and translates correctly. One real port-vs-stock divergence was found and fixed (below) and ruled out as the cause. |
-| GPU hardware address mode | `adreno_support_64bit()` is gated on `BITS_PER_LONG==64`; stock CAF 4.19 is 32-bit so the A506 never enters 64-bit mode, this arm64 port did while `KGSL_MMU_64BIT` was withheld | **Divergence found and FIXED in run198** (all three uses gated on `MMU_FEATURE(KGSL_MMU_64BIT)`; `addr_mode` now reads 0, and `KGSL_PROP_DEVICE_BITNESS` no longer advertises 48 over a 32-bit pool). **Ruled out as the fault cause**: trap address, `cp_status` and fault counts are unchanged. |
+| Visible rendering / GPU | run199: `UCHE: Out of bounds access addr=0000000000139000`, `addr_mode=0`, `cp_status=80423c68`, first fault on `surfaceflinger[716]` — the first GL context ever to submit, ~12 ms after `ME_INIT`. Rates per second of captured log: run198 1.24 hangs/s, run199 0.94 hangs/s | **OPEN.** A startup fault, not a workload fault. Four hypotheses are now closed (see the two rows below plus the MMU and SMMU evidence) and none was the cause. Do not re-test them. |
+| GPU page-table format | Stock CAF sets `qcom,use-3-lvl-tables` on this SMMU (`msm-arm-smmu-8953.dtsi:29`) = `ARM_32_LPAE_S1`. The port derived `use_aarch64_pt` from compatible strings alone and got `ARM_64_LPAE_S1`, `.ias=39`. run199 forces the stock format: `ias=32 aarch64=0 tcr=80802020 tcr2=00038002` | **Divergence fixed in run199 and RULED OUT.** Trap address, `cp_status` and `addr_mode` all unchanged; `screencap` byte-identical to run196-198; panel still backlit with no render. |
+| GPU hardware address mode | `adreno_support_64bit()` is gated on `BITS_PER_LONG==64`; stock CAF 4.19 is 32-bit so the A506 never enters 64-bit mode, this arm64 port did while `KGSL_MMU_64BIT` was withheld | **Divergence found and FIXED in run198** (all three uses gated on `MMU_FEATURE(KGSL_MMU_64BIT)`; `addr_mode` now reads 0, and `KGSL_PROP_DEVICE_BITNESS` no longer advertises 48 over a 32-bit pool). **Ruled out as the fault cause**: trap address and `cp_status` unchanged. |
 | Framebuffer content | `screencap` decoded by hand on the live port boot: 1080x1920, **42,625 sampled pixels, one colour, `#000000`**, six captures byte-identical. `screenrecord` (a different path, via VirtualDisplay) gives 6 byte-identical frames and 1x1 RGB `(0,0,4)` | The panel is being driven with a black frame, so the display link being fixed did not and could not change what is visible. This also **corrects** the handoff's claim that `screencap` returns a constant image regardless of display state — it is constant while the content is. |
 | GPU clock management | `DIAG bringup` `gfx_rate` reads 650 MHz on most bring-ups, ~320 MHz on some, and **~100 MHz** (the floor) at least once. `libperfmgr: Failed to write to node: /sys/class/kgsl/kgsl-3d0/max_pwrlevel ... fd: -1` | Open but **not established as the cause**: a low clock should mean slow, not wrong. `fd: -1` means the perf HAL cannot open the nodes at all. |
 
