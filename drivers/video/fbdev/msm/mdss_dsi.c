@@ -3293,21 +3293,6 @@ static struct device_node *mdss_dsi_find_panel_of_node(
 		if (!strcmp(panel_name, NONE_PANEL))
 			goto exit;
 
-#if IS_ENABLED(CONFIG_MACH_XIAOMI_TISSOT)
-		if (xiaomi_msm8953_mach_get() == XIAOMI_MSM8953_MACH_TISSOT) {
-			if (!strcmp(panel_name, "qcom,mdss_dsi_td4310_fhd_video")) {
-				panel_suspend_reset_flag = 1;
-				panel_suspend_power_flag = 1;
-			} else if (!strcmp(panel_name, "qcom,mdss_dsi_otm1911_fhd_video")) {
-				panel_suspend_reset_flag = 2;
-				panel_suspend_power_flag = 2;
-			} else if (!strcmp(panel_name, "qcom,mdss_dsi_ft8716_fhd_video")) {
-				panel_suspend_reset_flag = 3;
-				panel_suspend_power_flag = 3;
-			}
-		}
-#endif
-
 		mdss_node = of_parse_phandle(pdev->dev.of_node,
 			"qcom,mdss-mdp", 0);
 		if (!mdss_node) {
@@ -3377,6 +3362,25 @@ static struct device_node *mdss_dsi_config_panel(struct platform_device *pdev,
 		pr_err("%s: can't find panel node %s\n", __func__, panel_cfg);
 		of_node_put(dsi_pan_node);
 		return NULL;
+	}
+
+	/* Resolve Tissot policy from the selected node, including DT fallback. */
+	if (xiaomi_msm8953_mach_get() == XIAOMI_MSM8953_MACH_TISSOT) {
+		panel_suspend_reset_flag = 0;
+		panel_suspend_power_flag = 0;
+		if (of_node_name_eq(dsi_pan_node,
+				"qcom,mdss_dsi_td4310_fhd_video")) {
+			panel_suspend_reset_flag = 1;
+			panel_suspend_power_flag = 1;
+		} else if (of_node_name_eq(dsi_pan_node,
+				"qcom,mdss_dsi_otm1911_fhd_video")) {
+			panel_suspend_reset_flag = 2;
+			panel_suspend_power_flag = 2;
+		} else if (of_node_name_eq(dsi_pan_node,
+				"qcom,mdss_dsi_ft8716_fhd_video")) {
+			panel_suspend_reset_flag = 3;
+			panel_suspend_power_flag = 3;
+		}
 	}
 
 	rc = mdss_dsi_panel_init(dsi_pan_node, ctrl_pdata, ndx);
