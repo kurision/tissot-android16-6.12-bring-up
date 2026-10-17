@@ -1166,7 +1166,7 @@ EXPORT_SYMBOL_GPL(ramoops_witness_write);
  * leave evidence immediately before a call that can reset the board.
  */
 #define RAMOOPS_STAGE_OFFSET	0x3f01000ULL
-#define RAMOOPS_STAGE_SLOTS	16
+#define RAMOOPS_STAGE_SLOTS	32
 
 static_assert(RAMOOPS_STAGE_OFFSET >=
 	      RAMOOPS_WITNESS_OFFSET + RAMOOPS_WITNESS_LEN);

@@ -39,7 +39,10 @@
  * run203 reset the board ~41 s into boot, at the first GPU start, with no
  * log surviving. Each stage below is written with FUA to the logdump
  * (fs/pstore/ram.c ramoops_stage_write). Slots 7-15 follow GPU startup and
- * fault capture after authentication; each has one call site. Slot = stage.
+ * fault capture after authentication; slots 16-30 follow first-open and power
+ * transitions. Each has one call site. Slot = stage.
+ * Slots 16-22 use mem_phys/size for PID/current state; slots 23-30 use them
+ * for current/requested state. These are software values, not register reads.
  */
 #define ADRENO_ZAP_STAGE_MAGIC	0x454741545350415aULL	/* "ZAPSTAGE" */
 
@@ -60,9 +63,24 @@ enum adreno_zap_stage {
 	ZAP_STAGE_SNAPSHOT_ENTER,
 	ZAP_STAGE_CRASHDUMP_DONE,
 	ZAP_STAGE_CPU_FALLBACK,
+	ZAP_STAGE_OPEN_START_DONE,
+	ZAP_STAGE_OPEN_ACTIVE_DONE,
+	ZAP_STAGE_OPEN_PUT_DONE,
+	ZAP_STAGE_OPEN_DEVICE_DONE,
+	ZAP_STAGE_PROCESS_OPEN_ENTER,
+	ZAP_STAGE_PROCESS_OPEN_DONE,
+	ZAP_STAGE_OPEN_DONE,
+	ZAP_STAGE_IDLE_ENTER,
+	ZAP_STAGE_IDLE_DONE,
+	ZAP_STAGE_ACTIVE_ENTER,
+	ZAP_STAGE_ACTIVE_DONE,
+	ZAP_STAGE_NAP_ENTER,
+	ZAP_STAGE_NAP_DONE,
+	ZAP_STAGE_SLUMBER_ENTER,
+	ZAP_STAGE_SLUMBER_DONE,
 };
 
-static_assert(ZAP_STAGE_CPU_FALLBACK < 16);
+static_assert(ZAP_STAGE_SLUMBER_DONE < 32);
 
 struct adreno_zap_stage_rec {
 	__le64 magic;
