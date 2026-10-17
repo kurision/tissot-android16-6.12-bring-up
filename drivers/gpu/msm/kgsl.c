@@ -308,7 +308,7 @@ static void kgsl_destroy_ion(struct kgsl_memdesc *memdesc)
 
 	if (meta != NULL) {
 		remove_dmabuf_list(meta);
-		dma_buf_unmap_attachment(meta->attach, meta->table,
+		dma_buf_unmap_attachment_unlocked(meta->attach, meta->table,
 			DMA_BIDIRECTIONAL);
 		dma_buf_detach(meta->dmabuf, meta->attach);
 		dma_buf_put(meta->dmabuf);
@@ -3109,9 +3109,10 @@ static int kgsl_setup_dma_buf(struct kgsl_device *device,
 {
 	int ret = 0;
 	struct scatterlist *s;
-	struct sg_table *sg_table;
+	struct sg_table *sg_table = NULL;
 	struct dma_buf_attachment *attach = NULL;
 	struct kgsl_dma_buf_meta *meta;
+	uint64_t size = 0;
 
 	meta = kzalloc(sizeof(*meta), GFP_KERNEL);
 	if (!meta)
@@ -3136,27 +3137,15 @@ static int kgsl_setup_dma_buf(struct kgsl_device *device,
 	meta->attach = attach;
 	meta->entry = entry;
 
-	entry->priv_data = meta;
-	entry->memdesc.pagetable = pagetable;
-	entry->memdesc.size = 0;
-	entry->memdesc.ops = &kgsl_dmabuf_ops;
-	/* USE_CPU_MAP is not impemented for ION. */
-	entry->memdesc.flags &= ~((uint64_t) KGSL_MEMFLAGS_USE_CPU_MAP);
-	entry->memdesc.flags |= (uint64_t)KGSL_MEMFLAGS_USERMEM_ION;
+	sg_table = dma_buf_map_attachment_unlocked(attach, DMA_BIDIRECTIONAL);
 
-	sg_table = dma_buf_map_attachment(attach, DMA_BIDIRECTIONAL);
-
-	if (IS_ERR_OR_NULL(sg_table)) {
+	if (IS_ERR(sg_table)) {
 		ret = PTR_ERR(sg_table);
 		goto out;
 	}
 
-	meta->table = sg_table;
-	entry->priv_data = meta;
-	entry->memdesc.sgt = sg_table;
-
 	/* Calculate the size of the memdesc from the sglist */
-	for (s = entry->memdesc.sgt->sgl; s != NULL; s = sg_next(s)) {
+	for (s = sg_table->sgl; s != NULL; s = sg_next(s)) {
 		int priv = (entry->memdesc.priv & KGSL_MEMDESC_SECURE) ? 1 : 0;
 
 		/*
@@ -3169,19 +3158,31 @@ static int kgsl_setup_dma_buf(struct kgsl_device *device,
 			goto out;
 		}
 
-		entry->memdesc.size += (uint64_t) s->length;
+		size += (uint64_t) s->length;
 	}
 
-	if (!entry->memdesc.size) {
+	if (!size) {
 		ret = -EINVAL;
 		goto out;
 	}
 
+	meta->table = sg_table;
+	entry->priv_data = meta;
+	entry->memdesc.pagetable = pagetable;
+	entry->memdesc.sgt = sg_table;
+	entry->memdesc.ops = &kgsl_dmabuf_ops;
+	/* USE_CPU_MAP is not implemented for ION. */
+	entry->memdesc.flags &= ~((uint64_t) KGSL_MEMFLAGS_USE_CPU_MAP);
+	entry->memdesc.flags |= (uint64_t)KGSL_MEMFLAGS_USERMEM_ION;
+	entry->memdesc.size = PAGE_ALIGN(size);
 	add_dmabuf_list(meta);
-	entry->memdesc.size = PAGE_ALIGN(entry->memdesc.size);
+	return 0;
 
 out:
 	if (ret) {
+		if (!IS_ERR_OR_NULL(sg_table))
+			dma_buf_unmap_attachment_unlocked(attach, sg_table,
+				DMA_BIDIRECTIONAL);
 		if (!IS_ERR_OR_NULL(attach))
 			dma_buf_detach(dmabuf, attach);
 

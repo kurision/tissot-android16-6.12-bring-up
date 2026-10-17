@@ -1,12 +1,26 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-17, after run199. The display bring-up defect is found and
-fixed; the screen is still black because the GPU produces no pixels. Both
-hardware/software-agreement axes on the UCHE fault — hardware address mode and
-page-table format — are now closed and neither was the cause.
+Last update: 2026-10-17, after run210. GPU startup and first open complete,
+but visible rendering and the subsequent reset cause remain unverified.
+Earlier address-mode/page-table claims below were corrected by run201/202;
+use the [current handoff](HANDOFF.md), not historical diagnoses.
 
-## Current evidence — snapshot60 run199 (2026-10-17)
+## Current evidence — snapshot60 run210 (2026-10-17)
+
+| Component | Evidence | Current status / next action |
+|---|---|---|
+| KGSL 6.12 API compatibility | DMA-BUF locking/failed-import cleanup and SCM source-owner conversion compiled and RAM-booted; both host regressions and ASan/UBSan passed | **Adapted, not a rendering fix.** Device execution of the changed import/secure-transfer paths is not established. |
+| GPU initialization | `run210-zap-stages.txt`: authentication, secure-mode-switch call, startup, PID680 process setup/final open all ret=0; final open 42.088811858 s; first ACTIVE/NAP idle work succeeds | **Startup/open confirmed.** First-submit slots empty; best-effort asynchronous absence cannot establish no submission. |
+| Reset / rendering / panel | Returned to stock at host elapsed 167.960 s, no 6.12 ADB sample; no valid panic/oops/ACKRESET1; no panel completion captured | **OPEN.** No diagnosed reset cause or confirmed rendering; physical panel observation pending. Inspect post-open ioctl/mmap and panel completion independently after approval. |
+
+Evidence: `artifacts/snapshot60/run210-summary.json`, device-hash-verified
+`run210-logdump.bin` SHA256
+`4fe66152b7b7c123e7c7670639dd6b78ddbcdfca0818831dc415f33ca8bdeb60`.
+Final device rooted stock 4.19, boot_id
+`a21fd043-16cd-43ed-a8b3-ec5768722bc7`. Nothing flashed.
+
+## Historical evidence — snapshot60 run199 (2026-10-17)
 
 Full analysis: `artifacts/snapshot60/run198-live/gpu-analysis.md` (GPU, all
 three runs) and `artifacts/snapshot60/run196-live/display-analysis.md`
