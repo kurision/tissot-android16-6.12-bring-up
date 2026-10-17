@@ -1160,6 +1160,34 @@ int ramoops_witness_write(const void *data, size_t len)
 }
 EXPORT_SYMBOL_GPL(ramoops_witness_write);
 
+/*
+ * Stage records (run205 diagnostic): a few FUA-written 512-byte slots in
+ * the free gap between the witness and the QSEE ring, for code that must
+ * leave evidence immediately before a call that can reset the board.
+ */
+#define RAMOOPS_STAGE_OFFSET	0x3f01000ULL
+#define RAMOOPS_STAGE_SLOTS	16
+
+static_assert(RAMOOPS_STAGE_OFFSET >=
+	      RAMOOPS_WITNESS_OFFSET + RAMOOPS_WITNESS_LEN);
+static_assert(RAMOOPS_STAGE_OFFSET + RAMOOPS_STAGE_SLOTS *
+	      RAMOOPS_WITNESS_LEN <= RAMOOPS_QTRACE_OFFSET);
+
+int ramoops_stage_write(unsigned int slot, const void *data, size_t len)
+{
+	int err;
+
+	if (slot >= RAMOOPS_STAGE_SLOTS)
+		return -EINVAL;
+	mutex_lock(&ramoops_witness_lock);
+	err = ramoops_witness_write_at(RAMOOPS_STAGE_OFFSET +
+			slot * RAMOOPS_WITNESS_LEN,
+			REQ_OP_WRITE | REQ_SYNC | REQ_FUA, data, len);
+	mutex_unlock(&ramoops_witness_lock);
+	return err;
+}
+EXPORT_SYMBOL_GPL(ramoops_stage_write);
+
 int ramoops_qtrace_write(u64 seq, const void *data, size_t len)
 {
 	int err;

@@ -9,6 +9,7 @@
 #include <linux/vmalloc.h>
 
 #include "adreno.h"
+#include "adreno-zap-compat.h"
 #include "adreno_pm4types.h"
 #include "a5xx_reg.h"
 #include "adreno_trace.h"
@@ -594,7 +595,13 @@ static int sendcmd(struct adreno_device *adreno_dev,
 			ADRENO_DRAWOBJ_PROFILE_COUNT;
 	}
 
+	if (adreno_is_a5xx(adreno_dev) && adreno_dev->zap_loaded)
+		adreno_zap_stage(device->dev, ZAP_STAGE_SUBMIT_ENTER,
+				 0, 0, 0);
 	ret = adreno_ringbuffer_submitcmd(adreno_dev, cmdobj, &time);
+	if (adreno_is_a5xx(adreno_dev) && adreno_dev->zap_loaded)
+		adreno_zap_stage(device->dev, ZAP_STAGE_SUBMIT_DONE,
+				 ret, 0, 0);
 
 	/*
 	 * On the first command, if the submission was successful, then read the
@@ -1725,6 +1732,70 @@ static inline const char *_kgsl_context_comm(struct kgsl_context *context)
 		pid_nr((_c)->context->proc_priv->pid), ##args)
 
 
+/*
+ * Walk the page-table descriptors for one IOVA and print them raw.
+ *
+ * Uses page_address() rather than a mapping: this runs in the fault path,
+ * which can be hardirq context, and arm-smmu allocates the tables with
+ * alloc_page() so they are kernel-addressable when they are not highmem.
+ * Anything unexpected returns instead of faulting, so a wrong address here
+ * costs a log line rather than the boot.
+ *
+ * The GPU bank is ARM_32_LPAE_S1 with ias=32 (qcom,use-3-lvl-tables): a
+ * 4-entry level 1 indexed by VA[31:30], then VA[29:21] and VA[20:12].
+ * Output addresses are bits [39:12]; bit 55 of a table descriptor is
+ * io-pgtable's software sync flag, ignored by the walk, so it is masked off.
+ * run200 indexed by page instead of by entry and kept bit 55, which is why
+ * every walk stopped after one level.
+ */
+#define KGSL_LPAE_TTBR_MASK	GENMASK_ULL(39, 5)
+#define KGSL_LPAE_ADDR_MASK	GENMASK_ULL(39, 12)
+
+static bool kgsl_desc_at(phys_addr_t table, u64 va, int shift, u64 *desc)
+{
+	unsigned long pfn = table >> PAGE_SHIFT;
+	void *base;
+
+	if (!pfn_valid(pfn))
+		return false;
+
+	base = page_address(pfn_to_page(pfn));
+	if (!base)
+		return false;
+
+	*desc = ((u64 *)(base + offset_in_page(table)))[(va >> shift) & 0x1ff];
+	return true;
+}
+
+static void kgsl_dump_iommu_descs(struct kgsl_device *device, const char *name,
+		u64 ttbr0, u64 va)
+{
+	phys_addr_t table = ttbr0 & KGSL_LPAE_TTBR_MASK;
+	u64 desc;
+	int lvl, shift;
+
+	for (lvl = 1, shift = 30; shift >= 12; lvl++, shift -= 9) {
+		if (!kgsl_desc_at(table, va, shift, &desc)) {
+			dev_err(device->dev,
+				"DIAG %s-pte va=%llx lvl=%d table=%pa: not addressable\n",
+				name, va, lvl, &table);
+			return;
+		}
+
+		dev_err(device->dev,
+			"DIAG %s-pte va=%llx lvl=%d table=%pa desc=%016llx type=%llu attrindx=%llu ns=%u ap=%llu sh=%llu af=%u ng=%u xn=%u\n",
+			name, va, lvl, &table, desc, desc & 3,
+			(desc >> 2) & 7, !!(desc & BIT(5)), (desc >> 6) & 3,
+			(desc >> 8) & 3, !!(desc & BIT(10)),
+			!!(desc & BIT(11)), !!(desc & BIT_ULL(54)));
+
+		/* level 3 is always the leaf; above it, only type 3 is a table */
+		if (shift == 12 || (desc & 3) != 3)
+			return;
+		table = desc & KGSL_LPAE_ADDR_MASK;
+	}
+}
+
 /* CPU samples do not invalidate caches or modify the faulting allocation. */
 static void adreno_fault_dump_target(struct kgsl_device *device,
 		struct kgsl_process_private *process, const char *name,
@@ -1806,6 +1877,25 @@ static void adreno_fault_dump_target(struct kgsl_device *device,
 					walked = true;
 				}
 			}
+
+			/*
+			 * run200: everything above agrees that the mapping is
+			 * correct - the driver, the SMMU and a software walk -
+			 * and the UCHE still refuses it. None of them checks
+			 * what the descriptors actually say. This tree encodes
+			 * them with mainline 6.12 io-pgtable-arm-common.c;
+			 * CAF 4.19 has no such file and keeps
+			 * arm_lpae_set_ptme() in io-pgtable-arm.c. If the leaf
+			 * differs in a field the hardware acts on - AP
+			 * (device vs normal), AF, SH, XN/nGXN - the software
+			 * walk is unaffected and the MMU reports no fault,
+			 * because as far as the SMMU is concerned the
+			 * translation succeeded. So print the raw descriptors.
+			 */
+			if (walked)
+				kgsl_dump_iommu_descs(device, name,
+					((struct kgsl_iommu_pt *)pt->priv)->ttbr0,
+					target);
 		}
 		dev_err(device->dev,
 			"DIAG %s-walk target=%llx offset=%llx walked=%d resolved=%pa backing=%d expected=%pa match=%d mapped_flag=%d\n",

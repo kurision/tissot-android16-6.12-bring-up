@@ -4,6 +4,7 @@
  */
 
 #include "adreno.h"
+#include "adreno-zap-compat.h"
 #include "adreno_a5xx.h"
 #include "adreno_snapshot.h"
 
@@ -691,9 +692,13 @@ static size_t a5xx_snapshot_registers(struct kgsl_device *device, u8 *buf,
 	unsigned int j, k;
 	unsigned int count = 0;
 
-	if (!crash_dump_valid)
+	if (!crash_dump_valid) {
+		if (ADRENO_DEVICE(device)->zap_loaded)
+			adreno_zap_stage(device->dev, ZAP_STAGE_CPU_FALLBACK,
+					 0, 0, 0);
 		return a5xx_legacy_snapshot_registers(device, buf, remain,
 				regs->regs, regs->size);
+	}
 
 	if (remain < sizeof(*header)) {
 		SNAPSHOT_ERR_NOMEM(device, "REGISTERS");
@@ -857,6 +862,10 @@ void a5xx_snapshot(struct adreno_device *adreno_dev,
 	struct adreno_ringbuffer *rb;
 	struct registers regs;
 
+	if (adreno_dev->zap_loaded)
+		adreno_zap_stage(device->dev, ZAP_STAGE_SNAPSHOT_ENTER,
+				 0, 0, 0);
+
 	/* Disable Clock gating temporarily for the debug bus to work */
 	a5xx_hwcg_set(adreno_dev, false);
 
@@ -871,6 +880,9 @@ void a5xx_snapshot(struct adreno_device *adreno_dev,
 
 	/* Try to run the crash dumper */
 	_a5xx_do_crashdump(device);
+	if (adreno_dev->zap_loaded)
+		adreno_zap_stage(device->dev, ZAP_STAGE_CRASHDUMP_DONE,
+				 crash_dump_valid ? 0 : -EIO, 0, 0);
 
 	regs.regs = a5xx_registers;
 	regs.size = ARRAY_SIZE(a5xx_registers);

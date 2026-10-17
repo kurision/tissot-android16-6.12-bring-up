@@ -124,6 +124,9 @@ struct kgsl_iommu {
 	atomic_t clk_enable_count;
 	struct clk *clks[KGSL_IOMMU_MAX_CLKS];
 	struct kgsl_memdesc smmu_info;
+	/* <offset value> pairs from attach-impl-defs, see _apply_impl_defs */
+	u32 *impl_defs;
+	unsigned int num_impl_defs;
 };
 
 /*

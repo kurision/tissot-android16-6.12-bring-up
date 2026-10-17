@@ -930,24 +930,20 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 	}
 
 	/*
-	 * run199: this was derived from the compatible strings alone, which
-	 * made the GPU bank ARM_64_LPAE_S1 with .ias=39. Stock CAF sets
-	 * qcom,use-3-lvl-tables on this very SMMU
-	 * (arch/arm64/boot/dts/vendor/qcom/msm-arm-smmu-8953.dtsi:29), which
-	 * selects ARM_32_LPAE_S1 - 32-bit stage-1 descriptors, the format the
-	 * A506 walk was validated against. AArch64 descriptors are a different
-	 * walk, and a wrong walk produces exactly the signature this port has:
-	 * the driver, the SMMU and an iommu_iova_to_phys() software walk all
-	 * agree that a buffer is mapped and resolves to the right page, while
-	 * the UCHE still reports it out of bounds
-	 * ("UCHE: Out of bounds access addr=0000000000139000"). That is the
-	 * hardware disagreeing with software about the same tables.
+	 * MSM8953's GPU uses v2; its display and other clients use v1.
 	 *
-	 * Match stock. KGSL_MMU_64BIT is withheld in adreno.c, so KGSL only
-	 * uses 32-bit VAs (global base 0xf8000000) and they all fit a 4 GiB
-	 * 32-bit aperture, so nothing needs the wider format.
+	 * This matches stock. CAF 4.19 arm-smmu picks ARM_SMMU_CTX_FMT_AARCH64
+	 * whenever the SMMU supports it on a 64-bit kernel, and
+	 * qcom,use-3-lvl-tables only caps ias at 39
+	 * (oc-test/drivers/iommu/arm-smmu.c:2547-2568); stock dmesg prints
+	 * "AARCH64 is supported for 1c40000.qcom,kgsl-iommu:gfx3d_user".
+	 * run199 forced ARM_32_LPAE_S1 on a misreading of that property and
+	 * changed nothing. ias=39 is also what KGSL_MMU_64BIT needs: its VA
+	 * (0x500000000) and SVM (0x700000000) ranges sit above 4 GiB.
 	 */
-	qcom_iommu->use_aarch64_pt = false;
+	qcom_iommu->use_aarch64_pt =
+		of_device_is_compatible(dev->of_node, "qcom,msm8953-iommu") &&
+		of_device_is_compatible(dev->of_node, "qcom,msm-iommu-v2");
 
 	if (qcom_iommu_has_secure_context(qcom_iommu)) {
 		ret = qcom_iommu_sec_ptbl_init(dev);

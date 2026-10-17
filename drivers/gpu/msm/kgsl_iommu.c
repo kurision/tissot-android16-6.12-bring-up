@@ -9,6 +9,7 @@
 #include <linux/of_platform.h>
 #include <linux/seq_file.h>
 #include <linux/delay.h>
+#include <linux/iopoll.h>
 #include <linux/random.h>
 #include <soc/qcom/scm.h>
 #include <soc/qcom/secure_buffer.h>
@@ -1676,6 +1677,75 @@ done:
 
 static int kgsl_iommu_set_pt(struct kgsl_mmu *mmu, struct kgsl_pagetable *pt);
 
+#define KGSL_IOMMU_MICRO_MMU_CTRL	0x6000
+#define KGSL_IOMMU_MICRO_MMU_HALT_REQ	BIT(2)
+#define KGSL_IOMMU_MICRO_MMU_IDLE	BIT(3)
+#define KGSL_IOMMU_CTX_ACTLR		0x4
+/* ACTLR_QCOM_OSH | ACTLR_QCOM_ISH | ACTLR_QCOM_NSH, 4.19 arm-smmu-regs.h */
+#define KGSL_IOMMU_ACTLR_QCOM_SH	0x70000000U
+
+/*
+ * What 4.19's CAF arm-smmu did on every power-up of this SMMU
+ * (qsmmuv2_device_reset() and qsmmuv2_init_cb()), even with qcom,skip-init:
+ * write attach-impl-defs with the micro-MMU halted, and set the QCOM
+ * shareability bits in the GPU bank's ACTLR. Mainline qcom_iommu writes
+ * neither. Only the user bank is touched; the secure bank belongs to TZ.
+ * The TLBIALL CAF issued after the ACTLR write comes from the
+ * kgsl_iommu_set_pt() that ends kgsl_iommu_start().
+ */
+static void _apply_impl_defs(struct kgsl_mmu *mmu)
+{
+	struct kgsl_device *device = KGSL_MMU_DEVICE(mmu);
+	struct kgsl_iommu *iommu = _IOMMU_PRIV(mmu);
+	struct kgsl_iommu_context *ctx = &iommu->ctx[KGSL_IOMMU_CONTEXT_USER];
+	void __iomem *ctrl = iommu->regbase + KGSL_IOMMU_MICRO_MMU_CTRL;
+	static atomic_t samples = ATOMIC_INIT(0);
+	bool diag = atomic_inc_return(&samples) <= 2;
+	unsigned int i;
+	u32 val;
+
+	if (!iommu->num_impl_defs)
+		dev_warn_once(device->dev, "no attach-impl-defs in DT\n");
+
+	for (i = 0; diag && i < iommu->num_impl_defs; i++)
+		if (iommu->impl_defs[2 * i] < iommu->regsize)
+			dev_info(device->dev,
+				"DIAG impl-def before: %04x=%08x want %08x\n",
+				iommu->impl_defs[2 * i],
+				readl_relaxed(iommu->regbase +
+					iommu->impl_defs[2 * i]),
+				iommu->impl_defs[2 * i + 1]);
+
+	/* CAF carries on after a failed halt, so do the same */
+	writel_relaxed(readl_relaxed(ctrl) | KGSL_IOMMU_MICRO_MMU_HALT_REQ,
+			ctrl);
+	if (readl_poll_timeout_atomic(ctrl, val,
+			val & KGSL_IOMMU_MICRO_MMU_IDLE, 0, 30000))
+		dev_err(device->dev, "Couldn't halt SMMU!\n");
+
+	for (i = 0; i < iommu->num_impl_defs; i++)
+		if (iommu->impl_defs[2 * i] < iommu->regsize)
+			writel_relaxed(iommu->impl_defs[2 * i + 1],
+				iommu->regbase + iommu->impl_defs[2 * i]);
+
+	writel_relaxed(readl_relaxed(ctrl) & ~KGSL_IOMMU_MICRO_MMU_HALT_REQ,
+			ctrl);
+
+	if (ctx->regbase) {
+		if (diag)
+			dev_info(device->dev,
+				"DIAG actlr before: %08x want %08x\n",
+				readl_relaxed(ctx->regbase +
+					KGSL_IOMMU_CTX_ACTLR),
+				KGSL_IOMMU_ACTLR_QCOM_SH);
+		writel_relaxed(KGSL_IOMMU_ACTLR_QCOM_SH,
+				ctx->regbase + KGSL_IOMMU_CTX_ACTLR);
+	}
+
+	/* make sure register writes committed */
+	wmb();
+}
+
 static int kgsl_iommu_start(struct kgsl_mmu *mmu)
 {
 	int status;
@@ -1695,6 +1765,10 @@ static int kgsl_iommu_start(struct kgsl_mmu *mmu)
 		kgsl_iommu_disable_clk(mmu);
 		return status;
 	}
+
+	/* Before kgsl's own 0x6800 write below, the order 4.19 had */
+	if (mmu->subtype != KGSL_IOMMU_SMMU_V500)
+		_apply_impl_defs(mmu);
 
 	/* Set the following registers only when the MMU type is QSMMU */
 	if (mmu->subtype != KGSL_IOMMU_SMMU_V500) {
@@ -2725,7 +2799,7 @@ static int _kgsl_iommu_probe(struct kgsl_device *device,
 	const char *cname;
 	struct property *prop;
 	u32 reg_val[2];
-	int i = 0;
+	int i = 0, n;
 	struct kgsl_iommu *iommu = KGSL_IOMMU_PRIV(device);
 	struct device_node *child, *iommu_node = NULL;
 	struct platform_device *pdev = of_find_device_by_node(node);
@@ -2742,6 +2816,20 @@ static int _kgsl_iommu_probe(struct kgsl_device *device,
 	}
 	iommu->regstart = reg_val[0];
 	iommu->regsize = reg_val[1];
+
+	/*
+	 * 4.19 put these on the SMMU node (msm-arm-smmu-impl-defs-8953.dtsi)
+	 * for CAF arm-smmu to write. qcom_iommu has no equivalent, so the
+	 * kgsl node carries them and kgsl writes them.
+	 */
+	n = of_property_count_u32_elems(node, "attach-impl-defs");
+	if (n > 0 && !(n & 1)) {
+		iommu->impl_defs = devm_kcalloc(iommu_dev, n, sizeof(u32),
+				GFP_KERNEL);
+		if (iommu->impl_defs && !of_property_read_u32_array(node,
+				"attach-impl-defs", iommu->impl_defs, n))
+			iommu->num_impl_defs = n / 2;
+	}
 
 	of_property_for_each_string(node, "clock-names", prop, cname) {
 		struct clk *c = devm_clk_get(iommu_dev, cname);

@@ -664,7 +664,8 @@ static int a6xx_zap_load(struct adreno_device *adreno_dev)
 
 	/* Load the zap shader firmware through PIL if its available */
 	if (a6xx_core->zap_name && !adreno_dev->zap_loaded) {
-		zap = adreno_zap_subsystem_get(a6xx_core->zap_name);
+		zap = adreno_zap_subsystem_get(&KGSL_DEVICE(adreno_dev)->pdev->dev,
+				a6xx_core->zap_name);
 
 		/* Return error if the zap shader cannot be loaded */
 		if (IS_ERR_OR_NULL(zap)) {

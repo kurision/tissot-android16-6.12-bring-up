@@ -1847,11 +1847,26 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 				upper_32_bits(gpuaddr));
 
 	/*
-	 * Do not invoke to load zap shader if MMU does
-	 * not support secure mode.
+	 * Stock gates this on mmu.secured, which stock always has. Here it is
+	 * false only because the port has no gfx3d_secure context bank, yet
+	 * the GPU still needs the zap shader to leave secure mode, so load it
+	 * regardless. A failed load is not fatal: adreno_set_unsecured_mode()
+	 * then falls back to the direct RBBM_SECVID_TRUST_CNTL write, which is
+	 * what every run up to run202 did.
 	 */
-	if (!device->mmu.secured)
+	if (!device->mmu.secured) {
+		if (a5xx_core->zap_name && !adreno_dev->zap_loaded) {
+			ptr = adreno_zap_subsystem_get(&device->pdev->dev,
+					a5xx_core->zap_name);
+			if (IS_ERR_OR_NULL(ptr))
+				dev_err(device->dev,
+					"DIAG zap: not loaded (%ld), using SECVID_TRUST_CNTL\n",
+					PTR_ERR(ptr));
+			else
+				adreno_dev->zap_loaded = 1;
+		}
 		return 0;
+	}
 
 	/*
 	 * Resume call to write the zap shader base address into the
@@ -1878,7 +1893,8 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 
 	/* Load the zap shader firmware through PIL if its available */
 	if (a5xx_core->zap_name && !adreno_dev->zap_loaded) {
-		ptr = adreno_zap_subsystem_get(a5xx_core->zap_name);
+		ptr = adreno_zap_subsystem_get(&device->pdev->dev,
+				a5xx_core->zap_name);
 
 		/* Return error if the zap shader cannot be loaded */
 		if (IS_ERR_OR_NULL(ptr))
@@ -2291,6 +2307,9 @@ static int a5xx_rb_start(struct adreno_device *adreno_dev)
 
 	/* GPU comes up in secured mode, make it unsecured by default */
 	ret = adreno_set_unsecured_mode(adreno_dev, rb);
+	if (adreno_dev->zap_loaded)
+		adreno_zap_stage(device->dev, ZAP_STAGE_UNSECURE_DONE,
+				 ret, 0, 0);
 	if (ret)
 		return ret;
 
@@ -2298,7 +2317,13 @@ static int a5xx_rb_start(struct adreno_device *adreno_dev)
 	if (ret)
 		return ret;
 
-	a5xx_post_start(adreno_dev);
+	if (adreno_dev->zap_loaded)
+		adreno_zap_stage(device->dev, ZAP_STAGE_POST_START_ENTER,
+				 0, 0, 0);
+	ret = a5xx_post_start(adreno_dev);
+	if (adreno_dev->zap_loaded)
+		adreno_zap_stage(device->dev, ZAP_STAGE_POST_START_DONE,
+				 ret, 0, 0);
 
 	return 0;
 }
