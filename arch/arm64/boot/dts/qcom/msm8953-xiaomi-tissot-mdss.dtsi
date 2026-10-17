@@ -335,8 +335,8 @@
 						00 00 10 8f];
 
 			pinctrl-names = "mdss_default", "mdss_sleep";
-			pinctrl-0 = <&mdss_dsi_active>;
-			pinctrl-1 = <&mdss_dsi_suspend>;
+			pinctrl-0 = <&mdss_dsi_active &mdss_te_active>;
+			pinctrl-1 = <&mdss_dsi_suspend &mdss_te_suspend>;
 			qcom,platform-reset-gpio = <&tlmm 61 0>;
 			qcom,platform-te-gpio = <&tlmm 24 0>;
 			qcom,dsi-pref-prim-pan = <&dsi_otm1911_fhd_vid>;
@@ -527,17 +527,36 @@
 &tlmm {
 	mdss_dsi_active: mdss_dsi_active {
 		mux {
-			pins = "gpio61", "gpio24";
+			pins = "gpio61";
 			function = "gpio";
 			drive-strength = <8>;
 			bias-disable;
+			output-high;
 		};
 	};
 
 	mdss_dsi_suspend: mdss_dsi_suspend {
 		mux {
-			pins = "gpio61", "gpio24";
+			pins = "gpio61";
 			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
+	mdss_te_active: mdss_te_active {
+		mux {
+			pins = "gpio24";
+			function = "mdp_vsync";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
+	mdss_te_suspend: mdss_te_suspend {
+		mux {
+			pins = "gpio24";
+			function = "mdp_vsync";
 			drive-strength = <2>;
 			bias-pull-down;
 		};
