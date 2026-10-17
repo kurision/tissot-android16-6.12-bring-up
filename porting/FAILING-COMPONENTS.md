@@ -12,7 +12,7 @@ use the [current handoff](HANDOFF.md), not historical diagnoses.
 |---|---|---|
 | KGSL 6.12 API compatibility | DMA-BUF locking/failed-import cleanup and SCM source-owner conversion compiled and RAM-booted; both host regressions and ASan/UBSan passed | **Adapted, not a rendering fix.** Device execution of the changed import/secure-transfer paths is not established. |
 | GPU initialization | `run210-zap-stages.txt`: authentication, secure-mode-switch call, startup, PID680 process setup/final open all ret=0; final open 42.088811858 s; first ACTIVE/NAP idle work succeeds | **Startup/open confirmed.** First-submit slots empty; best-effort asynchronous absence cannot establish no submission. |
-| Reset / rendering / panel | Returned to stock at host elapsed 167.960 s, no 6.12 ADB sample; no valid panic/oops/ACKRESET1; no panel completion captured | **OPEN.** No diagnosed reset cause or confirmed rendering; physical panel observation pending. Inspect post-open ioctl/mmap and panel completion independently after approval. |
+| Reset / rendering / panel | User reports **"backlit blink reset"**; returned to stock at host elapsed 167.960 s, no 6.12 ADB sample; no valid panic/oops/ACKRESET1; no panel completion captured | **OPEN.** No diagnosed reset cause or confirmed rendered frame. Inspect post-open ioctl/mmap and panel completion independently after approval. |
 
 Evidence: `artifacts/snapshot60/run210-summary.json`, device-hash-verified
 `run210-logdump.bin` SHA256
