@@ -220,20 +220,65 @@ static int apcc_clk_determine_rate(struct clk_hw *hw,
 	return __clk_determine_rate(vdd->parent, req);
 }
 
+/*
+ * Both clusters hang off the same PLL behind their own RCG divider, and the
+ * port drives all eight cores from one cpufreq policy. A policy programs the
+ * clock of one cluster only, so the other would keep its old divider and run
+ * at a frequency nobody asked for. Mirror the request onto the sibling:
+ * CCF's prepare lock is re-entrant per task, so calling clk_set_rate() from
+ * inside a set_rate operation is allowed.
+ */
 static int apcc_clk_set_rate(struct clk_hw *hw, unsigned long rate,
 			     unsigned long prate)
 {
+	struct clk_regmap_mux_div *md, *sibling_md;
 	struct apcc_vdd *vdd = to_apcc_vdd(hw);
+	struct apcc_vdd *sibling;
+	int id = vdd - vdd->apcc->vdd;
 	int ret;
 
-	/* Voltage first: the rail has to be up before the core speeds up. */
+	if (id == APCC_CPU0_CLK)
+		sibling = &vdd->apcc->vdd[APCC_CPU4_CLK];
+	else if (id == APCC_CPU4_CLK)
+		sibling = &vdd->apcc->vdd[APCC_CPU0_CLK];
+	else
+		sibling = NULL;
+
+	/* Voltage first: the rail has to be up before either core speeds up. */
 	ret = apcc_vdd_vote(vdd, rate);
 	if (ret)
 		return ret;
 
+	if (sibling) {
+		ret = apcc_vdd_vote(sibling, rate);
+		if (ret) {
+			apcc_vdd_unvote(vdd);
+			return ret;
+		}
+	}
+
+	md = &vdd->apcc->mux[id];
 	ret = clk_set_rate(vdd->clk, rate);
-	if (ret)
+	if (ret) {
 		apcc_vdd_unvote(vdd);
+		return ret;
+	}
+
+	/*
+	 * Both corners are already voted, so the sibling can be moved without
+	 * a window in which it runs above the rail. It is pinned to the source
+	 * this cluster ended up on first: the generic mux divider searches all
+	 * three sources, and leaving the sibling free to choose would let it
+	 * settle on GPLL and split the two clusters apart. Report a failure
+	 * rather than hide it, a half applied scale is what the caller needs
+	 * to see.
+	 */
+	if (sibling) {
+		sibling_md = &vdd->apcc->mux[sibling - vdd->apcc->vdd];
+		ret = mux_div_set_src_div(sibling_md, md->src, md->div);
+		if (!ret)
+			ret = clk_set_rate(sibling->clk, rate);
+	}
 
 	return ret;
 }
