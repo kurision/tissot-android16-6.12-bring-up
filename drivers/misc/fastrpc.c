@@ -2238,6 +2238,380 @@ static int fastrpc_control(struct fastrpc_user *fl, char __user *argp)
 	return err;
 }
 
+/*
+ * CAF (adsprpc) ABI compatibility.
+ *
+ * The vendor adsprpcd on this board was built against CAF's adsprpc, whose
+ * ioctl numbering does not line up with the one this driver implements: CAF
+ * uses nr 1 INVOKE, 2 MMAP, 3 MUNMAP, 6 INIT and 16 GET_DSP_INFO where this
+ * driver uses 1 ALLOC_DMA_BUFF, 2 FREE_DMA_BUFF, 3 INVOKE, 6 MMAP and 13
+ * GET_DSP_INFO. _IOC encodes direction, type, payload size and number, so a CAF
+ * command normally lands on -ENOTTY -- except where the number and the size
+ * happen to agree, in which case it is accepted and runs the wrong handler on a
+ * same-sized struct with a different layout. INVOKE, MUNMAP and INIT_ATTRS all
+ * collide that way today.
+ *
+ * So the CAF commands are decoded first and take precedence, and each one that
+ * has no implementation here says so by number rather than failing as an
+ * unknown command. The struct layouts below are taken from the donor's
+ * drivers/char/adsprpc_shared.h, and the static assertions pin the encoded
+ * command values to the ones recovered from the shipped /vendor/lib64/
+ * libadsprpc.so, so a layout that does not match the binary fails the build
+ * instead of failing silently at runtime.
+ */
+
+struct caf_remote_arg {
+	__u64 pv;
+	__u64 len;
+};
+
+struct caf_ioctl_invoke {
+	__u32 handle;
+	__u32 sc;
+	__u64 pra;
+};
+
+struct caf_ioctl_mmap {
+	__s32 fd;
+	__u32 flags;
+	__u64 vaddrin;
+	__u64 size;
+	__u64 vaddrout;
+};
+
+struct caf_ioctl_munmap {
+	__u64 vaddrout;
+	__u64 size;
+};
+
+struct caf_ioctl_init {
+	__u32 flags;
+	__u64 file;
+	__u32 filelen;
+	__s32 filefd;
+	__u64 mem;
+	__u32 memlen;
+	__s32 memfd;
+};
+
+struct caf_ioctl_init_attrs {
+	struct caf_ioctl_init init;
+	__s32 attrs;
+	__u32 siglen;
+};
+
+struct caf_ioctl_invoke_fd {
+	struct caf_ioctl_invoke inv;
+	__u64 fds;
+};
+
+struct caf_ioctl_invoke_attrs {
+	struct caf_ioctl_invoke inv;
+	__u64 fds;
+	__u64 attrs;
+};
+
+struct caf_ioctl_invoke_crc {
+	struct caf_ioctl_invoke inv;
+	__u64 fds;
+	__u64 attrs;
+	__u64 crc;
+};
+
+struct caf_ioctl_perf {
+	__u64 data;
+	__u32 numkeys;
+	__u64 keys;
+};
+
+struct caf_ioctl_munmap_fd {
+	__s32 fd;
+	__u32 flags;
+	__u64 va;
+	__s64 len;
+};
+
+/* adsprpc_shared.h fixes this at seven, which is what makes the struct 32 B. */
+#define CAF_MAX_DSP_ATTRIBUTES 7
+
+struct caf_ioctl_dsp_capabilities {
+	__u32 domain;
+	__u32 dsp_attributes[CAF_MAX_DSP_ATTRIBUTES];
+};
+
+/* Numbers 17 to 21 exist in the shipped library but in no CAF header here. */
+struct caf_ioctl_unknown_17 { __u8 payload[12]; };
+struct caf_ioctl_unknown_18 { __u8 payload[24]; };
+struct caf_ioctl_unknown_19 { __u8 payload[64]; };
+struct caf_ioctl_unknown_20 { __u8 payload[48]; };
+struct caf_ioctl_unknown_21 { __u8 payload[56]; };
+
+#define CAF_IOCTL_INVOKE	_IOWR('R', 1, struct caf_ioctl_invoke)
+#define CAF_IOCTL_MMAP		_IOWR('R', 2, struct caf_ioctl_mmap)
+#define CAF_IOCTL_MUNMAP	_IOWR('R', 3, struct caf_ioctl_munmap)
+#define CAF_IOCTL_INVOKE_FD	_IOWR('R', 4, struct caf_ioctl_invoke_fd)
+#define CAF_IOCTL_SETMODE	_IOWR('R', 5, __u32)
+#define CAF_IOCTL_INIT		_IOWR('R', 6, struct caf_ioctl_init)
+#define CAF_IOCTL_INVOKE_ATTRS	_IOWR('R', 7, struct caf_ioctl_invoke_attrs)
+#define CAF_IOCTL_GETINFO	_IOWR('R', 8, __u32)
+#define CAF_IOCTL_GETPERF	_IOWR('R', 9, struct caf_ioctl_perf)
+#define CAF_IOCTL_INIT_ATTRS	_IOWR('R', 10, struct caf_ioctl_init_attrs)
+#define CAF_IOCTL_INVOKE_CRC	_IOWR('R', 11, struct caf_ioctl_invoke_crc)
+#define CAF_IOCTL_MUNMAP_FD	_IOWR('R', 13, struct caf_ioctl_munmap_fd)
+#define CAF_IOCTL_MMAP_64	_IOWR('R', 14, struct caf_ioctl_mmap)
+#define CAF_IOCTL_MUNMAP_64	_IOWR('R', 15, struct caf_ioctl_munmap)
+#define CAF_IOCTL_GET_DSP_INFO	_IOWR('R', 16, struct caf_ioctl_dsp_capabilities)
+#define CAF_IOCTL_UNKNOWN_17	_IOWR('R', 17, struct caf_ioctl_unknown_17)
+#define CAF_IOCTL_UNKNOWN_18	_IOWR('R', 18, struct caf_ioctl_unknown_18)
+#define CAF_IOCTL_UNKNOWN_19	_IOWR('R', 19, struct caf_ioctl_unknown_19)
+#define CAF_IOCTL_UNKNOWN_20	_IOWR('R', 20, struct caf_ioctl_unknown_20)
+#define CAF_IOCTL_UNKNOWN_21	_IOWR('R', 21, struct caf_ioctl_unknown_21)
+
+/* The values the shipped libadsprpc.so builds, recovered by disassembly. */
+static_assert(CAF_IOCTL_INVOKE == 0xc0105201, "CAF INVOKE ABI mismatch");
+static_assert(CAF_IOCTL_MMAP == 0xc0205202, "CAF MMAP ABI mismatch");
+static_assert(CAF_IOCTL_MUNMAP == 0xc0105203, "CAF MUNMAP ABI mismatch");
+static_assert(CAF_IOCTL_INVOKE_FD == 0xc0185204, "CAF INVOKE_FD ABI mismatch");
+static_assert(CAF_IOCTL_SETMODE == 0xc0045205, "CAF SETMODE ABI mismatch");
+static_assert(CAF_IOCTL_INIT == 0xc0285206, "CAF INIT ABI mismatch");
+static_assert(CAF_IOCTL_INVOKE_ATTRS == 0xc0205207,
+	      "CAF INVOKE_ATTRS ABI mismatch");
+static_assert(CAF_IOCTL_GETINFO == 0xc0045208, "CAF GETINFO ABI mismatch");
+static_assert(CAF_IOCTL_GETPERF == 0xc0185209, "CAF GETPERF ABI mismatch");
+static_assert(CAF_IOCTL_INIT_ATTRS == 0xc030520a,
+	      "CAF INIT_ATTRS ABI mismatch");
+static_assert(CAF_IOCTL_INVOKE_CRC == 0xc028520b,
+	      "CAF INVOKE_CRC ABI mismatch");
+static_assert(CAF_IOCTL_MUNMAP_FD == 0xc018520d,
+	      "CAF MUNMAP_FD ABI mismatch");
+static_assert(CAF_IOCTL_GET_DSP_INFO == 0xc0205210,
+	      "CAF GET_DSP_INFO ABI mismatch");
+static_assert(CAF_IOCTL_UNKNOWN_17 == 0xc00c5211, "CAF ioctl 17 ABI mismatch");
+static_assert(CAF_IOCTL_UNKNOWN_18 == 0xc0185212, "CAF ioctl 18 ABI mismatch");
+static_assert(CAF_IOCTL_UNKNOWN_19 == 0xc0405213, "CAF ioctl 19 ABI mismatch");
+static_assert(CAF_IOCTL_UNKNOWN_20 == 0xc0305214, "CAF ioctl 20 ABI mismatch");
+static_assert(CAF_IOCTL_UNKNOWN_21 == 0xc0385215, "CAF ioctl 21 ABI mismatch");
+
+/* adsprpc_shared.h; the values select between attach, create and static. */
+#define CAF_INIT_ATTACH		0
+#define CAF_INIT_CREATE		1
+#define CAF_INIT_CREATE_STATIC	2
+#define CAF_INIT_ATTACH_SENSORS 3
+
+static int fastrpc_caf_invoke(struct fastrpc_user *fl, char __user *argp)
+{
+	struct caf_ioctl_invoke inv;
+	struct fastrpc_invoke_args *args = NULL;
+	u32 nscalars;
+	int err;
+
+	if (copy_from_user(&inv, argp, sizeof(inv)))
+		return -EFAULT;
+
+	/*
+	 * CAF passes an array of 16-byte arguments carrying only a pointer and
+	 * a length; this driver takes 24-byte arguments that also carry an fd
+	 * and attributes, which a plain INVOKE never sets.
+	 */
+	nscalars = REMOTE_SCALARS_LENGTH(inv.sc);
+	if (nscalars) {
+		struct caf_remote_arg *cargs;
+		u32 i;
+
+		cargs = kcalloc(nscalars, sizeof(*cargs), GFP_KERNEL);
+		if (!cargs)
+			return -ENOMEM;
+
+		args = kcalloc(nscalars, sizeof(*args), GFP_KERNEL);
+		if (!args) {
+			kfree(cargs);
+			return -ENOMEM;
+		}
+
+		if (copy_from_user(cargs, u64_to_user_ptr(inv.pra),
+				   nscalars * sizeof(*cargs))) {
+			kfree(cargs);
+			err = -EFAULT;
+			goto out;
+		}
+
+		for (i = 0; i < nscalars; i++) {
+			args[i].ptr = cargs[i].pv;
+			args[i].length = cargs[i].len;
+			args[i].fd = -1;
+			args[i].attr = 0;
+		}
+
+		kfree(cargs);
+	}
+
+	err = fastrpc_internal_invoke(fl, false, inv.handle, inv.sc, args);
+out:
+	kfree(args);
+
+	return err;
+}
+
+static int fastrpc_caf_req_mmap(struct fastrpc_user *fl, char __user *argp)
+{
+	struct caf_ioctl_mmap caf;
+	struct fastrpc_req_mmap req;
+	int err;
+
+	if (copy_from_user(&caf, argp, sizeof(caf)))
+		return -EFAULT;
+
+	req.fd = caf.fd;
+	req.flags = caf.flags;
+	req.vaddrin = caf.vaddrin;
+	req.size = caf.size;
+	req.vaddrout = 0;
+
+	err = fastrpc_req_mmap(fl, req);
+	if (!err && copy_to_user(argp, &caf.vaddrout, sizeof(caf.vaddrout)))
+		err = -EFAULT;
+
+	return err;
+}
+
+static int fastrpc_caf_req_munmap(struct fastrpc_user *fl, char __user *argp)
+{
+	struct caf_ioctl_munmap caf;
+	struct fastrpc_req_munmap req;
+
+	if (copy_from_user(&caf, argp, sizeof(caf)))
+		return -EFAULT;
+
+	req.vaddrout = caf.vaddrout;
+	req.size = caf.size;
+
+	return fastrpc_req_munmap(fl, req);
+}
+
+static int fastrpc_caf_init(struct fastrpc_user *fl, char __user *argp,
+			    u32 attrs, u32 siglen)
+{
+	struct caf_ioctl_init init;
+
+	if (copy_from_user(&init, argp, sizeof(init)))
+		return -EFAULT;
+
+	switch (init.flags) {
+	case CAF_INIT_ATTACH:
+		return fastrpc_init_attach(fl, ROOT_PD);
+	case CAF_INIT_ATTACH_SENSORS:
+		return fastrpc_init_attach(fl, SENSORS_PD);
+	case CAF_INIT_CREATE: {
+		struct fastrpc_init_create create = {
+			.filelen = init.filelen,
+			.filefd = init.filefd,
+			.attrs = attrs,
+			.siglen = siglen,
+			.file = init.file,
+		};
+
+		return fastrpc_init_create_process(fl, create);
+	}
+	case CAF_INIT_CREATE_STATIC: {
+		/* CAF carries the PD name in file and its length in filelen. */
+		struct fastrpc_init_create_static create = {
+			.namelen = init.filelen,
+			.memlen = init.memlen,
+			.name = init.file,
+		};
+
+		return fastrpc_init_create_static_process(fl, create);
+	}
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static int fastrpc_caf_init_attrs(struct fastrpc_user *fl, char __user *argp)
+{
+	struct caf_ioctl_init_attrs init_attrs;
+
+	if (copy_from_user(&init_attrs, argp, sizeof(init_attrs)))
+		return -EFAULT;
+
+	return fastrpc_caf_init(fl, (char __user *)&init_attrs.init,
+				init_attrs.attrs, init_attrs.siglen);
+}
+
+static int fastrpc_caf_get_dsp_info(struct fastrpc_user *fl, char __user *argp)
+{
+	struct caf_ioctl_dsp_capabilities caf;
+	struct fastrpc_ioctl_capability cap;
+	int err;
+
+	if (copy_from_user(&caf, argp, sizeof(caf)))
+		return -EFAULT;
+
+	memset(&cap, 0, sizeof(cap));
+	cap.domain = caf.domain;
+	/* CAF passes a list of attributes; this driver answers one at a time. */
+	cap.attribute_id = caf.dsp_attributes[0];
+
+	err = fastrpc_get_dsp_info(fl, cap);
+
+	caf.dsp_attributes[0] = cap.capability;
+	if (copy_to_user(argp, &caf, sizeof(caf)))
+		return -EFAULT;
+
+	return err;
+}
+
+/*
+ * Returns 0 with *matched cleared when cmd is not a CAF command, so the caller
+ * is left to this driver's own numbering.
+ */
+static int fastrpc_caf_ioctl(struct fastrpc_user *fl, unsigned int cmd,
+			     char __user *argp, bool *matched)
+{
+	struct device *dev = &fl->cctx->rpdev->dev;
+
+	switch (cmd) {
+	case CAF_IOCTL_INVOKE:
+		*matched = true;
+		return fastrpc_caf_invoke(fl, argp);
+	case CAF_IOCTL_MMAP:
+	case CAF_IOCTL_MMAP_64:
+		*matched = true;
+		return fastrpc_caf_req_mmap(fl, argp);
+	case CAF_IOCTL_MUNMAP:
+	case CAF_IOCTL_MUNMAP_64:
+		*matched = true;
+		return fastrpc_caf_req_munmap(fl, argp);
+	case CAF_IOCTL_INIT:
+		*matched = true;
+		return fastrpc_caf_init(fl, argp, 0, 0);
+	case CAF_IOCTL_INIT_ATTRS:
+		*matched = true;
+		return fastrpc_caf_init_attrs(fl, argp);
+	case CAF_IOCTL_GET_DSP_INFO:
+		*matched = true;
+		return fastrpc_caf_get_dsp_info(fl, argp);
+	case CAF_IOCTL_INVOKE_FD:
+	case CAF_IOCTL_SETMODE:
+	case CAF_IOCTL_INVOKE_ATTRS:
+	case CAF_IOCTL_GETINFO:
+	case CAF_IOCTL_GETPERF:
+	case CAF_IOCTL_INVOKE_CRC:
+	case CAF_IOCTL_MUNMAP_FD:
+	case CAF_IOCTL_UNKNOWN_17:
+	case CAF_IOCTL_UNKNOWN_18:
+	case CAF_IOCTL_UNKNOWN_19:
+	case CAF_IOCTL_UNKNOWN_20:
+	case CAF_IOCTL_UNKNOWN_21:
+		*matched = true;
+		dev_err_ratelimited(dev, "CAF ioctl %u is not implemented\n",
+				    _IOC_NR(cmd));
+		return -EOPNOTSUPP;
+	default:
+		return 0;
+	}
+}
+
 static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 				 unsigned long arg)
 {
@@ -2250,6 +2624,7 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 	struct fastrpc_req_munmap req_munmap;
 	struct fastrpc_ioctl_capability cap;
 	unsigned int nr;
+	bool caf_matched;
 
 	/*
 	 * The vendor adsprpcd on this board was built against CAF's ioctl
@@ -2262,6 +2637,15 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 		dev_info(&fl->cctx->rpdev->dev,
 			 "ioctl nr %u, cmd 0x%08x, %u-byte payload\n",
 			 nr, cmd, _IOC_SIZE(cmd));
+
+	/*
+	 * CAF commands are decoded first: three of them encode to exactly the
+	 * value of a command implemented below, and routing them by their
+	 * number would run the wrong handler on a same-sized struct.
+	 */
+	err = fastrpc_caf_ioctl(fl, cmd, argp, &caf_matched);
+	if (caf_matched)
+		return err;
 
 	switch (cmd) {
 	case FASTRPC_IOCTL_INVOKE:
