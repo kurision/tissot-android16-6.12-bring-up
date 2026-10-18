@@ -63,9 +63,18 @@
 	};
 };
 
-/* PM8953 S5/S6, the VDD_APC supply, on the USID 1 PMIC. */
+/*
+ * PM8953 S5/S6, the VDD_APC supply.
+ *
+ * USID 0, not the USID 1 the SoC level donor file uses: this board overrides
+ * it, in oc-test/arch/arm64/boot/dts/vendor/qcom/mi8953/tissot/pmic.dtsi
+ * ("qcom,pm8953@0"), and the run240 kernel log agrees, enumerating only
+ * pmic@0 and pmic@2 on the SPMI bus. With the node on USID 1 the rail never
+ * probed, so the CPR4 regulator had no vdd-supply and the APCS clock
+ * controller had no vdd-cl-supply.
+ */
 &spmi_bus {
-	pmic@1 {
+	pmic@0 {
 		pm8953_s5: spm-regulator@2000 {
 			compatible = "qcom,spm-regulator";
 			reg = <0x2000>;
