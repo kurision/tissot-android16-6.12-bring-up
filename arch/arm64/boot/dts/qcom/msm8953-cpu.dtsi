@@ -75,7 +75,7 @@
  */
 &spmi_bus {
 	pmic@0 {
-		pm8953_s5: spm-regulator@2000 {
+		pm8953_apc_s5: spm-regulator@2000 {
 			compatible = "qcom,spm-regulator";
 			reg = <0x2000>;
 			regulator-name = "pm8953_s5";
@@ -83,7 +83,7 @@
 			regulator-max-microvolt = <1140000>;
 			qcom,saw = <&saw>;
 
-			pm8953_s5_limit: avs-limit-regulator {
+			pm8953_apc_s5_limit: avs-limit-regulator {
 				regulator-name = "pm8953_s5_avs_limit";
 				regulator-min-microvolt = <400000>;
 				regulator-max-microvolt = <1140000>;
@@ -182,9 +182,9 @@
 		qcom,apm-threshold-voltage = <850000>;
 		qcom,apm-hysteresis-voltage = <5000>;
 
-		vdd-supply = <&pm8953_s5>;
+		vdd-supply = <&pm8953_apc_s5>;
 		qcom,voltage-step = <5000>;
-		vdd-limit-supply = <&pm8953_s5_limit>;
+		vdd-limit-supply = <&pm8953_apc_s5_limit>;
 		mem-acc-supply = <&apc_mem_acc_vreg>;
 
 		qcom,cpr-enable;
@@ -638,39 +638,94 @@
 &CPU0 {
 	clocks = <&apcc APCC_CPU0_CLK>;
 	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
 };
 
 &CPU1 {
 	clocks = <&apcc APCC_CPU0_CLK>;
 	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
 };
 
 &CPU2 {
 	clocks = <&apcc APCC_CPU0_CLK>;
 	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
 };
 
 &CPU3 {
 	clocks = <&apcc APCC_CPU0_CLK>;
 	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
 };
 
 &CPU4 {
 	clocks = <&apcc APCC_CPU4_CLK>;
 	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
 };
 
 &CPU5 {
 	clocks = <&apcc APCC_CPU4_CLK>;
 	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
 };
 
 &CPU6 {
 	clocks = <&apcc APCC_CPU4_CLK>;
 	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
 };
 
 &CPU7 {
 	clocks = <&apcc APCC_CPU4_CLK>;
 	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
+};
+/*
+ * CPU operating points.
+ *
+ * Stock fused bin 2 only: 652.8 MHz to 2016 MHz, no overclock entries. The
+ * corners those frequencies need live on the clock node as qcom,speed*-bin-v0-cl;
+ * this table deliberately carries no volt and the CPU nodes deliberately carry no
+ * cpu-supply, because the clock provider raises the corner-encoded rail itself
+ * when the rate changes. Adding either would create a second owner of a rail
+ * that is not microvolt based.
+ *
+ * All eight cores share one table, so cpufreq-dt builds one policy over all of
+ * them and programs only CPU0's clock; the provider mirrors the rate onto the
+ * sibling cluster.
+ */
+&{/} {
+	msm8953_cpu_opp: opp-table {
+		compatible = "operating-points-v2";
+
+		opp-652800000 {
+			opp-hz = /bits/ 64 <652800000>;
+		};
+
+		opp-1036800000 {
+			opp-hz = /bits/ 64 <1036800000>;
+		};
+
+		opp-1401600000 {
+			opp-hz = /bits/ 64 <1401600000>;
+		};
+
+		opp-1689600000 {
+			opp-hz = /bits/ 64 <1689600000>;
+		};
+
+		opp-1804800000 {
+			opp-hz = /bits/ 64 <1804800000>;
+		};
+
+		opp-1958400000 {
+			opp-hz = /bits/ 64 <1958400000>;
+		};
+
+		opp-2016000000 {
+			opp-hz = /bits/ 64 <2016000000>;
+		};
+	};
 };
