@@ -4,6 +4,15 @@
 #
 menu "Qualcomm SoC drivers"
 
+config QCOM_MSM8953_APM
+	bool "Qualcomm MSM8953 Array Power Mux"
+	depends on ARCH_QCOM && OF
+	help
+	  Support switching the CPU memory arrays between the APCC and MX
+	  supplies on MSM8953. This is a prerequisite for CPR4 CPU voltage
+	  control, not a CPUFreq driver. It does not select CPU frequencies
+	  or voltages. Leave disabled until the CPU power stack is configured.
+
 config QCOM_AOSS_QMP
 	tristate "Qualcomm AOSS Driver"
 	depends on ARCH_QCOM || COMPILE_TEST

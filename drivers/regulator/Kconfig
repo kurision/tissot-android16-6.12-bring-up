@@ -1098,6 +1098,15 @@ config REGULATOR_QCOM_SMD_RPM
 	  Qualcomm RPM as a module. The module will be named
 	  "qcom_smd-regulator".
 
+config REGULATOR_QCOM_MSM8953_MEM_ACC
+	bool "Qualcomm MSM8953 CPU memory-ACC corner regulator"
+	depends on ARCH_QCOM && OF
+	help
+	  Support the two CPU memory-accelerator corners used by MSM8953 CPR4.
+	  Corner values are selectors, not physical voltages. This provider
+	  does not control the APC rail and must be sequenced by the CPR driver.
+	  Leave disabled until the CPU power stack is configured.
+
 config REGULATOR_QCOM_SPMI
 	tristate "Qualcomm SPMI regulator driver"
 	depends on SPMI || COMPILE_TEST
