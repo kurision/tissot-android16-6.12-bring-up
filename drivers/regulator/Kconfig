@@ -1107,6 +1107,17 @@ config REGULATOR_QCOM_MSM8953_MEM_ACC
 	  does not control the APC rail and must be sequenced by the CPR driver.
 	  Leave disabled until the CPU power stack is configured.
 
+config REGULATOR_QCOM_MSM8953_SPM
+	bool "Qualcomm MSM8953 SPM-backed APC rail regulator"
+	depends on ARCH_QCOM && OF && REGULATOR && QCOM_MSM8953_SPM
+	help
+	  Drive the PM8953 S5/S6 VDD_APC SMPS through the shared MSM8953
+	  system-CCI SAW4 instead of writing the PMIC voltage set point
+	  directly, and expose the AVS minimum/maximum limit regulator that
+	  the CPR4 controller programs. The SPM must own the PMIC voltage data
+	  so that hardware AVS and power-collapse entry use the correct level.
+	  Leave disabled until the CPU power stack is configured.
+
 config REGULATOR_QCOM_SPMI
 	tristate "Qualcomm SPMI regulator driver"
 	depends on SPMI || COMPILE_TEST
