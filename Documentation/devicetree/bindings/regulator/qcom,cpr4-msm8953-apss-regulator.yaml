@@ -1,0 +1,317 @@
+# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/regulator/qcom,cpr4-msm8953-apss-regulator.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm CPR4 APSS core regulator
+
+maintainers:
+  - Andy Gross <agross@kernel.org>
+
+description: >
+  Core Power Reduction version 4 for the application processor subsystem. The
+  controller runs one ring-oscillator loop per thread and programs the shared
+  APC supply that feeds both CPU clusters, in closed loop against the fused
+  voltage ceiling and floor of each corner. It coordinates with the array power
+  mux and the memory-ACC selector through phandles, and reads its own fuses.
+
+  Each thread holds one regulator child whose exported values are corner
+  numbers, not microvolts, so regulator-min-microvolt and
+  regulator-max-microvolt span the corner range.
+
+properties:
+  compatible:
+    const: qcom,cpr4-msm8953-apss-regulator
+
+  reg:
+    items:
+      - description: CPR core register block
+      - description: Qfuse block
+    minItems: 2
+    maxItems: 2
+
+  reg-names:
+    items:
+      - const: cpr_ctrl
+      - const: fuse_base
+
+  interrupts:
+    maxItems: 1
+
+  interrupt-names:
+    items:
+      - const: cpr
+
+  vdd-supply:
+    description: Regulator that physically supplies the APC rail.
+
+  vdd-limit-supply:
+    description: Regulator exposing the hardware AVS limits of that rail.
+
+  mem-acc-supply:
+    description: Memory-ACC corner selector driven with the CPR corners.
+
+  system-supply:
+    description: Optional system regulator.
+
+  qcom,apm-ctrl:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: Array power mux this controller switches with.
+
+  qcom,apm-threshold-voltage:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Voltage above which the array power mux moves to the MX supply.
+
+  qcom,apm-hysteresis-voltage:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Hysteresis around the array power mux threshold.
+
+  qcom,cpr-ctrl-name:
+    $ref: /schemas/types.yaml#/definitions/string
+    description: Name of this controller.
+
+  qcom,cpr-enable:
+    type: boolean
+    description: Whether software closed-loop CPR may run at all.
+
+  qcom,cpr-hw-closed-loop:
+    type: boolean
+    description: Whether the hardware closed-loop mode is used.
+
+  qcom,cpr-sensor-time:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Ring oscillator sensor time, in unspecified units.
+
+  qcom,cpr-loop-time:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Time between closed-loop iterations, in unspecified units.
+
+  qcom,cpr-idle-cycles:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Idle iterations between closed-loop passes.
+
+  qcom,cpr-count-mode:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Counting mode, all sensors at once or staggered.
+
+  qcom,cpr-count-repeat:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: How many times a counting pass is repeated.
+
+  qcom,cpr-step-quot-init-min:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Minimum initial step quotient.
+
+  qcom,cpr-step-quot-init-max:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Maximum initial step quotient.
+
+  qcom,cpr-up-error-step-limit:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Upward step limit after an error.
+
+  qcom,cpr-down-error-step-limit:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Downward step limit after an error.
+
+  qcom,voltage-step:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Voltage step of one ring oscillator least significant bit.
+
+  qcom,cpr-aging-ref-voltage:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Reference voltage used for aging.
+
+  qcom,cpr-interrupt-affinity:
+    $ref: /schemas/types.yaml#/definitions/phandle-list
+    description: CPUs that may handle this controller's interrupt.
+
+  qcom,cpr-panic-reg-addr-list:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    description: Register addresses dumped when the CPR panic path triggers.
+
+  qcom,cpr-panic-reg-name-list:
+    $ref: /schemas/types.yaml#/definitions/string
+    description: Names matching qcom,cpr-panic-reg-addr-list, in order.
+
+patternProperties:
+  "^thread(@[0-9]+)?$":
+    type: object
+    additionalProperties: false
+    properties:
+      qcom,cpr-thread-id:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: Thread identifier, unique within the controller.
+
+      qcom,cpr-consecutive-up:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: Consecutive upward steps before the voltage is committed.
+
+      qcom,cpr-consecutive-down:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: Consecutive downward steps before the voltage is committed.
+
+      qcom,cpr-up-threshold:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: Headroom above the ceiling before stepping up.
+
+      qcom,cpr-down-threshold:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: Headroom below the floor before stepping down.
+
+      "^(regulator|.*-regulator)$":
+        allOf:
+          - $ref: regulator.yaml#
+        unevaluatedProperties: false
+        properties:
+          qcom,cpr-fuse-corners:
+            $ref: /schemas/types.yaml#/definitions/uint32
+            description: Number of fused voltage corners.
+
+          qcom,cpr-fuse-combos:
+            $ref: /schemas/types.yaml#/definitions/uint32
+            description: Number of fused corner combinations.
+
+          qcom,cpr-speed-bins:
+            $ref: /schemas/types.yaml#/definitions/uint32
+            description: Number of fused speed bins.
+
+          qcom,cpr-speed-bin-corners:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: Corner count per fused speed bin, in speed bin order.
+
+          qcom,cpr-corners:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: Corner count per speed bin, in speed bin order.
+
+          qcom,cpr-corner-fmax-map:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: >
+              Highest usable corner per fused voltage corner, one row per
+              speed bin.
+
+          qcom,cpr-voltage-ceiling:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: Ceiling voltage per corner, in microvolts.
+
+          qcom,cpr-voltage-floor:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: Floor voltage per corner, in microvolts.
+
+          qcom,cpr-floor-to-ceiling-max-range:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: Allowed floor to ceiling range per CPR revision.
+
+          qcom,cpr-misc-fuse-voltage-adjustment:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: Per corner adjustment from the miscellaneous fuses.
+
+          qcom,mem-acc-voltage:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: Memory-ACC corner selector per corner.
+
+          qcom,corner-frequencies:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: Frequency per corner, in hertz.
+
+          qcom,cpr-open-loop-voltage-fuse-adjustment:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: Open-loop adjustment per fused corner and revision.
+
+          qcom,cpr-closed-loop-voltage-fuse-adjustment:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: Closed-loop adjustment per fused corner and revision.
+
+          qcom,cpr-ro-scaling-factor:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: Ring oscillator scaling factor per fused corner.
+
+          qcom,allow-voltage-interpolation:
+            type: boolean
+            description: Interpolate the open-loop voltage between corners.
+
+          qcom,allow-quotient-interpolation:
+            type: boolean
+            description: Interpolate the target quotient between corners.
+
+          qcom,cpr-scaled-open-loop-voltage-as-ceiling:
+            type: boolean
+            description: Treat the scaled open-loop voltage as the ceiling.
+
+          qcom,cpr-aging-max-voltage-adjustment:
+            $ref: /schemas/types.yaml#/definitions/uint32
+            description: Maximum aging voltage adjustment.
+
+          qcom,cpr-aging-ref-corner:
+            $ref: /schemas/types.yaml#/definitions/uint32
+            description: Corner the aging reference voltage belongs to.
+
+          qcom,cpr-aging-ro-scaling-factor:
+            $ref: /schemas/types.yaml#/definitions/uint32
+            description: Ring oscillator scaling factor while aging.
+
+          qcom,allow-aging-voltage-adjustment:
+            $ref: /schemas/types.yaml#/definitions/uint32-array
+            description: Per corner aging enable, in speed bin order.
+
+    required:
+      - qcom,cpr-thread-id
+      - qcom,cpr-consecutive-up
+      - qcom,cpr-consecutive-down
+      - qcom,cpr-up-threshold
+      - qcom,cpr-down-threshold
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - interrupts
+  - interrupt-names
+  - vdd-supply
+  - vdd-limit-supply
+  - qcom,cpr-ctrl-name
+  - qcom,voltage-step
+
+examples:
+  - |
+    apc_cpr: cpr4-ctrl@b018000 {
+        compatible = "qcom,cpr4-msm8953-apss-regulator";
+        reg = <0xb018000 0x4000>, <0x00a4000 0x1000>;
+        reg-names = "cpr_ctrl", "fuse_base";
+        interrupts = <GIC_SPI 15 IRQ_TYPE_EDGE_RISING>;
+        interrupt-names = "cpr";
+
+        qcom,cpr-ctrl-name = "apc";
+        qcom,cpr-sensor-time = <1000>;
+        qcom,cpr-loop-time = <5000000>;
+        qcom,cpr-idle-cycles = <15>;
+        qcom,cpr-step-quot-init-min = <12>;
+        qcom,cpr-step-quot-init-max = <14>;
+        qcom,cpr-count-mode = <0>;
+        qcom,cpr-count-repeat = <14>;
+        qcom,cpr-down-error-step-limit = <1>;
+        qcom,cpr-up-error-step-limit = <1>;
+        qcom,voltage-step = <5000>;
+        vdd-supply = <&pm8953_s5>;
+        vdd-limit-supply = <&pm8953_s5_limit>;
+
+        thread {
+            qcom,cpr-thread-id = <0>;
+            qcom,cpr-consecutive-up = <0>;
+            qcom,cpr-consecutive-down = <2>;
+            qcom,cpr-up-threshold = <2>;
+            qcom,cpr-down-threshold = <1>;
+
+            apc_vreg: regulator {
+                regulator-name = "apc_corner";
+                regulator-min-microvolt = <1>;
+                regulator-max-microvolt = <9>;
+                qcom,cpr-fuse-corners = <4>;
+                qcom,cpr-corners = <7 7 7 7 7 7 7 7>;
+                qcom,corner-frequencies = <652800000 1036800000
+                    1401600000 1689600000 1804800000 1958400000 2016000000>;
+            };
+        };
+    };
+...

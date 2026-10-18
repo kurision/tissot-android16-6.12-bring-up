@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/soc/qcom/qcom,msm8953-apm.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm MSM8953 Application Power Mux (APM)
+
+maintainers:
+  - Andy Gross <agross@kernel.org>
+
+description: >
+  The application power mux switches the CPU memory arrays between the APCC
+  supply and the MX supply. A voltage controller coordinates the switch with
+  the memory-ACC selector and the ring oscillators, and needs to know how long
+  the selection takes to settle.
+
+properties:
+  compatible:
+    const: qcom,msm8953-apm
+
+  reg:
+    maxItems: 1
+
+  reg-names:
+    items:
+      - const: pm-apcc-glb
+    minItems: 1
+    maxItems: 1
+
+  qcom,apm-sel-switch-delay:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Delay, in unspecified units, after the supply select switch.
+
+  qcom,apm-resume-clk-delay:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Delay, in unspecified units, after the memory array clock resumes.
+
+  qcom,apm-halt-clk-delay:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Delay, in unspecified units, after the memory array clock halts.
+
+  qcom,apm-post-halt-delay:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Delay, in unspecified units, after the memory array halts.
+
+required:
+  - compatible
+  - reg
+  - reg-names
+
+additionalProperties: false
+
+examples:
+  - |
+    apc_apm: apm@b111000 {
+        compatible = "qcom,msm8953-apm";
+        reg = <0xb111000 0x1000>;
+        reg-names = "pm-apcc-glb";
+        qcom,apm-post-halt-delay = <0x2>;
+        qcom,apm-halt-clk-delay = <0x11>;
+        qcom,apm-resume-clk-delay = <0x10>;
+        qcom,apm-sel-switch-delay = <0x01>;
+    };
+...
