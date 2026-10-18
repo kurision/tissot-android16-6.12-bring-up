@@ -108,6 +108,20 @@ config QCOM_CLK_APCC_MSM8996
 	  Say Y if you want to support CPU clock scaling using CPUfreq
 	  drivers for dynamic power management.
 
+config QCOM_CLK_APCC_MSM8953
+	bool "Qualcomm MSM8953 APCS CPU clock controller"
+	depends on ARCH_QCOM && OF && REGULATOR
+	help
+	  Support for the APCS CPU clock controller on MSM8953 devices. It owns
+	  the single APCS PLL that feeds the two CPU clusters and the system CCI,
+	  and it drives the shared APC voltage rail from a fused rate to corner
+	  plan because that regulator is corner encoded rather than microvolt
+	  based. The port builds it in but keeps it disabled until the APC rail,
+	  SPM, APM, memory-ACC and CPR providers are wired up as well.
+
+	  Say Y if you want to support CPU frequency scaling on devices such
+	  as MSM8953.
+
 config QCOM_CLK_APCS_SDX55
 	tristate "SDX55 and SDX65 APCS Clock Controller"
 	depends on QCOM_APCS_IPC || COMPILE_TEST
