@@ -107,6 +107,14 @@ static const struct voltage_range hf_range1 = {1550000, 1550000, 3125000, 25000}
  */
 static const struct regmap_config spmi_regulator_regmap_config = {
 	.max_register = 0xffff,
+	/*
+	 * regmap_init() rejects a config with reg_bits 0, and the SPMI base
+	 * bus reads one byte of address per register, so it has to be 8 here.
+	 * This was the -EINVAL: with no reg_bits the regmap was never created,
+	 * so no rail of this driver could ever probe.
+	 */
+	.reg_bits = 8,
+	.val_bits = 8,
 };
 
 #define QPNP_SMPS_STEP_CTRL_STEP_MASK	0x18
