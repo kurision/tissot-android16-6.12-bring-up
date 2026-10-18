@@ -5,6 +5,21 @@
 Superpowers is disabled for this project. Do not invoke the Superpowers plugin
 or its separately installed skills unless the user explicitly re-enables it.
 
+## Use the kernel development skill before any kernel edit
+
+Read the kernel development skill (`skill://kernel-development-skills`, with
+the reference that matches the task: `drivers.md`, `devicetree.md`,
+`debugging.md`, `patches.md`, `review.md`, `regressions.md`, `stable.md`,
+`tree.md`, `build.md`, `testing.md`, `archaeology.md`) **before** editing any
+kernel source, Kconfig, binding or DTS file, and follow its verification
+matrix for the change. Run its bundled scripts where they apply:
+`scripts/triage_kernel_change.py`, `scripts/check_kernel_api_patterns.py`,
+`scripts/index_kernel_docs.py`.
+
+Do the same for porting work. The skill is not a formality here: the port has
+already paid for a boot cycle once because a probe panic was silent at the
+wrong initcall level.
+
 ## Boot testing + kernel-log evidence
 
 `porting/REFERENCE-boot-testing.md` is the operational reference: tooling
