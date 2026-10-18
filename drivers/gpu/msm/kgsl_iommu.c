@@ -9,7 +9,6 @@
 #include <linux/of_platform.h>
 #include <linux/seq_file.h>
 #include <linux/delay.h>
-#include <linux/iopoll.h>
 #include <linux/random.h>
 #include <soc/qcom/scm.h>
 #include <soc/qcom/secure_buffer.h>
@@ -1590,75 +1589,6 @@ done:
 
 static int kgsl_iommu_set_pt(struct kgsl_mmu *mmu, struct kgsl_pagetable *pt);
 
-#define KGSL_IOMMU_MICRO_MMU_CTRL	0x6000
-#define KGSL_IOMMU_MICRO_MMU_HALT_REQ	BIT(2)
-#define KGSL_IOMMU_MICRO_MMU_IDLE	BIT(3)
-#define KGSL_IOMMU_CTX_ACTLR		0x4
-/* ACTLR_QCOM_OSH | ACTLR_QCOM_ISH | ACTLR_QCOM_NSH, 4.19 arm-smmu-regs.h */
-#define KGSL_IOMMU_ACTLR_QCOM_SH	0x70000000U
-
-/*
- * What 4.19's CAF arm-smmu did on every power-up of this SMMU
- * (qsmmuv2_device_reset() and qsmmuv2_init_cb()), even with qcom,skip-init:
- * write attach-impl-defs with the micro-MMU halted, and set the QCOM
- * shareability bits in the GPU bank's ACTLR. Mainline qcom_iommu writes
- * neither. Only the user bank is touched; the secure bank belongs to TZ.
- * The TLBIALL CAF issued after the ACTLR write comes from the
- * kgsl_iommu_set_pt() that ends kgsl_iommu_start().
- */
-static void _apply_impl_defs(struct kgsl_mmu *mmu)
-{
-	struct kgsl_device *device = KGSL_MMU_DEVICE(mmu);
-	struct kgsl_iommu *iommu = _IOMMU_PRIV(mmu);
-	struct kgsl_iommu_context *ctx = &iommu->ctx[KGSL_IOMMU_CONTEXT_USER];
-	void __iomem *ctrl = iommu->regbase + KGSL_IOMMU_MICRO_MMU_CTRL;
-	static atomic_t samples = ATOMIC_INIT(0);
-	bool diag = atomic_inc_return(&samples) <= 2;
-	unsigned int i;
-	u32 val;
-
-	if (!iommu->num_impl_defs)
-		dev_warn_once(device->dev, "no attach-impl-defs in DT\n");
-
-	for (i = 0; diag && i < iommu->num_impl_defs; i++)
-		if (iommu->impl_defs[2 * i] < iommu->regsize)
-			dev_info(device->dev,
-				"DIAG impl-def before: %04x=%08x want %08x\n",
-				iommu->impl_defs[2 * i],
-				readl_relaxed(iommu->regbase +
-					iommu->impl_defs[2 * i]),
-				iommu->impl_defs[2 * i + 1]);
-
-	/* CAF carries on after a failed halt, so do the same */
-	writel_relaxed(readl_relaxed(ctrl) | KGSL_IOMMU_MICRO_MMU_HALT_REQ,
-			ctrl);
-	if (readl_poll_timeout_atomic(ctrl, val,
-			val & KGSL_IOMMU_MICRO_MMU_IDLE, 0, 30000))
-		dev_err(device->dev, "Couldn't halt SMMU!\n");
-
-	for (i = 0; i < iommu->num_impl_defs; i++)
-		if (iommu->impl_defs[2 * i] < iommu->regsize)
-			writel_relaxed(iommu->impl_defs[2 * i + 1],
-				iommu->regbase + iommu->impl_defs[2 * i]);
-
-	writel_relaxed(readl_relaxed(ctrl) & ~KGSL_IOMMU_MICRO_MMU_HALT_REQ,
-			ctrl);
-
-	if (ctx->regbase) {
-		if (diag)
-			dev_info(device->dev,
-				"DIAG actlr before: %08x want %08x\n",
-				readl_relaxed(ctx->regbase +
-					KGSL_IOMMU_CTX_ACTLR),
-				KGSL_IOMMU_ACTLR_QCOM_SH);
-		writel_relaxed(KGSL_IOMMU_ACTLR_QCOM_SH,
-				ctx->regbase + KGSL_IOMMU_CTX_ACTLR);
-	}
-
-	/* make sure register writes committed */
-	wmb();
-}
-
 static int kgsl_iommu_start(struct kgsl_mmu *mmu)
 {
 	int status;
@@ -1680,25 +1610,22 @@ static int kgsl_iommu_start(struct kgsl_mmu *mmu)
 	}
 
 	/*
-	 * Before kgsl's own 0x6800 write below, the order 4.19 had.
-	 *
-	 * run227 disabled this call to test whether the micro-MMU halt
-	 * handshake causes the ~89 s board reset. It does not: the board
-	 * reset at the same kernel uptime, with no panic. run228 re-enables
-	 * it so the SError fault (run226, ESR 0xbf000002, taken on the
-	 * second kgsl_iommu_start() i.e. surfaceflinger's open) is
-	 * reproduced under a live console.
-	 *
-	 * Still an open defect on its own terms: CAF runs this sequence from
-	 * qsmmuv2_device_reset() in the arm-smmu driver under a vdd-supply
-	 * vote for the SMMU power domain; this port runs it per-open from
-	 * kgsl_iommu_start() with clocks only and no regulator vote.
+	 * Implementation-defined reset programming belongs to the SMMU driver
+	 * with translation disabled, not to normal GPU startup. The port-added
+	 * halt/poll sequence here reproduced an SError in runs226/228/229.
 	 */
-	if (mmu->subtype != KGSL_IOMMU_SMMU_V500)
-		_apply_impl_defs(mmu);
 
-	/* Set the following registers only when the MMU type is QSMMU */
-	if (mmu->subtype != KGSL_IOMMU_SMMU_V500) {
+	/*
+	 * Set the following registers only when the MMU type is QSMMU.
+	 *
+	 * run231: issued once per boot. The donor writes them on every start,
+	 * from the SMMU driver's power-sequenced path; here they follow a
+	 * per-open sequence with no power vote, and the asynchronous SError
+	 * recorded in runs226/228/229/230 lands on the instructions right
+	 * after them. One-time programming tests that window without changing
+	 * any other startup behaviour.
+	 */
+	if (mmu->subtype != KGSL_IOMMU_SMMU_V500 && !iommu->qsmmu_configured) {
 		/* Enable hazard check from GPU_SMMU_HUM_CFG */
 		writel_relaxed(0x02, iommu->regbase + 0x6800);
 
@@ -1707,12 +1634,16 @@ static int kgsl_iommu_start(struct kgsl_mmu *mmu)
 
 		/* make sure register write committed */
 		wmb();
+
+		iommu->qsmmu_configured = true;
 	}
 
 	if (mmu->defaultpagetable != NULL && !mmu->globalpt_mapped) {
 		status = kgsl_iommu_map_globals(mmu->defaultpagetable);
-		if (status)
+		if (status) {
+			kgsl_iommu_disable_clk(mmu);
 			return status;
+		}
 
 		mmu->globalpt_mapped = true;
 	}
@@ -2707,8 +2638,7 @@ static int _kgsl_iommu_cb_probe(struct kgsl_device *device,
 	dev_info(device->dev, "DIAG kgsl_iommu_cb: %s pdev=%s dev=%s\n",
 		ctx->name, pdev ? "yes" : "no", dev_name(ctx->dev));
 
-	of_dma_configure(ctx->dev, node, true);
-	return 0;
+	return of_dma_configure(ctx->dev, node, true);
 }
 
 static const struct {
@@ -2727,7 +2657,7 @@ static int _kgsl_iommu_probe(struct kgsl_device *device,
 	const char *cname;
 	struct property *prop;
 	u32 reg_val[2];
-	int i = 0, n;
+	int i = 0, ret;
 	struct kgsl_iommu *iommu = KGSL_IOMMU_PRIV(device);
 	struct device_node *child, *iommu_node = NULL;
 	struct platform_device *pdev = of_find_device_by_node(node);
@@ -2745,27 +2675,13 @@ static int _kgsl_iommu_probe(struct kgsl_device *device,
 	iommu->regstart = reg_val[0];
 	iommu->regsize = reg_val[1];
 
-	/*
-	 * 4.19 put these on the SMMU node (msm-arm-smmu-impl-defs-8953.dtsi)
-	 * for CAF arm-smmu to write. qcom_iommu has no equivalent, so the
-	 * kgsl node carries them and kgsl writes them.
-	 */
-	n = of_property_count_u32_elems(node, "attach-impl-defs");
-	if (n > 0 && !(n & 1)) {
-		iommu->impl_defs = devm_kcalloc(iommu_dev, n, sizeof(u32),
-				GFP_KERNEL);
-		if (iommu->impl_defs && !of_property_read_u32_array(node,
-				"attach-impl-defs", iommu->impl_defs, n))
-			iommu->num_impl_defs = n / 2;
-	}
-
 	of_property_for_each_string(node, "clock-names", prop, cname) {
 		struct clk *c = devm_clk_get(iommu_dev, cname);
 
 		if (IS_ERR(c)) {
 			dev_err(device->dev,
 				"dt: Couldn't get clock: %s\n", cname);
-			return -ENODEV;
+			return PTR_ERR(c);
 		}
 		if (i >= KGSL_IOMMU_MAX_CLKS) {
 			dev_err(device->dev, "dt: too many clocks defined.\n");
@@ -2786,11 +2702,11 @@ static int _kgsl_iommu_probe(struct kgsl_device *device,
 		device->mmu.secure_align_mask = 0xfff;
 
 	/* Fill out the rest of the devices in the node */
-	of_platform_populate(node, NULL, NULL, iommu_dev);
+	ret = of_platform_populate(node, NULL, NULL, iommu_dev);
+	if (ret)
+		return ret;
 
 	for_each_child_of_node(node, child) {
-		int ret;
-
 		if (!of_device_is_compatible(child, "qcom,smmu-kgsl-cb"))
 			continue;
 
@@ -2798,7 +2714,8 @@ static int _kgsl_iommu_probe(struct kgsl_device *device,
 		if (ret) {
 			dev_err(device->dev, "dt: ctx probe %s failed: %d\n",
 				child->name, ret);
-			return ret;
+			of_node_put(child);
+			goto out_node;
 		}
 
 		if (!iommu_node)
@@ -2809,7 +2726,10 @@ static int _kgsl_iommu_probe(struct kgsl_device *device,
 		of_device_is_compatible(iommu_node, "qcom,qsmmu-v500"))
 		device->mmu.subtype = KGSL_IOMMU_SMMU_V500;
 
-	return 0;
+	ret = 0;
+out_node:
+	of_node_put(iommu_node);
+	return ret;
 }
 
 static const struct {
@@ -2826,14 +2746,18 @@ static int kgsl_iommu_probe(struct kgsl_device *device)
 	for (i = 0; i < ARRAY_SIZE(kgsl_dt_devices); i++) {
 		struct device_node *node;
 
-		node = of_find_compatible_node(device->pdev->dev.of_node,
-			NULL, kgsl_dt_devices[i].compat);
+		node = of_node_get(device->pdev->dev.of_node);
+		node = of_find_compatible_node(node, NULL, kgsl_dt_devices[i].compat);
 
-		if (node != NULL)
-			return kgsl_dt_devices[i].probe(device, node);
+		if (node) {
+			int ret = kgsl_dt_devices[i].probe(device, node);
+
+			of_node_put(node);
+			return ret;
+		}
 	}
 
-	return -ENODEV;
+	return KGSL_MMU_PROBE_NOT_FOUND;
 }
 
 struct kgsl_mmu_ops kgsl_iommu_ops = {

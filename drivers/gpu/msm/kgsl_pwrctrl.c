@@ -2856,7 +2856,11 @@ _aware(struct kgsl_device *device)
 		status = gmu_core_start(device);
 		break;
 	case KGSL_STATE_INIT:
+	case KGSL_STATE_SLUMBER:
 		status = kgsl_pwrctrl_enable(device);
+		/* The caller's restore is a no-op if we keep the original state. */
+		if (status && !gmu_core_gpmu_isenabled(device))
+			kgsl_pwrctrl_disable(device);
 		break;
 	/* The following 3 cases shouldn't occur, but don't panic. */
 	case KGSL_STATE_NAP:
@@ -2865,9 +2869,6 @@ _aware(struct kgsl_device *device)
 		kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_OFF);
 		del_timer_sync(&device->idle_timer);
 		kgsl_pwrscale_midframe_timer_cancel(device);
-		break;
-	case KGSL_STATE_SLUMBER:
-		status = kgsl_pwrctrl_enable(device);
 		break;
 	default:
 		status = -EINVAL;
@@ -2884,8 +2885,10 @@ _aware(struct kgsl_device *device)
 	 * we want to attempt another reset/recovery.
 	 */
 		kgsl_pwrctrl_set_state(device, KGSL_STATE_RESET);
-	else
+	else if (!status)
 		kgsl_pwrctrl_set_state(device, KGSL_STATE_AWARE);
+	else
+		kgsl_pwrctrl_request_state(device, KGSL_STATE_NONE);
 
 	return status;
 }

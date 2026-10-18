@@ -54,6 +54,9 @@ struct kgsl_pagetable {
 
 struct kgsl_mmu;
 
+/* A positive probe result means no matching hardware, not a setup error. */
+#define KGSL_MMU_PROBE_NOT_FOUND 1
+
 struct kgsl_mmu_ops {
 	int (*probe)(struct kgsl_device *device);
 	int (*mmu_init)(struct kgsl_mmu *mmu);

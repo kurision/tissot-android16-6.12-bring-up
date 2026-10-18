@@ -6,7 +6,8 @@
  * interconnect-backed stand-in for the vendor msm-bus client API.
  * DT format is the vendor legacy one read by msm_bus_cl_get_pdata():
  * qcom,msm-bus,name, qcom,msm-bus,num-cases, qcom,msm-bus,num-paths,
- * qcom,msm-bus,vectors-KBps = <src dst ib ab>, ... (ab/ib in kBps).
+ * qcom,msm-bus,vectors-KBps = <src dst ab ib>, ... (ab/ib in kBps).
+ * Vendor vector fields hold bytes/s; convert to kB/s at the ICC boundary.
  * Votes go to the DT path named "gpu_icc_path"; absent path = no-op.
  */
 
@@ -45,14 +46,14 @@ static int parse_table(struct platform_device *pdev, struct device_node *node,
 
 	count = of_property_count_elems_of_size(node,
 			"qcom,msm-bus,vectors-KBps", sizeof(u32) * 4);
-	if (count != num_cases * num_paths)
+	if (count < 0 || count % num_paths || count / num_paths != num_cases)
 		return -EINVAL;
 
-	pdata->num_usecases = num_cases;
 	pdata->usecase = kcalloc(num_cases, sizeof(*pdata->usecase),
 			GFP_KERNEL);
 	if (!pdata->usecase)
 		return -ENOMEM;
+	pdata->num_usecases = num_cases;
 
 	for (i = 0; i < num_cases; i++) {
 		struct msm_bus_paths *paths = &pdata->usecase[i];
@@ -74,14 +75,12 @@ static int parse_table(struct platform_device *pdev, struct device_node *node,
 				if (rc)
 					break;
 			}
-			if (rc) {
-				kfree(paths->vectors);
+			if (rc)
 				return -EINVAL;
-			}
 			paths->vectors[j].src = vectors[0];
 			paths->vectors[j].dst = vectors[1];
-			paths->vectors[j].ib = vectors[2];
-			paths->vectors[j].ab = vectors[3];
+			paths->vectors[j].ab = (u64)vectors[2] * 1000;
+			paths->vectors[j].ib = (u64)vectors[3] * 1000;
 		}
 	}
 
@@ -143,14 +142,21 @@ uint32_t msm_bus_scale_register_client(
 		return 0;
 
 	if (bus_pdev && !bus_path) {
-		bus_path = of_icc_get(&bus_pdev->dev, "gpu_icc_path");
-		if (IS_ERR(bus_path)) {
-			bus_path = NULL;
-			if (!path_warned) {
-				path_warned = true;
-				dev_warn_ratelimited(&bus_pdev->dev,
-					"no gpu_icc_path interconnect; bus votes accepted but not applied\n");
-			}
+		struct icc_path *path;
+
+		path = of_icc_get(&bus_pdev->dev, "gpu_icc_path");
+		if (IS_ERR(path)) {
+			/* The legacy API can report failure only as a zero handle. */
+			dev_err(&bus_pdev->dev,
+				"gpu_icc_path interconnect lookup failed: %ld\n",
+				PTR_ERR(path));
+			return 0;
+		}
+		bus_path = path;
+		if (!bus_path && !path_warned) {
+			path_warned = true;
+			dev_warn_ratelimited(&bus_pdev->dev,
+					     "no gpu_icc_path interconnect; bus votes accepted but not applied\n");
 		}
 	}
 
@@ -193,8 +199,8 @@ int msm_bus_scale_client_update_request(uint32_t cl, unsigned int index)
 		return 0;
 
 	return icc_set_bw(bus_path,
-			pdata->usecase[index].vectors[0].ab,
-			pdata->usecase[index].vectors[0].ib);
+			Bps_to_icc(pdata->usecase[index].vectors[0].ab),
+			Bps_to_icc(pdata->usecase[index].vectors[0].ib));
 }
 
 int msm_bus_scale_client_update_context(uint32_t cl, bool active_only,

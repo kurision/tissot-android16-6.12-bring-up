@@ -746,12 +746,7 @@ void kgsl_device_snapshot(struct kgsl_device *device,
 	 * the kernel log
 	 */
 
-	{
-		struct timespec64 boot;
-
-		ktime_get_boottime_ts64(&boot);
-		snapshot->timestamp = ktime_get_real_seconds() - boot.tv_sec;
-	}
+	snapshot->timestamp = ktime_get_boottime_seconds();
 
 	/* Store the instance in the device until it gets dumped */
 	device->snapshot = snapshot;

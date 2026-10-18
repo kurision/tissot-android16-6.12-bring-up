@@ -2318,7 +2318,7 @@ static int a5xx_rb_start(struct adreno_device *adreno_dev)
 		adreno_zap_stage(device->dev, ZAP_STAGE_POST_START_DONE,
 				 ret, 0, 0);
 
-	return 0;
+	return ret;
 }
 
 static int _load_firmware(struct kgsl_device *device, const char *fwfile,

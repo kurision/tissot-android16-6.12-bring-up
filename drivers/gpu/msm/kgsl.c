@@ -1275,7 +1275,7 @@ static int kgsl_open(struct inode *inodep, struct file *filep)
 		return -ENODEV;
 	}
 
-	result = pm_runtime_get_sync(&device->pdev->dev);
+	result = pm_runtime_resume_and_get(&device->pdev->dev);
 	if (result < 0) {
 		dev_err(device->dev,
 			     "Runtime PM: Unable to wake up the device, rc = %d\n",
@@ -2636,8 +2636,10 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, unsigned long useraddr)
 	long npages = 0, i;
 	size_t sglen = (size_t) (memdesc->size / PAGE_SIZE);
 	struct page **pages = NULL;
-	unsigned int write = ((memdesc->flags & KGSL_MEMFLAGS_GPUREADONLY) ? 0 :
-								FOLL_WRITE);
+	unsigned int gup_flags = FOLL_LONGTERM;
+
+	if (!(memdesc->flags & KGSL_MEMFLAGS_GPUREADONLY))
+		gup_flags |= FOLL_WRITE;
 
 	if (sglen == 0 || sglen >= LONG_MAX)
 		return -EINVAL;
@@ -2662,11 +2664,12 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, unsigned long useraddr)
 	/*
 	 * FOLL_PIN, not FOLL_GET: these pages are mapped into the GPU's IOMMU
 	 * and written by the device, so they must be pinned rather than
-	 * merely refcounted (Documentation/core-api/pin_user_pages.rst,
-	 * "Case 2: DMA-mapped pages"). pin_user_pages() adds FOLL_PIN to
-	 * gup_flags itself; the reference is dropped with unpin_user_page*().
+	 * merely refcounted. The mapping can persist until userspace frees it,
+	 * with no MMU notifier to revoke it, so FOLL_LONGTERM is also required
+	 * (Documentation/core-api/pin_user_pages.rst, case 2). pin_user_pages()
+	 * adds FOLL_PIN itself; release uses unpin_user_page*().
 	 */
-	npages = pin_user_pages(useraddr, sglen, write, pages);
+	npages = pin_user_pages(useraddr, sglen, gup_flags, pages);
 	mmap_read_unlock(current->mm);
 
 	ret = (npages < 0) ? (int)npages : 0;

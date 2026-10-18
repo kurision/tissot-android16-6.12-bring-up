@@ -358,8 +358,6 @@ done:
 		pcount++;
 	}
 
-	mod_node_page_state(page_pgdat(page), NR_SLAB_UNRECLAIMABLE_B,
-				((size_t)1 << order) << PAGE_SHIFT);
 	return pcount;
 
 eagain:
@@ -378,9 +376,6 @@ void kgsl_pool_free_page(struct page *page)
 		return;
 
 	page_order = compound_order(page);
-
-	mod_node_page_state(page_pgdat(page), NR_SLAB_UNRECLAIMABLE_B,
-				-((size_t)1 << page_order) << PAGE_SHIFT);
 
 	if (!kgsl_pool_max_pages ||
 			(kgsl_pool_size_total() < kgsl_pool_max_pages)) {
@@ -580,4 +575,3 @@ void kgsl_exit_page_pools(void)
 		kgsl_pool_shrinker = NULL;
 	}
 }
-

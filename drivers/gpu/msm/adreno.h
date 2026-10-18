@@ -1775,7 +1775,6 @@ static inline unsigned int counter_delta(struct kgsl_device *device,
 			dev_warn_once(device->dev,
 				"Abnormal value :0x%x (0x%x) from perf counter : 0x%x\n",
 				val, *counter, reg);
-			return 0;
 		}
 	}
 

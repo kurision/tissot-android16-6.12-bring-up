@@ -124,9 +124,12 @@ struct kgsl_iommu {
 	atomic_t clk_enable_count;
 	struct clk *clks[KGSL_IOMMU_MAX_CLKS];
 	struct kgsl_memdesc smmu_info;
-	/* <offset value> pairs from attach-impl-defs, see _apply_impl_defs */
-	u32 *impl_defs;
-	unsigned int num_impl_defs;
+	/*
+	 * run231 diagnostic: the QSMMU hazard/order register writes are issued
+	 * once per boot instead of on every start, to test whether the
+	 * asynchronous SError seen in runs226/228/229/230 originates there.
+	 */
+	bool qsmmu_configured;
 };
 
 /*

@@ -771,6 +771,8 @@ int kgsl_mmu_probe(struct kgsl_device *device)
 		dev_info(device->dev,
 			 "DIAG kgsl_mmu: subtype '%s' probe failed: %d\n",
 			 kgsl_mmu_subtypes[i].name, ret);
+		if (ret != KGSL_MMU_PROBE_NOT_FOUND)
+			return ret;
 	}
 
 	dev_err(device->dev, "mmu: couldn't detect any known MMU types\n");
