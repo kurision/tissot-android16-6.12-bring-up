@@ -2144,12 +2144,28 @@ err_invoke:
 	return err;
 }
 
+/* Command numbers already logged, so the first arrival of each is shown. */
+static unsigned long fastrpc_seen_cmds;
+
 static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 				 unsigned long arg)
 {
 	struct fastrpc_user *fl = (struct fastrpc_user *)file->private_data;
 	char __user *argp = (char __user *)arg;
 	int err;
+	unsigned int nr;
+
+	/*
+	 * The vendor adsprpcd on this board was built against CAF's ioctl
+	 * numbering, which does not match the one implemented here, so the
+	 * errno alone cannot say which commands arrive. Log each command
+	 * number the first time it is seen.
+	 */
+	nr = _IOC_NR(cmd);
+	if (nr < BITS_PER_LONG && !test_and_set_bit(nr, &fastrpc_seen_cmds))
+		dev_info(&fl->cctx->rpdev->dev,
+			 "ioctl nr %u, cmd 0x%08x, %u-byte payload\n",
+			 nr, cmd, _IOC_SIZE(cmd));
 
 	switch (cmd) {
 	case FASTRPC_IOCTL_INVOKE:
