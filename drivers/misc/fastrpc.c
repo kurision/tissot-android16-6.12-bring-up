@@ -1293,9 +1293,8 @@ static bool is_session_rejected(struct fastrpc_user *fl, bool unsigned_pd_reques
 }
 
 static int fastrpc_init_create_static_process(struct fastrpc_user *fl,
-					      char __user *argp)
+					      struct fastrpc_init_create_static init)
 {
-	struct fastrpc_init_create_static init;
 	struct fastrpc_invoke_args *args;
 	struct fastrpc_phy_page pages[1];
 	char *name;
@@ -1312,10 +1311,6 @@ static int fastrpc_init_create_static_process(struct fastrpc_user *fl,
 	if (!args)
 		return -ENOMEM;
 
-	if (copy_from_user(&init, argp, sizeof(init))) {
-		err = -EFAULT;
-		goto err;
-	}
 
 	if (init.namelen > INIT_FILE_NAMELEN_MAX) {
 		err = -EINVAL;
@@ -1412,9 +1407,8 @@ err:
 }
 
 static int fastrpc_init_create_process(struct fastrpc_user *fl,
-					char __user *argp)
+					struct fastrpc_init_create init)
 {
-	struct fastrpc_init_create init;
 	struct fastrpc_invoke_args *args;
 	struct fastrpc_phy_page pages[1];
 	struct fastrpc_map *map = NULL;
@@ -1435,11 +1429,6 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
 	args = kcalloc(FASTRPC_CREATE_PROCESS_NARGS, sizeof(*args), GFP_KERNEL);
 	if (!args)
 		return -ENOMEM;
-
-	if (copy_from_user(&init, argp, sizeof(init))) {
-		err = -EFAULT;
-		goto err;
-	}
 
 	if (init.attrs & FASTRPC_MODE_UNSIGNED_MODULE)
 		unsigned_module = true;
@@ -1817,13 +1806,10 @@ done:
 	return 0;
 }
 
-static int fastrpc_get_dsp_info(struct fastrpc_user *fl, char __user *argp)
+static int fastrpc_get_dsp_info(struct fastrpc_user *fl,
+				struct fastrpc_ioctl_capability cap)
 {
-	struct fastrpc_ioctl_capability cap = {0};
 	int err = 0;
-
-	if (copy_from_user(&cap, argp, sizeof(cap)))
-		return  -EFAULT;
 
 	cap.capability = 0;
 	if (cap.domain >= FASTRPC_DEV_MAX) {
@@ -1847,9 +1833,6 @@ static int fastrpc_get_dsp_info(struct fastrpc_user *fl, char __user *argp)
 	err = fastrpc_get_info_from_kernel(&cap, fl);
 	if (err)
 		return err;
-
-	if (copy_to_user(argp, &cap, sizeof(cap)))
-		return -EFAULT;
 
 	return 0;
 }
@@ -1885,14 +1868,11 @@ static int fastrpc_req_munmap_impl(struct fastrpc_user *fl, struct fastrpc_buf *
 	return err;
 }
 
-static int fastrpc_req_munmap(struct fastrpc_user *fl, char __user *argp)
+static int fastrpc_req_munmap(struct fastrpc_user *fl, struct fastrpc_req_munmap req)
 {
 	struct fastrpc_buf *buf = NULL, *iter, *b;
-	struct fastrpc_req_munmap req;
 	struct device *dev = fl->sctx->dev;
 
-	if (copy_from_user(&req, argp, sizeof(req)))
-		return -EFAULT;
 
 	spin_lock(&fl->lock);
 	list_for_each_entry_safe(iter, b, &fl->mmaps, node) {
@@ -1912,20 +1892,18 @@ static int fastrpc_req_munmap(struct fastrpc_user *fl, char __user *argp)
 	return fastrpc_req_munmap_impl(fl, buf);
 }
 
-static int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp)
+static int fastrpc_req_mmap(struct fastrpc_user *fl,
+			    struct fastrpc_req_mmap req)
 {
 	struct fastrpc_invoke_args args[3] = { [0 ... 2] = { 0 } };
 	struct fastrpc_buf *buf = NULL;
 	struct fastrpc_mmap_req_msg req_msg;
 	struct fastrpc_mmap_rsp_msg rsp_msg;
 	struct fastrpc_phy_page pages;
-	struct fastrpc_req_mmap req;
 	struct device *dev = fl->sctx->dev;
 	int err;
 	u32 sc;
 
-	if (copy_from_user(&req, argp, sizeof(req)))
-		return -EFAULT;
 
 	if (req.flags != ADSP_MMAP_ADD_PAGES && req.flags != ADSP_MMAP_REMOTE_HEAP_ADDR) {
 		dev_err(dev, "flag not supported 0x%x\n", req.flags);
@@ -1997,10 +1975,7 @@ static int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp)
 	list_add_tail(&buf->node, &fl->mmaps);
 	spin_unlock(&fl->lock);
 
-	if (copy_to_user((void __user *)argp, &req, sizeof(req))) {
-		err = -EFAULT;
-		goto err_assign;
-	}
+	/* The caller copies the remote address back out on success. */
 
 	dev_dbg(dev, "mmap\t\tpt 0x%09lx OK [len 0x%08llx]\n",
 		buf->raddr, buf->size);
@@ -2153,6 +2128,11 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 	struct fastrpc_user *fl = (struct fastrpc_user *)file->private_data;
 	char __user *argp = (char __user *)arg;
 	int err;
+	struct fastrpc_init_create init_create;
+	struct fastrpc_init_create_static init_static;
+	struct fastrpc_req_mmap req_mmap;
+	struct fastrpc_req_munmap req_munmap;
+	struct fastrpc_ioctl_capability cap;
 	unsigned int nr;
 
 	/*
@@ -2178,19 +2158,29 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 		err = fastrpc_init_attach(fl, SENSORS_PD);
 		break;
 	case FASTRPC_IOCTL_INIT_CREATE_STATIC:
-		err = fastrpc_init_create_static_process(fl, argp);
+		if (copy_from_user(&init_static, argp, sizeof(init_static)))
+			return -EFAULT;
+		err = fastrpc_init_create_static_process(fl, init_static);
 		break;
 	case FASTRPC_IOCTL_INIT_CREATE:
-		err = fastrpc_init_create_process(fl, argp);
+		if (copy_from_user(&init_create, argp, sizeof(init_create)))
+			return -EFAULT;
+		err = fastrpc_init_create_process(fl, init_create);
 		break;
 	case FASTRPC_IOCTL_ALLOC_DMA_BUFF:
 		err = fastrpc_dmabuf_alloc(fl, argp);
 		break;
 	case FASTRPC_IOCTL_MMAP:
-		err = fastrpc_req_mmap(fl, argp);
+		if (copy_from_user(&req_mmap, argp, sizeof(req_mmap)))
+			return -EFAULT;
+		err = fastrpc_req_mmap(fl, req_mmap);
+		if (!err && copy_to_user(argp, &req_mmap, sizeof(req_mmap)))
+			err = -EFAULT;
 		break;
 	case FASTRPC_IOCTL_MUNMAP:
-		err = fastrpc_req_munmap(fl, argp);
+		if (copy_from_user(&req_munmap, argp, sizeof(req_munmap)))
+			return -EFAULT;
+		err = fastrpc_req_munmap(fl, req_munmap);
 		break;
 	case FASTRPC_IOCTL_MEM_MAP:
 		err = fastrpc_req_mem_map(fl, argp);
@@ -2199,7 +2189,11 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 		err = fastrpc_req_mem_unmap(fl, argp);
 		break;
 	case FASTRPC_IOCTL_GET_DSP_INFO:
-		err = fastrpc_get_dsp_info(fl, argp);
+		if (copy_from_user(&cap, argp, sizeof(cap)))
+			return -EFAULT;
+		err = fastrpc_get_dsp_info(fl, cap);
+		if (!err && copy_to_user(argp, &cap, sizeof(cap)))
+			err = -EFAULT;
 		break;
 	default:
 		err = -ENOTTY;
