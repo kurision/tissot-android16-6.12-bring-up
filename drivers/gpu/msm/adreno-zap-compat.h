@@ -110,6 +110,16 @@ static inline void adreno_zap_stage(struct device *dev,
 		.size = cpu_to_le64(size),
 	};
 
+	/*
+	 * run225: the record below is queued to a workqueue that lags 40-150 ms,
+	 * so its tail is lost on a hard reset. Print first, before the
+	 * first-visit bit is set, so repeats (each NAP/ACTIVE/SLUMBER) land in
+	 * the console ring with their real timestamps.
+	 */
+	dev_info(dev, "DIAG zapstg stage=%u ret=%d a=%llu b=%llu t_ns=%llu\n",
+		 stage, ret, (unsigned long long)phys,
+		 (unsigned long long)size, ktime_get_ns());
+
 	/* Preserve the first visit when recovery restarts the GPU. */
 	if (stage >= ZAP_STAGE_UNSECURE_DONE &&
 	    test_and_set_bit(stage, &recorded))
@@ -153,6 +163,8 @@ static inline void *adreno_zap_subsystem_get(struct device *dev,
 	}
 
 	adreno_zap_stage(dev, ZAP_STAGE_ENTER, 0, r.start, resource_size(&r));
+	dev_info(dev, "DIAG zap: enter name=%s region=%pa\n",
+		name, &r.start);
 
 	fwname = kasprintf(GFP_KERNEL, "%s.mdt", name);
 	if (!fwname)
@@ -165,6 +177,8 @@ static inline void *adreno_zap_subsystem_get(struct device *dev,
 	}
 
 	size = qcom_mdt_get_size(fw);
+	dev_info(dev, "DIAG zap: fw %s size=%zd region=%pa\n",
+		fwname, size, &r.start);
 	adreno_zap_stage(dev, ZAP_STAGE_FW_LOADED, 0, r.start, size);
 	if (size < 0) {
 		ret = size;
@@ -176,11 +190,14 @@ static inline void *adreno_zap_subsystem_get(struct device *dev,
 		goto out_fw;
 	}
 
+	dev_info(dev, "DIAG zap: memremap begin addr=%pa size=%zd\n",
+		&r.start, size);
 	mem = memremap(r.start, size, MEMREMAP_WC);
 	if (!mem) {
 		ret = -ENOMEM;
 		goto out_fw;
 	}
+	dev_info(dev, "DIAG zap: memremap done\n");
 
 	/*
 	 * qcom_mdt_load() split in two so each SCM step gets its own stage
@@ -188,25 +205,38 @@ static inline void *adreno_zap_subsystem_get(struct device *dev,
 	 * are derived from fwname.
 	 */
 	adreno_zap_stage(dev, ZAP_STAGE_PAS_INIT, 0, r.start, size);
+	dev_info(dev, "DIAG zap: pas_init begin\n");
 	ret = qcom_mdt_pas_init(dev, fw, fwname, ADRENO_ZAP_PAS_ID, r.start,
 			NULL);
+	dev_info(dev, "DIAG zap: pas_init done ret=%d\n", ret);
 	adreno_zap_stage(dev, ZAP_STAGE_PAS_INIT_DONE, ret, r.start, size);
-	if (!ret)
+	if (!ret) {
+		dev_info(dev, "DIAG zap: load begin\n");
 		ret = qcom_mdt_load_no_init(dev, fw, fwname, ADRENO_ZAP_PAS_ID,
 				mem, r.start, size, NULL);
-	memunmap(mem);
+		dev_info(dev, "DIAG zap: load done ret=%d\n", ret);
+	}
 	adreno_zap_stage(dev, ZAP_STAGE_COPY_DONE, ret, r.start, size);
 	if (ret) {
 		dev_err(dev, "DIAG zap: mdt load failed: %d\n", ret);
-		goto out_fw;
+		goto out_mem;
 	}
 
+	/*
+	 * Authenticate before dropping the CPU mapping. mainline
+	 * adreno_gpu.c zap_shader_load_mdt() and OSS kgsl both run
+	 * qcom_scm_pas_auth_and_reset() first and memunmap() at their out:
+	 * label; the image only has to be in physical memory.
+	 */
 	adreno_zap_stage(dev, ZAP_STAGE_AUTH, 0, r.start, size);
+	dev_info(dev, "DIAG zap: auth begin\n");
 	ret = qcom_scm_pas_auth_and_reset(ADRENO_ZAP_PAS_ID);
 	adreno_zap_stage(dev, ZAP_STAGE_AUTH_DONE, ret, r.start, size);
 	dev_info(dev, "DIAG zap: %s %zd bytes at %pa auth_and_reset=%d\n",
 		fwname, size, &r.start, ret);
 
+out_mem:
+	memunmap(mem);
 out_fw:
 	release_firmware(fw);
 out_name:

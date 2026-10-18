@@ -341,18 +341,18 @@ static void kgsl_destroy_anon(struct kgsl_memdesc *memdesc)
 	for_each_sg(memdesc->sgt->sgl, sg, memdesc->sgt->nents, i) {
 		page = sg_page(sg);
 		for (j = 0; j < (sg->length >> PAGE_SHIFT); j++) {
-			/*
-			 * Mark the page in the scatterlist as dirty if they
-			 * were writable by the GPU.
-			 */
-			if (!(memdesc->flags & KGSL_MEMFLAGS_GPUREADONLY))
-				set_page_dirty_lock(nth_page(page, j));
+			struct page *p = nth_page(page, j);
 
 			/*
-			 * Put the page reference taken using get_user_pages
-			 * during memdesc_sg_virt.
+			 * Drop the FOLL_PIN reference taken by
+			 * pin_user_pages() in memdesc_sg_virt(). Pages the GPU
+			 * could write must be marked dirty under the page lock,
+			 * which unpin_user_pages_dirty_lock() does for us.
 			 */
-			put_page(nth_page(page, j));
+			if (memdesc->flags & KGSL_MEMFLAGS_GPUREADONLY)
+				unpin_user_page(p);
+			else
+				unpin_user_pages_dirty_lock(&p, 1, true);
 		}
 	}
 }
@@ -1857,6 +1857,22 @@ static inline bool _check_context_is_sparse(struct kgsl_context *context,
 }
 
 
+/*
+ * run225: a submission is the first real GPU work the port has ever done, and
+ * the reset lands shortly after the first one in every run. Print the initial
+ * burst in full so a death during the first render is attributable, then fall
+ * back to a periodic heartbeat instead of flooding the ring.
+ */
+static void kgsl_diag_submit(struct kgsl_device *device, const char *what)
+{
+	static atomic_t submits = ATOMIC_INIT(0);
+	int n = atomic_inc_return(&submits);
+
+	if (n <= 50 || !(n % 64))
+		dev_info(device->dev, "DIAG submit %s n=%d t_ns=%llu\n",
+			 what, n, ktime_get_ns());
+}
+
 long kgsl_ioctl_rb_issueibcmds(struct kgsl_device_private *dev_priv,
 				      unsigned int cmd, void *data)
 {
@@ -1866,6 +1882,8 @@ long kgsl_ioctl_rb_issueibcmds(struct kgsl_device_private *dev_priv,
 	struct kgsl_drawobj *drawobj;
 	struct kgsl_drawobj_cmd *cmdobj;
 	long result = -EINVAL;
+
+	kgsl_diag_submit(device, "issueibcmds");
 
 	/* The legacy functions don't support synchronization commands */
 	if ((param->flags & (KGSL_DRAWOBJ_SYNC | KGSL_DRAWOBJ_MARKER)))
@@ -2061,6 +2079,8 @@ long kgsl_ioctl_gpu_command(struct kgsl_device_private *dev_priv,
 	unsigned int type;
 	long result;
 	unsigned int i = 0;
+
+	kgsl_diag_submit(device, "gpu_command");
 
 	type = _process_command_input(device, param->flags, param->numcmds,
 			param->numobjs, param->numsyncs);
@@ -2616,7 +2636,7 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, unsigned long useraddr)
 	long npages = 0, i;
 	size_t sglen = (size_t) (memdesc->size / PAGE_SIZE);
 	struct page **pages = NULL;
-	int write = ((memdesc->flags & KGSL_MEMFLAGS_GPUREADONLY) ? 0 :
+	unsigned int write = ((memdesc->flags & KGSL_MEMFLAGS_GPUREADONLY) ? 0 :
 								FOLL_WRITE);
 
 	if (sglen == 0 || sglen >= LONG_MAX)
@@ -2639,7 +2659,14 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, unsigned long useraddr)
 		goto out;
 	}
 
-	npages = get_user_pages(useraddr, sglen, write ? FOLL_WRITE : 0, pages);
+	/*
+	 * FOLL_PIN, not FOLL_GET: these pages are mapped into the GPU's IOMMU
+	 * and written by the device, so they must be pinned rather than
+	 * merely refcounted (Documentation/core-api/pin_user_pages.rst,
+	 * "Case 2: DMA-mapped pages"). pin_user_pages() adds FOLL_PIN to
+	 * gup_flags itself; the reference is dropped with unpin_user_page*().
+	 */
+	npages = pin_user_pages(useraddr, sglen, write, pages);
 	mmap_read_unlock(current->mm);
 
 	ret = (npages < 0) ? (int)npages : 0;
@@ -2665,7 +2692,7 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, unsigned long useraddr)
 out:
 	if (ret) {
 		for (i = 0; i < npages; i++)
-			put_page(pages[i]);
+			unpin_user_page(pages[i]);
 
 		kfree(memdesc->sgt);
 		memdesc->sgt = NULL;

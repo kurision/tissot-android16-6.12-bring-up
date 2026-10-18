@@ -1284,130 +1284,43 @@ done:
 
 static int _init_secure_pt(struct kgsl_mmu *mmu, struct kgsl_pagetable *pt)
 {
-	struct kgsl_device *device = KGSL_MMU_DEVICE(mmu);
-	int ret = 0;
-	struct kgsl_iommu_pt *iommu_pt = NULL;
-	struct kgsl_iommu *iommu = _IOMMU_PRIV(mmu);
-	struct kgsl_iommu_context *ctx = &iommu->ctx[KGSL_IOMMU_CONTEXT_SECURE];
-	int secure_vmid = VMID_CP_PIXEL;
-	unsigned int cb_num;
-
+	/*
+	 * Unreachable on this device: kgsl_iommu_probe() only creates the
+	 * secure pagetable when mmu->secured is set, and that needs a
+	 * gfx3d_secure child in the kgsl-iommu node, which the tissot DT does
+	 * not have (nor the secure_mem region the donor carries).
+	 *
+	 * Bringing it up needs replacements for the DOMAIN_ATTR_* calls 6.12
+	 * removed, and neither is a plain register write: the secure VMID goes
+	 * to TZ through qcom_scm_restore_sec_cfg() from the DT's
+	 * qcom,iommu-secure-id when qcom_iommu attaches the domain, and the
+	 * context bank is the iommu-ctx node's asid (= reg / 0x1000, see
+	 * get_asid() in drivers/iommu/arm/arm-smmu/qcom_iommu.c). Refuse
+	 * loudly rather than leaning on the inert stubs in gmu-iommu-compat.h.
+	 */
 	if (!mmu->secured)
 		return -EPERM;
 
-	if (!MMU_FEATURE(mmu, KGSL_MMU_HYP_SECURE_ALLOC)) {
-		if (!kgsl_mmu_bus_secured(ctx->dev))
-			return -EPERM;
-	}
+	dev_warn_once(KGSL_MMU_DEVICE(mmu)->dev,
+		"secure pagetable requested but the 6.12 vendor VMID/context-bank attributes are gone; refusing\n");
 
-	iommu_pt = _alloc_pt(ctx->dev, mmu, pt);
-
-	if (IS_ERR(iommu_pt))
-		return PTR_ERR(iommu_pt);
-
-	ret = iommu_domain_set_attr(iommu_pt->domain,
-				    DOMAIN_ATTR_SECURE_VMID, &secure_vmid);
-	if (ret) {
-		dev_err(device->dev, "set DOMAIN_ATTR_SECURE_VMID failed: %d\n",
-			ret);
-		goto done;
-	}
-
-	_enable_gpuhtw_llc(mmu, iommu_pt);
-
-	ret = _attach_pt(iommu_pt, ctx);
-	if (ret)
-		goto done;
-
-	if (MMU_FEATURE(mmu, KGSL_MMU_HYP_SECURE_ALLOC))
-		iommu_set_fault_handler(iommu_pt->domain,
-					kgsl_iommu_fault_handler, pt);
-
-	ret = iommu_domain_get_attr(iommu_pt->domain,
-				DOMAIN_ATTR_CONTEXT_BANK, &cb_num);
-	if (ret) {
-		dev_err(device->dev, "get DOMAIN_ATTR_CONTEXT_BANK failed: %d\n",
-			ret);
-		goto done;
-	}
-
-	ctx->cb_num = cb_num;
-	ctx->regbase = iommu->regbase + KGSL_IOMMU_CB0_OFFSET
-			+ (cb_num << KGSL_IOMMU_CB_SHIFT);
-
-done:
-	if (ret)
-		_free_pt(ctx, pt);
-	return ret;
+	return -EOPNOTSUPP;
 }
 
 static int _init_per_process_pt(struct kgsl_mmu *mmu, struct kgsl_pagetable *pt)
 {
-	struct kgsl_device *device = KGSL_MMU_DEVICE(mmu);
-	int ret = 0;
-	struct kgsl_iommu_pt *iommu_pt = NULL;
-	struct kgsl_iommu *iommu = _IOMMU_PRIV(mmu);
-	struct kgsl_iommu_context *ctx = &iommu->ctx[KGSL_IOMMU_CONTEXT_USER];
-	int dynamic = 1;
-	unsigned int cb_num = ctx->cb_num;
+	/*
+	 * Unreachable on this device: the tissot kgsl-iommu node sets
+	 * qcom,global_pt, so kgsl_iommu_getpagetable() routes every non-secure
+	 * request to KGSL_MMU_GLOBAL_PT. Per-process pagetables need a
+	 * dynamically allocated context bank (DOMAIN_ATTR_DYNAMIC, removed in
+	 * 6.12) and qcom_iommu binds one fixed asid per iommu-ctx node, so
+	 * this SMMU cannot provide one.
+	 */
+	dev_warn_once(KGSL_MMU_DEVICE(mmu)->dev,
+		"per-process pagetables need a dynamic context bank; this SMMU cannot provide one\n");
 
-	iommu_pt = _alloc_pt(ctx->dev, mmu, pt);
-
-	if (IS_ERR(iommu_pt))
-		return PTR_ERR(iommu_pt);
-
-	ret = iommu_domain_set_attr(iommu_pt->domain,
-				DOMAIN_ATTR_DYNAMIC, &dynamic);
-	if (ret) {
-		dev_err(device->dev,
-			"set DOMAIN_ATTR_DYNAMIC failed: %d\n", ret);
-		goto done;
-	}
-	ret = iommu_domain_set_attr(iommu_pt->domain,
-				DOMAIN_ATTR_CONTEXT_BANK, &cb_num);
-	if (ret) {
-		dev_err(device->dev,
-			"set DOMAIN_ATTR_CONTEXT_BANK failed: %d\n", ret);
-		goto done;
-	}
-
-	ret = iommu_domain_set_attr(iommu_pt->domain,
-				DOMAIN_ATTR_PROCID, &pt->name);
-	if (ret) {
-		dev_err(device->dev,
-			"set DOMAIN_ATTR_PROCID failed: %d\n", ret);
-		goto done;
-	}
-
-	_enable_gpuhtw_llc(mmu, iommu_pt);
-
-	ret = _attach_pt(iommu_pt, ctx);
-	if (ret)
-		goto done;
-
-	/* now read back the attributes needed for self programming */
-	ret = iommu_domain_get_attr(iommu_pt->domain,
-				DOMAIN_ATTR_TTBR0, &iommu_pt->ttbr0);
-	if (ret) {
-		dev_err(device->dev, "get DOMAIN_ATTR_TTBR0 failed: %d\n", ret);
-		goto done;
-	}
-
-	ret = iommu_domain_get_attr(iommu_pt->domain,
-				DOMAIN_ATTR_CONTEXTIDR, &iommu_pt->contextidr);
-	if (ret) {
-		dev_err(device->dev,
-			"get DOMAIN_ATTR_CONTEXTIDR failed: %d\n", ret);
-		goto done;
-	}
-
-	ret = kgsl_iommu_map_globals(pt);
-
-done:
-	if (ret)
-		_free_pt(ctx, pt);
-
-	return ret;
+	return -EOPNOTSUPP;
 }
 
 /* kgsl_iommu_init_pt - Set up an IOMMU pagetable */
@@ -1766,7 +1679,21 @@ static int kgsl_iommu_start(struct kgsl_mmu *mmu)
 		return status;
 	}
 
-	/* Before kgsl's own 0x6800 write below, the order 4.19 had */
+	/*
+	 * Before kgsl's own 0x6800 write below, the order 4.19 had.
+	 *
+	 * run227 disabled this call to test whether the micro-MMU halt
+	 * handshake causes the ~89 s board reset. It does not: the board
+	 * reset at the same kernel uptime, with no panic. run228 re-enables
+	 * it so the SError fault (run226, ESR 0xbf000002, taken on the
+	 * second kgsl_iommu_start() i.e. surfaceflinger's open) is
+	 * reproduced under a live console.
+	 *
+	 * Still an open defect on its own terms: CAF runs this sequence from
+	 * qsmmuv2_device_reset() in the arm-smmu driver under a vdd-supply
+	 * vote for the SMMU power domain; this port runs it per-open from
+	 * kgsl_iommu_start() with clocks only and no regulator vote.
+	 */
 	if (mmu->subtype != KGSL_IOMMU_SMMU_V500)
 		_apply_impl_defs(mmu);
 

@@ -86,6 +86,7 @@ void __weak (*pm_power_off)(void);
  */
 void emergency_restart(void)
 {
+	ramoops_reset_note("emergency_restart");
 	ramoops_reset_mark(RAMOOPS_RESET_EMERGENCY, NULL);
 	kmsg_dump(KMSG_DUMP_EMERG);
 	system_state = SYSTEM_RESTART;
@@ -95,6 +96,8 @@ EXPORT_SYMBOL_GPL(emergency_restart);
 
 void kernel_restart_prepare(char *cmd)
 {
+	/* run225: compact durable note; the notifier below persists the tail. */
+	ramoops_reset_note("kernel_restart_prepare");
 	blocking_notifier_call_chain(&reboot_notifier_list, SYS_RESTART, cmd);
 	system_state = SYSTEM_RESTART;
 	usermodehelper_disable();

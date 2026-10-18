@@ -1834,6 +1834,10 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 	const struct adreno_a5xx_core *a5xx_core = to_a5xx_core(adreno_dev);
 	uint64_t gpuaddr;
 
+	dev_info(device->dev,
+		"DIAG microcode: entry zap_loaded=%u secured=%u\n",
+		adreno_dev->zap_loaded, device->mmu.secured);
+
 	gpuaddr = pm4_fw->memdesc.gpuaddr;
 	kgsl_regwrite(device, A5XX_CP_PM4_INSTR_BASE_LO,
 				lower_32_bits(gpuaddr));
@@ -1845,6 +1849,8 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 				lower_32_bits(gpuaddr));
 	kgsl_regwrite(device, A5XX_CP_PFP_INSTR_BASE_HI,
 				upper_32_bits(gpuaddr));
+
+	dev_info(device->dev, "DIAG microcode: instr-base written\n");
 
 	/*
 	 * Resume call to write the zap shader base address into the
@@ -1875,14 +1881,19 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 	 * to CPU access to SECVID_TRUST_CNTL can fault on protected parts.
 	 */
 	if (a5xx_core->zap_name && !adreno_dev->zap_loaded) {
+		dev_info(device->dev, "DIAG microcode: zap begin name=%s\n",
+				a5xx_core->zap_name);
 		ptr = adreno_zap_subsystem_get(&device->pdev->dev,
 				a5xx_core->zap_name);
+		dev_info(device->dev, "DIAG microcode: zap done ptr=%p\n", ptr);
 
 		/* Return error if the zap shader cannot be loaded */
 		if (IS_ERR_OR_NULL(ptr))
 			return (ptr == NULL) ? -ENODEV : PTR_ERR(ptr);
 		adreno_dev->zap_loaded = 1;
 	}
+
+	dev_info(device->dev, "DIAG microcode: done\n");
 
 	return 0;
 }

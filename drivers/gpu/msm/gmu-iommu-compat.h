@@ -28,9 +28,12 @@
  * 6.12 removed iommu_domain_{get,set}_attr() and the vendor DOMAIN_ATTR_*
  * enum entries the 4.19 kgsl used. The placeholder values below just let
  * the code keep naming what it means. Every call site left is inert on
- * a506: secure pagetables (needs mmu->secured, off on this device),
- * per-process pagetables (feature not enabled), gpuhtw LLC (msm8953 has
- * no LLCC). The wrappers fail the call rather than pretend success.
+ * a506: gpuhtw LLC (msm8953 has no LLCC, so _enable_gpuhtw_llc() returns
+ * early), the LLC/upstream-hint reads in _get_protection_flags() (same
+ * reason), and the secure context in kgsl_gmu.c / _setup_secure_context()
+ * (needs mmu->secured, off on this device). The secure and per-process
+ * pagetable initialisers no longer call these at all. The wrappers fail
+ * the call rather than pretend success.
  */
 #define DOMAIN_ATTR_PROCID		60
 #define DOMAIN_ATTR_CONTEXT_BANK	61

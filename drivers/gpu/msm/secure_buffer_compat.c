@@ -9,10 +9,17 @@
 
 #include <linux/bits.h>
 #include <linux/kernel.h>
+#include <linux/mutex.h>
 #include <linux/scatterlist.h>
 #include <linux/firmware/qcom/qcom_scm.h>
 
 #include <soc/qcom/secure_buffer.h>
+
+/*
+ * The vendor secure_buffer.c serialises the assign calls on this mutex; the
+ * SCM assign path shares state and must not be entered concurrently.
+ */
+static DEFINE_MUTEX(secure_buffer_mutex);
 
 int hyp_assign_table(struct sg_table *table, int *source_vm_list,
 		     int source_nelements, int *dest_vm_list, int *dest_perms,
@@ -34,6 +41,8 @@ int hyp_assign_table(struct sg_table *table, int *source_vm_list,
 	perm.vmid = *dest_vm_list;
 	perm.perm = *dest_perms;
 
+	mutex_lock(&secure_buffer_mutex);
+
 	for_each_sg(table->sgl, sg, table->nents, i) {
 		u64 source = BIT_ULL(*source_vm_list);
 
@@ -43,9 +52,13 @@ int hyp_assign_table(struct sg_table *table, int *source_vm_list,
 		} while (ret == -EAGAIN);
 
 		/* Failed SCM calls can leave ownership unknown: never free it. */
-		if (ret)
-			return -EADDRNOTAVAIL;
+		if (ret) {
+			ret = -EADDRNOTAVAIL;
+			break;
+		}
 	}
+
+	mutex_unlock(&secure_buffer_mutex);
 
 	return ret;
 }
