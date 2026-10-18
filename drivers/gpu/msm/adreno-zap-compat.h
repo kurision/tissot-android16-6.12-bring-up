@@ -111,14 +111,16 @@ static inline void adreno_zap_stage(struct device *dev,
 	};
 
 	/*
-	 * run225: the record below is queued to a workqueue that lags 40-150 ms,
-	 * so its tail is lost on a hard reset. Print first, before the
-	 * first-visit bit is set, so repeats (each NAP/ACTIVE/SLUMBER) land in
-	 * the console ring with their real timestamps.
+	 * run242: this print fired once per GPU stage transition, 76134 times
+	 * in one boot, and 76134 of that boot's 118915 kernel log lines were
+	 * this one line. At roughly 10 ms apart per submission it also starves
+	 * the boot: run241 reset on its own and run242 never reached the ROM.
+	 * The stage record is still written to ramoops below, once per stage,
+	 * which is what the recovery path reads; only the console spam is
+	 * gone.
 	 */
-	dev_info(dev, "DIAG zapstg stage=%u ret=%d a=%llu b=%llu t_ns=%llu\n",
-		 stage, ret, (unsigned long long)phys,
-		 (unsigned long long)size, ktime_get_ns());
+	dev_dbg(dev, "zapstg stage=%u ret=%d a=%llu b=%llu\n", stage, ret,
+		(unsigned long long)phys, (unsigned long long)size);
 
 	/* Preserve the first visit when recovery restarts the GPU. */
 	if (stage >= ZAP_STAGE_UNSECURE_DONE &&
