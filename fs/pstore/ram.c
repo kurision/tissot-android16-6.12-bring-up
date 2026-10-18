@@ -1242,7 +1242,13 @@ static int ramoops_snap_thread(void *unused)
 				RAMOOPS_SNAP_VERSION, s->tail_buf ? "on" : "off",
 				RAMOOPS_TAIL_OFFSET);
 		}
-		if (ramoops_reset_capture && !(s->seq % 10))
+		/*
+		 * Every tenth snapshot was ~1260 lines per boot, which is
+		 * spam rather than evidence. Every hundredth keeps the
+		 * liveness witness this port relies on, at about one line
+		 * per boot.
+		 */
+		if (ramoops_reset_capture && !(s->seq % 100))
 			pr_info("DIAG: snapshot heartbeat seq=%llu uptime_ns=%llu\n",
 				s->seq, ktime_get_ns());
 		/*
