@@ -375,6 +375,20 @@ void panic(const char *fmt, ...)
 	if (!_crash_kexec_post_notifiers)
 		__crash_kexec(NULL);
 
+	/*
+	 * run226: last chance to get the panic text onto durable storage.
+	 *
+	 * Must run here: after the message and stack trace are in the printk
+	 * log buffer (above), but before panic_other_cpus_shutdown() ->
+	 * smp_send_stop() freezes the sibling CPUs. Once they are stopped the
+	 * logdump snapshotter cannot run again, and ramoops_reset_note()'s
+	 * !irqs_disabled() guard means the durable RESETNOTE slot stays zero,
+	 * so a panic leaves no durable trace at all in the logdump.
+	 *
+	 * No-op unless the logdump was opened, and bounded if it was.
+	 */
+	ramoops_panic_snapshot();
+
 	panic_other_cpus_shutdown(_crash_kexec_post_notifiers);
 
 	printk_legacy_allow_panic_sync();

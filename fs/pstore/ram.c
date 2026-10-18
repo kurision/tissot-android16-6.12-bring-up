@@ -37,11 +37,14 @@
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
 #include <linux/sched/signal.h>
+#include <linux/interrupt.h>
+#include <linux/irqflags.h>
 #include <trace/events/signal.h>
 #include <trace/events/sched.h>
 #endif
 #include <linux/fs.h>
 #include <linux/kthread.h>
+#include <linux/delay.h>
 #include <linux/timekeeping.h>
 #include <linux/vmalloc.h>
 #include <linux/random.h>
@@ -627,6 +630,30 @@ static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
 #define RAMOOPS_SNAP_SLOT_STRIDE	(PAGE_SIZE + SZ_1M)
 #define RAMOOPS_SNAP_SLOTS		2
 #define RAMOOPS_SNAP_INTERVAL_MS	2000
+/*
+ * run225: once the first KGSL stage record lands, shorten the cadence so the
+ * last sample falls inside the pre-reset blind window (~150 ms wide). The
+ * 1 MiB console payload makes this ~5 MiB/s, so it is bounded to the period
+ * between the GPU starting and the reset rather than the whole boot.
+ */
+#define RAMOOPS_SNAP_FAST_MS		200
+
+/*
+ * run226: bounded busy-wait used by ramoops_panic_snapshot(). A flushed
+ * 1 MiB console sample plus the tail commit normally completes in tens of
+ * milliseconds (the 41.7 s and 41.77 s headers in run225 are ~56 ms apart),
+ * so 4 s of budget is generous. The cap only bounds the panic path; it is
+ * never expected to be reached.
+ */
+#define RAMOOPS_PANIC_SNAP_UDELAY	100	/* us per spin */
+#define RAMOOPS_PANIC_SNAP_SPINS	40000	/* => up to ~4 s */
+
+/*
+ * run226: consecutive commit failures tolerated before the snapshotter
+ * disables itself. High enough to ride out a transient eMMC error, low
+ * enough that a permanently wedged logdump does not spin forever.
+ */
+#define RAMOOPS_SNAP_MAX_FAILURES	10
 #define RAMOOPS_SNAP_MAGIC		0x52414d4fULL	/* "RAMO" */
 #define RAMOOPS_SNAP_VERSION		1
 #define RAMOOPS_TAIL_OFFSET		(RAMOOPS_SNAP_OFFSET + \
@@ -663,7 +690,8 @@ void ramoops_reset_mark(enum ramoops_reset_path path, const char *reason)
 
 	/* The mapping is prepared at probe: never map, allocate or printk here. */
 	if (!smp_load_acquire(&ramoops_reset_ready) ||
-	    path < RAMOOPS_RESET_PANIC || path > RAMOOPS_RESET_PSHOLD ||
+	    path < RAMOOPS_RESET_PANIC ||
+	    path > RAMOOPS_RESET_PANIC_SNAPSHOT_DONE ||
 	    test_and_set_bit(path - 1, &ramoops_reset_seen))
 		return;
 
@@ -715,6 +743,7 @@ struct ramoops_snapper {
 	struct completion wake;
 	u64 seq;
 	unsigned int slot;		/* next slot to write */
+	unsigned int failures;		/* consecutive commit failures */
 	bool warned;
 	struct mutex reset_lock;		/* serialize reset callbacks only */
 	void *reset_buf;
@@ -724,6 +753,11 @@ struct ramoops_snapper {
 };
 
 static struct ramoops_snapper ramoops_snapper;
+
+/* run225: set by the first stage record (KGSL up), never cleared. */
+static bool ramoops_snap_fast;
+
+static void ramoops_debug_apps_wdt(void);
 
 static_assert(sizeof(struct ramoops_snap_header) == RAMOOPS_SNAP_HDR_SIZE);
 static_assert(RAMOOPS_TAIL_OFFSET +
@@ -915,6 +949,84 @@ static int ramoops_snap_take(struct ramoops_snapper *s)
 }
 
 /*
+ * run226: commit one snapshot from panic().
+ *
+ * panic() disables IRQs and preemption early, then calls
+ * panic_other_cpus_shutdown() -> smp_send_stop() before it ever reaches
+ * emergency_restart(). Two consequences that made the fault unobservable:
+ *
+ *   - the snapshot kthread freezes on whichever CPU smp_send_stop() halts,
+ *     so no sample is ever taken after the panic; and
+ *   - ramoops_reset_note()'s guard requires !irqs_disabled(), so the
+ *     durable RESETNOTE slot in the logdump stays zero even though
+ *     emergency_restart() runs later.
+ *
+ * Called at the top of panic() -- before smp_send_stop(), while every
+ * sibling CPU is still running and the eMMC block layer is still alive --
+ * this nudges the snapshotter and busy-waits, with IRQs off and no
+ * sleeping, for one fully flushed sample. That sample carries the panic
+ * message and stack trace into the logdump, where it survives the reset.
+ *
+ * Bounded and best-effort: a bounded spin on the snapshot sequence number
+ * cannot deadlock the panic path even if the snapshotter never runs.
+ */
+void ramoops_panic_snapshot(void)
+{
+	struct ramoops_snapper *s = &ramoops_snapper;
+	unsigned int slot;
+	int spins;
+	bool ok;
+
+	/*
+	 * Nothing durable to write into if the logdump was never opened, or
+	 * if this is a nested panic on the snapshotter's own CPU (the wakeup
+	 * below could never be serviced).
+	 */
+	if (!s->file || !s->bdev || !s->buf)
+		return;
+	if (s->task && s->task == current)
+		return;
+
+	/* Record the attempt in RAM first: cheap, and needs no I/O. */
+	ramoops_reset_mark(RAMOOPS_RESET_PANIC_SNAPSHOT, "panic");
+
+	/*
+	 * Wait on s->slot, not s->seq. ramoops_snap_take() bumps s->seq
+	 * before it writes, so a seq change would only mean the write had
+	 * started; s->slot is advanced strictly after the console and tail
+	 * commits have both flushed, so a slot change means the sample is
+	 * durable.
+	 */
+	slot = READ_ONCE(s->slot);
+
+	/* Nudge the snapshotter out of its timed wait. */
+	complete(&s->wake);
+
+	/*
+	 * Spin, do not sleep: this runs with IRQs and preemption disabled.
+	 * Re-enabling interrupts here would be wrong (the panic path may be
+	 * holding them deliberately), so just burn cycles waiting for the
+	 * snapshotter to finish a flushed sample. The cap keeps the panic
+	 * path bounded no matter what the block layer does.
+	 */
+	for (spins = 0; spins < RAMOOPS_PANIC_SNAP_SPINS; spins++) {
+		if (READ_ONCE(s->slot) != slot)
+			break;
+		udelay(RAMOOPS_PANIC_SNAP_UDELAY);
+	}
+	ok = READ_ONCE(s->slot) != slot;
+
+	/*
+	 * Leave a RAM breadcrumb saying whether the flush landed. If the
+	 * logdump shows no post-panic sample, "timeout" here means the
+	 * snapshotter never completed (block layer stuck, or its CPU was
+	 * already halted); "ok" means it did and the sample is in the logdump.
+	 */
+	ramoops_reset_mark(RAMOOPS_RESET_PANIC_SNAPSHOT_DONE,
+			   ok ? "ok" : "timeout");
+}
+
+/*
  * Blocking reboot notifiers run before device_shutdown(), while MMC is live.
  * Never panic or replace the requested reboot. Emergency/atomic resets cannot
  * use this sleeping I/O path and remain covered only by periodic snapshots.
@@ -1099,10 +1211,29 @@ static int ramoops_snap_thread(void *unused)
 
 		ret = ramoops_snap_take(s);
 		if (ret) {
-			pr_err("DIAG: logdump commit failed errno=%d; snapshotter disabled\n",
-			       ret);
+			/*
+			 * run226: a single transient commit error used to
+			 * disable the snapshotter permanently. That is a
+			 * poor trade during bring-up, where the evidence
+			 * channel matters most and errors are the thing
+			 * being diagnosed: the most likely cause of a
+			 * failure here is the very fault we are trying to
+			 * observe, and losing the channel hides it.
+			 *
+			 * Tolerate consecutive failures up to a limit, then
+			 * give up so a genuinely wedged logdump does not
+			 * spin forever.
+			 */
+			if (++s->failures <= RAMOOPS_SNAP_MAX_FAILURES) {
+				pr_err("DIAG: logdump commit failed errno=%d (%u/%u); retrying\n",
+				       ret, s->failures, RAMOOPS_SNAP_MAX_FAILURES);
+				continue;
+			}
+			pr_err("DIAG: logdump commit failed errno=%d (%u consecutive); snapshotter disabled\n",
+			       ret, s->failures);
 			break;
 		}
+		s->failures = 0;
 		if (!s->warned) {
 			s->warned = true;
 			pr_info("snapshot38 logdump snapshotter ready offset=%llu slots=%u size=%u\n",
@@ -1114,8 +1245,25 @@ static int ramoops_snap_thread(void *unused)
 		if (ramoops_reset_capture && !(s->seq % 10))
 			pr_info("DIAG: snapshot heartbeat seq=%llu uptime_ns=%llu\n",
 				s->seq, ktime_get_ns());
+		/*
+		 * run225/226: this tree builds no watchdog driver, so a
+		 * firmware-armed APPS WDT would bite unseen. Re-read the
+		 * block on every fast-cadence tick to catch it arming.
+		 *
+		 * run225 gated this on !(seq % 8) to limit printk volume,
+		 * but seq only reached 21 before the reset, so the re-reads
+		 * that did fire landed at seq 8 and 16 -- before the fast
+		 * cadence was even enabled at the first KGSL stage record,
+		 * i.e. exactly when the read is not interesting. Each read
+		 * is a handful of MMIO reads and is non-blocking, so run226
+		 * samples it on every fast tick instead.
+		 */
+		if (smp_load_acquire(&ramoops_snap_fast))
+			ramoops_debug_apps_wdt();
 		wait_for_completion_interruptible_timeout(
-			&s->wake, msecs_to_jiffies(RAMOOPS_SNAP_INTERVAL_MS));
+			&s->wake,
+			msecs_to_jiffies(smp_load_acquire(&ramoops_snap_fast) ?
+				RAMOOPS_SNAP_FAST_MS : RAMOOPS_SNAP_INTERVAL_MS));
 	}
 	return 0;
 }
@@ -1337,9 +1485,71 @@ int ramoops_stage_write(unsigned int slot, const void *data, size_t len)
 	queue_work(ramoops_stage_wq, &ramoops_stage_work);
 out:
 	spin_unlock_irqrestore(&ramoops_stage_lock, flags);
+
+	/*
+	 * run225: stage records only come from the GPU bring-up path, so the
+	 * first one marks "KGSL is up". Switch the snapshotter to the fast
+	 * cadence and cut short the wait that is already in progress, so the
+	 * sample immediately after the GPU start is taken at once.
+	 */
+	if (!smp_load_acquire(&ramoops_snap_fast)) {
+		smp_store_release(&ramoops_snap_fast, true);
+		pr_info("DIAG: snapshot cadence -> %u ms (stage activity)\n",
+			RAMOOPS_SNAP_FAST_MS);
+		complete(&ramoops_snapper.wake);
+	}
+
 	return err;
 }
 EXPORT_SYMBOL_GPL(ramoops_stage_write);
+
+/*
+ * run225: durable note for a kernel-initiated restart.
+ *
+ * The orderly path (kernel_restart -> kernel_restart_prepare) is already
+ * covered by the blocking reboot notifier, which persists the whole kmsg tail
+ * as ACKRESET1. The emergency path (emergency_restart -> machine_restart ->
+ * psci_sys_reset) skips that notifier entirely, and it reaches the reset
+ * point with interrupts disabled, so nothing sleeping can run there either.
+ *
+ * The RAM mark page (ramoops_reset_mark) is not a usable channel for this
+ * workflow: the stock boot that always follows a port death wipes that range,
+ * so the record is gone by the time a port boot can read it back.
+ *
+ * So: one line to the console (cheap, atomic-safe) plus a best-effort durable
+ * copy in the stage area's last slot. The queued copy is atomic-safe; the
+ * synchronous FUA copy runs only when a sleeping context exists, which covers
+ * the common "panic() -> emergency_restart()" and sysrq/hotplug callers.
+ */
+#define RAMOOPS_RESET_NOTE_SLOT		(RAMOOPS_STAGE_SLOTS - 1)
+#define RAMOOPS_RESET_NOTE_OFFSET	(RAMOOPS_STAGE_OFFSET + \
+					 RAMOOPS_RESET_NOTE_SLOT * \
+					 RAMOOPS_WITNESS_LEN)
+void ramoops_reset_note(const char *what)
+{
+	char buf[RAMOOPS_WITNESS_LEN] = { 0 };
+	size_t len;
+
+	len = scnprintf(buf, sizeof(buf),
+			"RESETNOTE what=%s pid=%d comm=%s t_ns=%llu",
+			what, task_pid_nr(current), current->comm,
+			ktime_get_ns());
+	pr_emerg("DIAG reset note: %s\n", buf);
+	ramoops_stage_write(RAMOOPS_RESET_NOTE_SLOT, buf, len + 1);
+
+	if (!in_interrupt() && !in_nmi() && !irqs_disabled()) {
+		int err;
+
+		mutex_lock(&ramoops_witness_lock);
+		err = ramoops_witness_write_at(RAMOOPS_RESET_NOTE_OFFSET,
+				REQ_OP_WRITE | REQ_SYNC | REQ_FUA, buf,
+				RAMOOPS_WITNESS_LEN);
+		mutex_unlock(&ramoops_witness_lock);
+		pr_emerg("DIAG reset note: offset=%llu sync_ret=%d\n",
+			 (unsigned long long)RAMOOPS_RESET_NOTE_OFFSET, err);
+	}
+}
+EXPORT_SYMBOL_GPL(ramoops_reset_note);
 
 int ramoops_qtrace_write(u64 seq, const void *data, size_t len)
 {
