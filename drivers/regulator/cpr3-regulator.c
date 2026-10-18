@@ -4577,6 +4577,9 @@ static int cpr3_regulator_disable(struct regulator_dev *rdev)
 	if (rc) {
 		cpr3_err(vreg, "could not update CPR state, rc=%d\n", rc);
 		rc2 = regulator_enable(ctrl->vdd_regulator);
+		if (rc2)
+			cpr3_err(vreg, "could not re-enable regulator, rc=%d\n",
+				 rc2);
 		vreg->vreg_enabled = true;
 		goto done;
 	}
@@ -4754,7 +4757,6 @@ static irqreturn_t cpr3_irq_handler(int irq, void *data)
 	u32 cont = CPR3_CONT_CMD_NACK;
 	u32 reg_last_measurement = 0;
 	struct cpr3_regulator *vreg;
-	struct cpr3_corner *corner;
 	unsigned long flags;
 	int i, j, new_volt, last_volt, dynamic_floor_volt, rc;
 	u32 irq_en, status, cpr_status, ctl;
@@ -4934,9 +4936,6 @@ static irqreturn_t cpr3_irq_handler(int irq, void *data)
 	if (ctrl->proc_clock_throttle && new_volt == aggr->ceiling_volt)
 		cpr3_write(ctrl, CPR3_REG_PD_THROTTLE,
 				CPR3_PD_THROTTLE_DISABLE);
-
-	corner = &ctrl->thread[0].vreg[0].corner[
-			ctrl->thread[0].vreg[0].current_corner];
 
 	if (irq_en != aggr->irq_en) {
 		aggr->irq_en = irq_en;
