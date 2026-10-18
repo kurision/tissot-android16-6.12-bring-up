@@ -14,6 +14,7 @@
 #include <linux/kmod.h>
 #include <linux/kmsg_dump.h>
 #include <linux/reboot.h>
+#include <linux/pstore_ram.h>
 #include <linux/suspend.h>
 #include <linux/syscalls.h>
 #include <linux/syscore_ops.h>
@@ -85,6 +86,7 @@ void __weak (*pm_power_off)(void);
  */
 void emergency_restart(void)
 {
+	ramoops_reset_mark(RAMOOPS_RESET_EMERGENCY, NULL);
 	kmsg_dump(KMSG_DUMP_EMERG);
 	system_state = SYSTEM_RESTART;
 	machine_emergency_restart();

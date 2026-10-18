@@ -12,11 +12,13 @@
 #include <linux/module.h>
 #include <linux/reboot.h>
 #include <linux/pm.h>
+#include <linux/pstore_ram.h>
 
 static void __iomem *msm_ps_hold;
 
 static int do_msm_poweroff(struct sys_off_data *data)
 {
+	ramoops_reset_mark(RAMOOPS_RESET_PSHOLD, NULL);
 	writel(0, msm_ps_hold);
 	mdelay(10000);
 

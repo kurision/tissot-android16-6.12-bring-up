@@ -54,4 +54,37 @@ struct ramoops_platform_data {
 #define RAMOOPS_DIAG_MARK_MAGIC	0x4B52414D	/* "MARK" */
 void ramoops_diag_mark(loff_t slot, u32 tag, u32 val);
 
+/* Disjoint records in the existing Tissot diagnostic page, committed last. */
+#define RAMOOPS_RESET_MARK_OFFSET	0x100
+#define RAMOOPS_RESET_MARK_MAGIC	0x31545352	/* "RST1" */
+enum ramoops_reset_path {
+	RAMOOPS_RESET_PANIC = 1,
+	RAMOOPS_RESET_EMERGENCY,
+	RAMOOPS_RESET_PSCI,
+	RAMOOPS_RESET_PSHOLD,
+};
+
+struct ramoops_reset_record {
+	__le32 magic;
+	__le32 version;
+	__le32 path;
+	__le32 boot_id;
+	__le64 timestamp_ns;
+	__le32 cpu;
+	__le32 pid;
+	char comm[16];
+	char reason[200];
+	__le32 crc32;
+	__le32 reserved;
+};
+
+#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
+void ramoops_reset_mark(enum ramoops_reset_path path, const char *reason);
+#else
+static inline void ramoops_reset_mark(enum ramoops_reset_path path,
+				     const char *reason)
+{
+}
+#endif
+
 #endif

@@ -639,10 +639,59 @@ static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
 #define RAMOOPS_RESET_OFFSET		0x3f30000ULL
 #define RAMOOPS_RESET_SIZE		SZ_64K
 #define RAMOOPS_RESET_HEADER		512
+#define RAMOOPS_PATH_OFFSET		0x3f40000ULL
+#define RAMOOPS_PATH_MAGIC		0x31485441504b4341ULL /* "ACKPATH1" */
+
+static u8 ramoops_reset_previous[RAMOOPS_DIAG_MARK_SIZE];
+static bool ramoops_reset_ready;
+static unsigned long ramoops_reset_seen;
 
 static bool ramoops_reset_capture;
 module_param_named(reset_capture, ramoops_reset_capture, bool, 0400);
 MODULE_PARM_DESC(reset_capture, "Capture orderly reset and process/signal evidence to logdump");
+
+static_assert(sizeof(struct ramoops_reset_record) == 256);
+static_assert(RAMOOPS_RESET_MARK_OFFSET +
+	      RAMOOPS_RESET_PSHOLD * sizeof(struct ramoops_reset_record) <
+	      RAMOOPS_DIAG_MARK_HDR);
+static_assert(RAMOOPS_PATH_OFFSET + PAGE_SIZE + RAMOOPS_DIAG_MARK_SIZE <= SZ_64M);
+
+void ramoops_reset_mark(enum ramoops_reset_path path, const char *reason)
+{
+	struct ramoops_reset_record rec = { };
+	void __iomem *pos;
+
+	/* The mapping is prepared at probe: never map, allocate or printk here. */
+	if (!smp_load_acquire(&ramoops_reset_ready) ||
+	    path < RAMOOPS_RESET_PANIC || path > RAMOOPS_RESET_PSHOLD ||
+	    test_and_set_bit(path - 1, &ramoops_reset_seen))
+		return;
+
+	rec.version = cpu_to_le32(1);
+	rec.path = cpu_to_le32(path);
+	rec.boot_id = cpu_to_le32(readl(ramoops_diag_marks +
+					RAMOOPS_DIAG_MARK_HDR + 4));
+	rec.timestamp_ns = cpu_to_le64(ktime_get_mono_fast_ns());
+	rec.cpu = cpu_to_le32(raw_smp_processor_id());
+	rec.pid = cpu_to_le32(task_pid_nr(current));
+	memcpy(rec.comm, current->comm, sizeof(rec.comm));
+	if (reason)
+		strscpy(rec.reason, reason, sizeof(rec.reason));
+	rec.crc32 = cpu_to_le32(crc32_le(~0U, (u8 *)&rec + sizeof(rec.magic),
+			offsetof(struct ramoops_reset_record, crc32) -
+			sizeof(rec.magic)) ^ ~0U);
+
+	pos = ramoops_diag_marks + RAMOOPS_RESET_MARK_OFFSET +
+		(path - 1) * sizeof(rec);
+	writel(0, pos);
+	memcpy_toio(pos + sizeof(rec.magic), (u8 *)&rec + sizeof(rec.magic),
+		    sizeof(rec) - sizeof(rec.magic));
+	wmb();
+	writel(RAMOOPS_RESET_MARK_MAGIC, pos);
+	/* Drain the write-combined mapping before the caller enters firmware. */
+	(void)readl(pos);
+}
+EXPORT_SYMBOL_GPL(ramoops_reset_mark);
 
 struct ramoops_snap_header {
 	__le64 magic;
@@ -724,7 +773,7 @@ static int ramoops_snap_open_logdump(struct ramoops_snapper *s)
 		return err;
 	}
 	if (bdev_nr_bytes(file_bdev(s->file)) <
-	    RAMOOPS_RESET_OFFSET + RAMOOPS_RESET_SIZE) {
+	    RAMOOPS_PATH_OFFSET + PAGE_SIZE + RAMOOPS_DIAG_MARK_SIZE) {
 		pr_err_once("DIAG: logdump is too small for diagnostic records\n");
 		filp_close(s->file, &ramoops_snapper);
 		s->file = NULL;
@@ -1019,6 +1068,7 @@ static int ramoops_snap_thread(void *unused)
 {
 	struct ramoops_snapper *s = &ramoops_snapper;
 	int ret;
+	bool previous_attempted = false;
 	(void)unused;
 
 	while (!kthread_should_stop()) {
@@ -1032,6 +1082,19 @@ static int ramoops_snap_thread(void *unused)
 					msecs_to_jiffies(RAMOOPS_SNAP_INTERVAL_MS));
 				continue;
 			}
+		}
+
+		if (ramoops_reset_capture && !previous_attempted) {
+			memcpy(s->buf + PAGE_SIZE, ramoops_reset_previous,
+			       sizeof(ramoops_reset_previous));
+			ramoops_snap_init_header(s->buf, RAMOOPS_PATH_MAGIC, 0,
+				sizeof(ramoops_reset_previous),
+				RAMOOPS_RAW_PHYS +
+				RAMOOPS_RAW_DMESG_CNT * SZ_4K, 0);
+			ret = ramoops_snap_commit(s, s->buf, RAMOOPS_PATH_OFFSET);
+			previous_attempted = true;
+			pr_info("DIAG: previous reset page commit ret=%d offset=%llu\n",
+				ret, RAMOOPS_PATH_OFFSET);
 		}
 
 		ret = ramoops_snap_take(s);
@@ -1795,6 +1858,11 @@ static void ramoops_diag_dump_prev(void)
 		pr_err("ramoops: diag mark page unmapped\n");
 		return;
 	}
+#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
+	if (ramoops_reset_capture)
+		memcpy_fromio(ramoops_reset_previous, page,
+			      sizeof(ramoops_reset_previous));
+#endif
 	magic = readl_relaxed(page + RAMOOPS_DIAG_MARK_HDR);
 	boot_id = readl_relaxed(page + RAMOOPS_DIAG_MARK_HDR + 4);
 	if (magic != RAMOOPS_DIAG_MARK_MAGIC) {
@@ -1815,6 +1883,9 @@ static void ramoops_diag_dump_prev(void)
 	memset_io(page, 0, RAMOOPS_DIAG_MARK_HDR);
 	writel_relaxed(boot_id, page + RAMOOPS_DIAG_MARK_HDR + 4);
 	writel_relaxed(RAMOOPS_DIAG_MARK_MAGIC, page + RAMOOPS_DIAG_MARK_HDR);
+#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
+	ramoops_reset_seen = 0;
+#endif
 	pr_info("DIAG mark boot_id %08x\n", boot_id);
 }
 
@@ -2112,6 +2183,7 @@ static int ramoops_probe(struct platform_device *pdev)
 	 * only copy mappings that are actually live.
 	 */
 	if (cxt->raw_published) {
+		smp_store_release(&ramoops_reset_ready, ramoops_reset_capture);
 		ramoops_stage_start();
 		ramoops_snap_start(cxt);
 	}
@@ -2150,6 +2222,7 @@ static void ramoops_remove(struct platform_device *pdev)
 	struct ramoops_context *cxt = &oops_cxt;
 
 #if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
+	smp_store_release(&ramoops_reset_ready, false);
 	ramoops_stage_stop();
 	/*
 	 * Drain the snapshot worker first: it reads the same zone mappings

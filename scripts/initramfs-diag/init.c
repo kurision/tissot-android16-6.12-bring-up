@@ -67,6 +67,12 @@
 #ifndef BOOT_DEADLINE_SECONDS
 #define BOOT_DEADLINE_SECONDS 0
 #endif
+#if defined(RESET_PATH_DIAG) && defined(ANDROID_CAPTURE)
+#error RESET_PATH_DIAG must not launch Android before retained RAM is recovered
+#endif
+#if defined(RESET_PANIC_TEST) && !defined(RESET_PATH_DIAG)
+#error RESET_PANIC_TEST requires the standalone RESET_PATH_DIAG init
+#endif
 #define LOGDUMP_TEXT_LIMIT	(60UL * 1024 * 1024)
 static time_t monotonic_seconds(void);
 struct ramoops_sampler;
@@ -2485,7 +2491,13 @@ int main(int argc, char **argv)
 		say(console, "DIAG: cannot open /dev/kmsg\n");
 		goto spin;
 	}
+#ifdef RESET_PATH_DIAG
+	/* Recovery stays out of Android and streams independently of disk I/O. */
+	out = open_usb_sink();
+	usb = 1;
+#else
 	out = open_sink(console, &usb);
+#endif
 	if (out < 0) {
 		say(console, "DIAG: no storage or USB sink\n");
 		goto spin;
@@ -2508,14 +2520,37 @@ int main(int argc, char **argv)
 		say(console, "DIAG: kernel log capture failed\n");
 		goto spin;
 	}
+#ifndef RESET_PANIC_TEST
 	{
+#ifdef RESET_PATH_DIAG
+		static const char eof[] = "\nDIAG: EOF Android USB kmsg dump complete\n";
+#else
 		static const char eof[] = "\nDIAG: EOF kmsg dump complete\n";
+#endif
 
 		write_all_limit(out, eof, sizeof(eof) - 1, primary_remaining);
 	}
+#endif
 	if (!usb && fsync(out))
 		say(console, "DIAG: logdump fsync failed\n");
 	say(console, "DIAG: dump finished\n");
+#ifdef RESET_PANIC_TEST
+	/* Deliberate retention control, never present in the experiment init. */
+	{
+		int trigger = open("/proc/sysrq-trigger", O_WRONLY | O_CLOEXEC);
+
+		say(console, "DIAG: controlled reset-marker panic test\n");
+		say(out, "DIAG: controlled reset-marker panic test\n");
+		sync();
+		if (trigger >= 0) {
+			if (write(trigger, "c", 1) != 1)
+				say(console, "DIAG: panic test trigger failed\n");
+			close(trigger);
+		} else {
+			say(console, "DIAG: panic test trigger unavailable\n");
+		}
+	}
+#endif
 
 spin:
 	/* Stay alive even if no sink works; absence of a reset alone is not proof. */

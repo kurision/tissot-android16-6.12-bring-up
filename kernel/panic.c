@@ -24,6 +24,7 @@
 #include <linux/delay.h>
 #include <linux/kexec.h>
 #include <linux/panic_notifier.h>
+#include <linux/pstore_ram.h>
 #include <linux/sched.h>
 #include <linux/string_helpers.h>
 #include <linux/sysrq.h>
@@ -344,6 +345,8 @@ void panic(const char *fmt, ...)
 
 	if (len && buf[len - 1] == '\n')
 		buf[len - 1] = '\0';
+
+	ramoops_reset_mark(RAMOOPS_RESET_PANIC, buf);
 
 	pr_emerg("Kernel panic - not syncing: %s\n", buf);
 #ifdef CONFIG_DEBUG_BUGVERBOSE
