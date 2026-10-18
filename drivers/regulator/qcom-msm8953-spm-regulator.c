@@ -919,9 +919,9 @@ static int qcom_spm_reg_probe(struct platform_device *pdev)
 	reg->regmap =
 		devm_regmap_init_spmi_base(to_spmi_device(pdev->dev.parent),
 					   &spmi_regulator_regmap_config);
-
 	if (IS_ERR(reg->regmap))
-		return PTR_ERR(reg->regmap);
+		return dev_err_probe(&pdev->dev, PTR_ERR(reg->regmap),
+				     "SPMI regmap creation failed\n");
 
 	if (!reg->bypass_spm) {
 		reg->spm = devm_msm8953_spm_get(&pdev->dev);
