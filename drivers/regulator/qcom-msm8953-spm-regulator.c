@@ -24,6 +24,7 @@
 #include <linux/regulator/driver.h>
 #include <linux/regulator/machine.h>
 #include <linux/regulator/of_regulator.h>
+#include <linux/spmi.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <soc/qcom/msm8953-spm.h>
@@ -97,6 +98,11 @@ static const struct voltage_range hf_range1 = {1550000, 1550000, 3125000, 25000}
 #define QPNP_SMPS_MODE_AUTO		0x40
 #define QPNP_FTS426_HFS430_MODE_PWM	0x07
 #define QPNP_FTS426_HFS430_MODE_AUTO	0x06
+
+/* The highest register this driver touches inside the PMIC. */
+static const struct regmap_config spmi_regulator_regmap_config = {
+	.max_register = 0x6c,
+};
 
 #define QPNP_SMPS_STEP_CTRL_STEP_MASK	0x18
 #define QPNP_SMPS_STEP_CTRL_STEP_SHIFT	3
@@ -895,10 +901,22 @@ static int qcom_spm_reg_probe(struct platform_device *pdev)
 	reg->bypass_spm = of_property_read_bool(pdev->dev.of_node,
 						"qcom,bypass-spm");
 
-	reg->regmap = dev_get_regmap(pdev->dev.parent, NULL);
-	if (!reg->regmap)
-		return dev_err_probe(&pdev->dev, -EINVAL,
-				     "no parent SPMI regmap\n");
+	/*
+	 * The SPMI core hands out no regmap of its own, so this driver builds
+	 * one over its PMIC parent, the way every regulator that is a child of
+	 * an SPMI PMIC does. Asking the parent for an existing regmap
+	 * (dev_get_regmap) always failed with -EINVAL, so the rail never came
+	 * up and everything downstream of it deferred forever.
+	 */
+	if (!pdev->dev.parent)
+		return dev_err_probe(&pdev->dev, -EINVAL, "no SPMI parent\n");
+
+	reg->regmap =
+		devm_regmap_init_spmi_base(to_spmi_device(pdev->dev.parent),
+					   &spmi_regulator_regmap_config);
+
+	if (IS_ERR(reg->regmap))
+		return PTR_ERR(reg->regmap);
 
 	if (!reg->bypass_spm) {
 		reg->spm = devm_msm8953_spm_get(&pdev->dev);
