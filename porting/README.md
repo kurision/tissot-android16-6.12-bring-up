@@ -9,6 +9,8 @@
   [TRACKER-tissot-hardware.md](TRACKER-tissot-hardware.md): GPU work and hardware coverage.
 - [REFERENCE-boot-testing.md](REFERENCE-boot-testing.md): operational evidence reference;
   read before a boot cycle.
+- [REFERENCE-driver-forward-porting.md](REFERENCE-driver-forward-porting.md):
+  4.19 → 6.12 API conversion research, semantic review and focused static checks.
 
 Run187 completes Android boot but visible rendering remains unresolved: the user
 observed a dimly backlit panel and persistent capture records UCHE OOB faults.

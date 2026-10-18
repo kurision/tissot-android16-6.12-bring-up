@@ -42,6 +42,30 @@ Say "unverified" when it is unverified. An unverified claim presented as a
 conclusion costs a phone boot cycle, and the boot cycles are the scarce
 resource here.
 
+## Forward-porting drivers from 4.19 to 6.12
+
+Read [the driver forward-porting reference](porting/REFERENCE-driver-forward-porting.md)
+before adapting imported driver APIs or compatibility shims.
+
+1. Search local history for prior fixes, then find the upstream conversion
+   commits and comparable in-tree callers. Read the full conversion series
+   where needed; check current upstream and AOSP sources against the target
+   6.12 implementation before choosing a replacement.
+2. Trace every affected caller, acquisition/release pair and error path.
+   Check locking, ownership, lifetime, DMA/cache semantics and the vendor
+   userspace ABI. Matching function signatures or compiling is insufficient.
+3. Prioritize DMA-BUF reservation locking and cleanup, page references versus
+   DMA pins, and compatibility shims that may drop donor behavior. These are
+   review targets, not established causes of device failures.
+4. Use existing Coccinelle rules in report mode for a focused subsystem;
+   add a rule only for a repeated, understood pattern. Review false positives.
+   Use Sparse when its annotations can check the suspected problem. Neither
+   tool proves device behavior or replaces the evidence requirements above.
+5. Record the donor behavior, upstream commit/source references, affected
+   paths and focused checks. Obtain the required confirmation before edits;
+   do not start a kernel build unless the user asks. Documentation examples
+   do not authorize builds, source rewrites or boot cycles.
+
 ## Do not reconstruct known-good artifacts
 
 The diag ramdisk is not reconstructible from `evidence/capture/`. The working

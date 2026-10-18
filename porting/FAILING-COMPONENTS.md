@@ -1,12 +1,75 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-17, after run210. GPU startup and first open complete,
-but visible rendering and the subsequent reset cause remain unverified.
+Last update: 2026-10-18, after run221 KGSL-off isolation control.
+Early reset avoided during the observed window; exact GPU-on fault unresolved.
 Earlier address-mode/page-table claims below were corrected by run201/202;
 use the [current handoff](HANDOFF.md), not historical diagnoses.
 
-## Current evidence — snapshot60 run210 (2026-10-17)
+**Latest control — run221:** command-line-only KGSL init blacklist, same
+kernel/DTB/config/Android init/ramdisk as GPU-on baseline. Port remains on
+one ADB boot through436.84 s; no early spontaneous reset observed. User
+requested the final reboot (ACKRESET1 command `shell` at444.862316652 s).
+Panel still blinks. Missing KGSL device causes expected EGL initialization
+failure and repeated SurfaceFlinger SIGABRTs; Android completion/rendering
+unverified. KGSL-enabled/GPU-dependent path implicated, not exact KGSL or
+ZAP causation. Not an eight-minute pass; no workaround applied.
+`artifacts/snapshot60/run221-summary.json`; verified raw SHA256
+`f7b7e9dbf5ed284d6413276e42bff712e0843e49313965eecbed988d1b311255`.
+Final rooted stock boot_id `78a78b58-d2cd-4342-8fab-0ae86a9dfa14`;
+observers stopped, no flash.
+
+**New source-only adaptation:** physical SG mapping/cache counts, host-cache
+address bounds and failed ZAP startup corrected. Actual-C host regressions
+pass with `cc` and Clang; no new kernel image/device test or reset/rendering verdict.
+Details and limits: [handoff](HANDOFF.md#source-adaptation--qualcomm-kgsl-reference-not-device-tested).
+
+Latest real reset **run218**, source `0xf916de56`: GPU startup/process setup/
+final open (42.283279202 s) return zero, then backlight/blink/reset and
+fastboot. Run219 recovery was accepted but had no USB or commit proof;
+stock later booted. Run220 was never sent. CRC-valid ACKPATH1 container
+contains an invalid previous-page identity: no final source reset markers
+recovered, not evidence that panic/PSCI/emergency/PS_HOLD paths were absent.
+Device-SHA-verified `run219-logdump.bin`:
+`bfd4010acb3424ab8169c99c52ac0f3de83dcdec8e21ce14ef1c599feb13da39`.
+Evidence `artifacts/snapshot60/run218-219-summary.json`; final rooted stock
+boot_id `4c57d2a4-4284-4fc0-a8e1-60b56dd678a2`. Nothing flashed;
+observers stopped. Recovery reliability/UART is the next evidence boundary.
+
+Latest Android attempt **run217**: no blacklist or panic-test init; fastboot
+accepted the validated instrumented kernel, but USB and all logdump bytes
+remain empty after verified preclear. Kernel execution unproven; stock
+returned before RAM recovery, so no new reset-cause conclusion. Evidence:
+`artifacts/snapshot60/run217-summary.json`. Final rooted stock boot_id
+`6593789a-1354-41ca-a784-cf77c542f43e`; no flash; observers stopped.
+
+## Diagnostic evidence — run215/run216 (2026-10-18)
+
+| Component | Evidence | Current status / next action |
+|---|---|---|
+| Reset evidence retention | Deliberate SysRq panic -> fastboot -> next-port recovery, no stock between; valid panic marker for source `0xcf40c366`, PID1 `init`, `sysrq triggered crash`; USB page equals CRC-validated disk payload | **Panic-marker path validated.** Emergency/PSCI/PS_HOLD slots absent, not proof of nonexecution. Actual Android reset has not been reproduced with this instrumentation. |
+
+Raw archive SHA256
+`c775021ea3d7ff403cd788e7f7cda485596b441ae88796914bacf6619370424e`;
+`artifacts/snapshot60/run216-summary.json` and [handoff](HANDOFF.md).
+Final rooted stock boot_id `e11451db-bdad-4562-bfd8-1fa8de740bb4`.
+No flash; observers stopped. Controls did not start Android or KGSL.
+
+## Current evidence — snapshot60 run211 (2026-10-18)
+
+| Component | Evidence | Current status / next action |
+|---|---|---|
+| Panel policy / supply / pinctrl | Current source built and RAM-booted; config/ramdisk/init/cmdline match run210, DTB updated; host panel-policy regression passed | **Boot-tested, hardware result unresolved.** No panel completion captured; physical observation requested, not supplied. |
+| GPU initialization | `run211-zap-stages.json`: authentication, secure-mode switch, post-start/startup and ACTIVE/NAP return zero; PID672 process-open entry at 42.014360921 s | **Startup confirmed.** Process-open/final-open completion and submit markers absent; asynchronous absence is inconclusive, not proof of regression. |
+| Reset / rendering | Fresh `6.12.93-4k #8`; rooted stock returns at host elapsed 168.467 s; no port ADB sample, valid panic/oops or ACKRESET1 | **OPEN.** PMIC Hard Reset/cold boot + PS_HOLD does not identify caller. Rendering and port `/dev/ashmem` presence unobserved. |
+
+Evidence: `artifacts/snapshot60/run211-summary.json`; device-hash-verified
+64 MiB `run211-logdump.bin` SHA256
+`93736e7d12d27ccc78846dea9743f50234e3fd25e178c1bb0fbf395393c9dac0`.
+Final rooted stock 4.19, boot_id `88d54774-2d32-4707-b37c-767bd229f52e`.
+Observers stopped; nothing flashed. See [current handoff](HANDOFF.md).
+
+## Historical evidence — snapshot60 run210 (2026-10-17)
 
 | Component | Evidence | Current status / next action |
 |---|---|---|
