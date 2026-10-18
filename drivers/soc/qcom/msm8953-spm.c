@@ -54,6 +54,15 @@ struct msm8953_spm_request {
 	int ret;
 };
 
+/* Set once the single shared domain has probed; queried by CPR. */
+static bool msm8953_spm_ready;
+
+int msm8953_spm_probe_done(void)
+{
+	return READ_ONCE(msm8953_spm_ready) ? 0 : -EPROBE_DEFER;
+}
+EXPORT_SYMBOL_GPL(msm8953_spm_probe_done);
+
 /* Callers hold the raw lock, so AVS and VCTL updates cannot interleave. */
 static int msm8953_spm_update(struct msm8953_spm *spm, u32 offset,
 			      u32 mask, u32 value)
@@ -281,6 +290,7 @@ static int msm8953_spm_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, -EIO, "SAW configuration readback failed\n");
 	/* No voltage request, AVS enable, sequence RAM or idle registration here. */
 	platform_set_drvdata(pdev, spm);
+	WRITE_ONCE(msm8953_spm_ready, true);
 	return 0;
 }
 

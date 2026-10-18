@@ -1118,6 +1118,30 @@ config REGULATOR_QCOM_MSM8953_SPM
 	  so that hardware AVS and power-collapse entry use the correct level.
 	  Leave disabled until the CPU power stack is configured.
 
+config REGULATOR_CPR3
+	bool "CPR3/CPR4 regulator core support"
+	depends on ARCH_QCOM && OF
+	help
+	  Core Power Reduction (CPR) version 3/4 support. The core manages the
+	  ring-oscillator sensing loops and the shared voltage-corner state
+	  machine used by the SoC-specific CPR controllers. Adapted from the
+	  MSM8953 vendor kernel; leave disabled until the CPU power stack is
+	  configured.
+
+config REGULATOR_CPR4_APSS
+	bool "Qualcomm CPR4 regulator for APSS"
+	depends on REGULATOR_CPR3
+	depends on REGULATOR_QCOM_MSM8953_SPM && REGULATOR_QCOM_MSM8953_MEM_ACC
+	depends on QCOM_MSM8953_APM
+	help
+	  Support the Qualcomm APSS application-processor CPR4 controller:
+	  memory-array power-mux (APM) switching, one CPR4 thread monitoring
+	  the two APSS clusters that share the APC supply, hardware closed-loop
+	  automatic voltage stepping, and voltage adjustments for online core
+	  count, temperature and performance boost mode. The initial voltage and
+	  CPR target-quotient values are read out of hardware fuses. Leave
+	  disabled until the CPU power stack is configured.
+
 config REGULATOR_QCOM_SPMI
 	tristate "Qualcomm SPMI regulator driver"
 	depends on SPMI || COMPILE_TEST
