@@ -2122,6 +2122,122 @@ err_invoke:
 /* Command numbers already logged, so the first arrival of each is shown. */
 static unsigned long fastrpc_seen_cmds;
 
+/*
+ * FASTRPC_IOCTL_CONTROL, the ioctl adsprpcd issues from apps_dev_init() when it
+ * first opens a channel, plus the per-app latency/PM controls.
+ *
+ * The donor is drivers/char/adsprpc.c: fastrpc_device_ioctl() case
+ * FASTRPC_IOCTL_CONTROL at :4755 calls fastrpc_control() at :4564, which
+ * copy_from_user()s the struct, calls fastrpc_internal_control() at :4397 and
+ * copy_to_user()s it back only for FASTRPC_CONTROL_KALLOC (:4576-4580). The
+ * requests are handled below in the same order, and each one says what it does
+ * and, where it does not do what the donor does, why.
+ */
+static int fastrpc_control(struct fastrpc_user *fl, char __user *argp)
+{
+	struct fastrpc_ioctl_control cp;
+	int err = 0;
+
+	if (copy_from_user(&cp, argp, sizeof(cp)))
+		return -EFAULT;
+
+	switch (cp.req) {
+	case FASTRPC_CONTROL_KALLOC:
+		/*
+		 * Advertise the remote heap: this driver allocates buffers on
+		 * the remote processor from ADSP_MMAP_ADD_PAGES and friends
+		 * (fastrpc_remote_heap_alloc(), :479, cctx->remote_heap, :308),
+		 * which is exactly what the query is asking about. Same
+		 * unconditional "1" the donor returns at adsprpc.c:4438-4440.
+		 */
+		cp.kalloc.kalloc_support = 1;
+		/* The only request the donor copies back (:4576-4580). */
+		if (copy_to_user(argp, &cp, sizeof(cp)))
+			return -EFAULT;
+		break;
+	case FASTRPC_CONTROL_DSPPROCESS_CLEAN:
+		/*
+		 * The donor drops the calling process' protection domain and
+		 * ignores the result (adsprpc.c:4465-4467). Mainline has the
+		 * same operation under the same name,
+		 * fastrpc_release_current_dsp_process() at :1560, invoked as
+		 * FASTRPC_RMID_INIT_RELEASE, so this arm is a real 1:1 port
+		 * rather than a stub. Its errors are dropped for the same
+		 * reason the donor drops them: the client is tearing the
+		 * session down either way.
+		 */
+		(void)fastrpc_release_current_dsp_process(fl);
+		break;
+	case FASTRPC_CONTROL_LATENCY:
+		/*
+		 * Deliberately refused. The donor does three things here
+		 * (adsprpc.c:4414-4437), none of which this driver can do
+		 * honestly:
+		 *   - it votes PM_QOS_CPU_DMA_LATENCY with fl->apps->latency,
+		 *     which the donor reads from the "qcom,rpc-latency-us" DT
+		 *     property at adsprpc.c:5280. This driver parses no such
+		 *     property, so there is no latency value to vote for and
+		 *     cp.lp.latency is, by the donor's own code, not what the
+		 *     vote is based on.
+		 *   - it pins the vote to me->silvercores (adsprpc.c:4420-4424,
+		 *     parsed at :5278). There is no core list on this SoC's DT
+		 *     to pin to.
+		 *   - it calls fastrpc_send_cpuinfo_to_dsp()
+		 *     (adsprpc.c:2916-2958), an RMID on the static DSP
+		 *     utilities handle carrying a CPU feature map. The value
+		 *     it sends is picked per channel at probe from the
+		 *     donor's cpuinfo_todsp defaults (adsprpc.c:524-562);
+		 *     inventing one here would tell the DSP a feature map
+		 *     nobody derived.
+		 * Returning success would leave the client believing the DSP
+		 * was told about the CPU map for its early-wakeup path, which
+		 * is exactly the silent failure this port is trying to avoid.
+		 */
+		err = -EOPNOTSUPP;
+		break;
+	case FASTRPC_CONTROL_SMMU:
+		/*
+		 * The donor has no arm for this request either: it falls
+		 * through to adsprpc.c:4468-4470 and returns -EBADRQC, which
+		 * is errno 95, the same value -EOPNOTSUPP carries here. This
+		 * driver has no SMMU state in struct fastrpc_user to report
+		 * back, so it returns the same "not supported" the stock
+		 * driver does rather than inventing one.
+		 */
+		err = -EOPNOTSUPP;
+		break;
+	case FASTRPC_CONTROL_WAKELOCK:
+		/*
+		 * Refused. The donor only accepts this on the secure node
+		 * (-EPERM otherwise, adsprpc.c:4442-4447) and then just records
+		 * fl->wake_enable for FASTRPC_CONTROL_PM to consult. This
+		 * driver has no kernel PM vote to make: grep this file for
+		 * wake_enable/ws_timeout and there is nothing, and there is no
+		 * equivalent of the donor's fastrpc_pm_awake() SCM vote
+		 * (adsprpc.c:4463). Storing the flag would only move the
+		 * failure to the PM arm below, where it cannot be honoured.
+		 */
+		err = -EOPNOTSUPP;
+		break;
+	case FASTRPC_CONTROL_PM:
+		/*
+		 * Refused for the same reason as WAKELOCK: the donor sets
+		 * fl->ws_timeout and calls fastrpc_pm_awake() to hold a remote
+		 * power vote open (adsprpc.c:4450-4464), and requires
+		 * fl->wake_enable to have been set first, which cannot happen
+		 * because WAKELOCK above is refused. There is no timeout state
+		 * and no remote power vote in this driver.
+		 */
+		err = -EOPNOTSUPP;
+		break;
+	default:
+		err = -EINVAL;
+		break;
+	}
+
+	return err;
+}
+
 static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 				 unsigned long arg)
 {
@@ -2187,6 +2303,9 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 		break;
 	case FASTRPC_IOCTL_MEM_UNMAP:
 		err = fastrpc_req_mem_unmap(fl, argp);
+		break;
+	case FASTRPC_IOCTL_CONTROL:
+		err = fastrpc_control(fl, argp);
 		break;
 	case FASTRPC_IOCTL_GET_DSP_INFO:
 		if (copy_from_user(&cap, argp, sizeof(cap)))
