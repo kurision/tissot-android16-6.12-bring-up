@@ -97,7 +97,8 @@ int msm8953_spm_set_avs_limits(struct msm8953_spm *spm,
 	unsigned long flags;
 	int ret;
 
-	if (!min_level || min_level > max_level || max_level > SAW4_LEVEL_MASK)
+	/* The FTS2-family floor maps to level 0, so a zero minimum is valid. */
+	if (min_level > max_level || max_level > SAW4_LEVEL_MASK)
 		return -EINVAL;
 
 	raw_spin_lock_irqsave(&spm->lock, flags);
@@ -120,7 +121,8 @@ int msm8953_spm_set_avs(struct msm8953_spm *spm, bool enable)
 		limits = readl(spm->base + SAW4_AVS_LIMIT);
 		min_level = limits & SAW4_LEVEL_MASK;
 		max_level = (limits >> 16) & SAW4_LEVEL_MASK;
-		if (!min_level || min_level > max_level)
+		/* Refuse to arm AVS while the ceiling is still unprogrammed. */
+		if (!max_level || min_level > max_level)
 			goto unlock;
 	}
 	ret = msm8953_spm_update(spm, SAW4_AVS_CTL, SAW4_AVS_ENABLE,
