@@ -837,7 +837,7 @@ int kgsl_cache_range_op(struct kgsl_memdesc *memdesc, uint64_t offset,
 	if (memdesc->hostptr) {
 		addr = memdesc->hostptr;
 		/* Make sure the offset + size do not overflow the address */
-		if (addr + ((size_t) offset + (size_t) size) < addr)
+		if (offset + size > ULONG_MAX - (unsigned long)addr)
 			return -ERANGE;
 
 		ret = kgsl_do_cache_op(NULL, addr, offset, size, op);
@@ -859,7 +859,7 @@ int kgsl_cache_range_op(struct kgsl_memdesc *memdesc, uint64_t offset,
 			return PTR_ERR(sgt);
 	}
 
-	for_each_sg(sgt->sgl, sg, sgt->nents, i) {
+	for_each_sg(sgt->sgl, sg, sgt->orig_nents, i) {
 		uint64_t sg_offset, sg_left;
 
 		if (offset >= (pos + sg->length)) {

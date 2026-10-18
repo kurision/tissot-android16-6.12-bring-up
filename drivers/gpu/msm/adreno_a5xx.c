@@ -1847,34 +1847,12 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 				upper_32_bits(gpuaddr));
 
 	/*
-	 * Stock gates this on mmu.secured, which stock always has. Here it is
-	 * false only because the port has no gfx3d_secure context bank, yet
-	 * the GPU still needs the zap shader to leave secure mode, so load it
-	 * regardless. A failed load is not fatal: adreno_set_unsecured_mode()
-	 * then falls back to the direct RBBM_SECVID_TRUST_CNTL write, which is
-	 * what every run up to run202 did.
-	 */
-	if (!device->mmu.secured) {
-		if (a5xx_core->zap_name && !adreno_dev->zap_loaded) {
-			ptr = adreno_zap_subsystem_get(&device->pdev->dev,
-					a5xx_core->zap_name);
-			if (IS_ERR_OR_NULL(ptr))
-				dev_err(device->dev,
-					"DIAG zap: not loaded (%ld), using SECVID_TRUST_CNTL\n",
-					PTR_ERR(ptr));
-			else
-				adreno_dev->zap_loaded = 1;
-		}
-		return 0;
-	}
-
-	/*
 	 * Resume call to write the zap shader base address into the
 	 * appropriate register,
 	 * skip if retention is supported for the CPZ register
 	 */
-	if (adreno_dev->zap_loaded && !(ADRENO_FEATURE(adreno_dev,
-		ADRENO_CPZ_RETENTION))) {
+	if (device->mmu.secured && adreno_dev->zap_loaded &&
+		!ADRENO_FEATURE(adreno_dev, ADRENO_CPZ_RETENTION)) {
 		int ret;
 		struct scm_desc desc = {0};
 
@@ -1891,7 +1869,11 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 
 	}
 
-	/* Load the zap shader firmware through PIL if its available */
+	/*
+	 * ZAP is needed even without a secure MMU context bank. Propagate
+	 * load/authentication failures before starting the CP: falling back
+	 * to CPU access to SECVID_TRUST_CNTL can fault on protected parts.
+	 */
 	if (a5xx_core->zap_name && !adreno_dev->zap_loaded) {
 		ptr = adreno_zap_subsystem_get(&device->pdev->dev,
 				a5xx_core->zap_name);

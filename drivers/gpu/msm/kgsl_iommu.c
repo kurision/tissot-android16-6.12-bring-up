@@ -1940,7 +1940,8 @@ kgsl_iommu_map(struct kgsl_pagetable *pt,
 	if (IS_ERR(sgt))
 		return PTR_ERR(sgt);
 
-	ret = _iommu_map_sg_sync_pc(pt, addr, sgt->sgl, sgt->nents, flags);
+	/* IOMMU consumes physical entries, not DMA-coalesced segments. */
+	ret = _iommu_map_sg_sync_pc(pt, addr, sgt->sgl, sgt->orig_nents, flags);
 	if (ret)
 		goto done;
 
@@ -2090,7 +2091,7 @@ static int kgsl_iommu_map_offset(struct kgsl_pagetable *pt,
 				memdesc, physoffset, size, protflags);
 	else
 		ret = _iommu_map_sg_offset_sync_pc(pt, virtaddr + virtoffset,
-				sgt->sgl, sgt->nents,
+				sgt->sgl, sgt->orig_nents,
 				physoffset, size, protflags);
 
 	if (memdesc->pages != NULL)
