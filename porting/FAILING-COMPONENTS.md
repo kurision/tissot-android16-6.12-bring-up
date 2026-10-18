@@ -1,5 +1,13 @@
 # Failing components tracker (tissot 6.12 bringup)
 
+**Fresh post-run234 live audit (2026-10-18):**
+[component inventory and evidence](findings/2026-10-18-live-component-audit.md).
+Eight CPUs are online and active; CPUFreq policies and an active CPUIdle driver
+are absent. Reproduced FastRPC ioctl errors, audio initialization failure, zero
+cameras, Wi-Fi station-start failures, Bluetooth crashes and GPU power-HAL
+SELinux denials. Accelerometer/light data and battery telemetry work. Older
+hardware tables below are historical, not a current all-components verdict.
+
 Living list. Every entry names its evidence. Updated as work lands.
 Last update: 2026-10-18, after run227.
 
