@@ -217,8 +217,8 @@ void kgsl_pool_free_pages(struct page **pages, unsigned int pcount)
 	if (pages == NULL || pcount == 0)
 		return;
 
-	if (WARN(!virt_addr_valid(pages),
-		"Address of pages=%pK is not valid\n", pages))
+	if (WARN(!is_vmalloc_addr(pages) && !virt_addr_valid(pages),
+		 "Address of pages=%pK is not valid\n", pages))
 		return;
 
 	for (i = 0; i < pcount;) {
@@ -227,8 +227,9 @@ void kgsl_pool_free_pages(struct page **pages, unsigned int pcount)
 		 */
 		struct page *p = pages[i];
 
-		if (WARN(!virt_addr_valid(p),
-			"Address of page=%pK is not valid\n", p))
+		/* Page descriptors live in vmemmap, outside the linear mapping. */
+		if (WARN(!p || !pfn_valid(page_to_pfn(p)),
+			 "Address of page=%pK is not valid\n", p))
 			return;
 
 		i += 1 << compound_order(p);

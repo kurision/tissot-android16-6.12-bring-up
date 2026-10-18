@@ -4,9 +4,13 @@
  * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
+#include <linux/iommu.h>
 #include <linux/slab.h>
+#include <linux/vmalloc.h>
 
 #include "adreno.h"
+#include "adreno_pm4types.h"
+#include "a5xx_reg.h"
 #include "adreno_trace.h"
 #include "kgsl_gmu_core.h"
 #include "kgsl_timeline.h"
@@ -1721,6 +1725,164 @@ static inline const char *_kgsl_context_comm(struct kgsl_context *context)
 		pid_nr((_c)->context->proc_priv->pid), ##args)
 
 
+/* CPU samples do not invalidate caches or modify the faulting allocation. */
+static void adreno_fault_dump_target(struct kgsl_device *device,
+		struct kgsl_process_private *process, const char *name,
+		u64 packet, u64 target, u32 data)
+{
+	struct kgsl_mem_entry *entry = kgsl_sharedmem_find(process, target);
+	struct kgsl_memdesc *memdesc;
+	struct scatterlist *sg;
+	phys_addr_t first = 0, next = 0, target_phys = 0;
+	u64 offset, covered = 0;
+	u32 values[2] = { 0 };
+	unsigned int i;
+	bool contiguous = true, found = false;
+	size_t bytes, copied;
+
+	if (!entry) {
+		dev_err(device->dev,
+			"DIAG %s packet=%llx target=%llx data=%08x: no owning allocation\n",
+			name, packet, target, data);
+		return;
+	}
+
+	memdesc = &entry->memdesc;
+	offset = target - memdesc->gpuaddr;
+	/* Compare table identity separately from the software translation below. */
+	{
+		struct kgsl_pagetable *pt = memdesc->pagetable;
+		u64 pt_ttbr = 0, gpu_ttbr = 0;
+
+		if (pt && pt->priv && PT_OP_VALID(pt, get_ttbr0))
+			pt_ttbr = pt->pt_ops->get_ttbr0(pt);
+		if (device->mmu.mmu_ops &&
+				device->mmu.mmu_ops->mmu_get_current_ttbr0)
+			gpu_ttbr = device->mmu.mmu_ops->mmu_get_current_ttbr0(
+				&device->mmu);
+		dev_err(device->dev,
+			"DIAG %s-pt target=%llx pt=%p pt_ttbr0=%016llx gpu_current_ttbr0=%016llx match=%d default_pt=%p\n",
+			name, target, (void *)pt, pt_ttbr, gpu_ttbr,
+			pt_ttbr && pt_ttbr == gpu_ttbr,
+			(void *)device->mmu.defaultpagetable);
+	}
+	/* Software-only snapshots; reclaim may change the mapping between them. */
+	{
+		struct kgsl_pagetable *pt = memdesc->pagetable;
+		phys_addr_t resolved = 0, expected = 0;
+		bool walked = false, backing = false;
+
+		if (!kgsl_memdesc_is_secured(memdesc) && offset < memdesc->size) {
+			if (memdesc->pages) {
+				unsigned long irqflags;
+				u64 index = offset >> PAGE_SHIFT;
+
+				spin_lock_irqsave(&memdesc->lock, irqflags);
+				if (index < memdesc->page_count && memdesc->pages[index]) {
+					expected = page_to_phys(memdesc->pages[index]) +
+						offset_in_page(offset);
+					backing = true;
+				}
+				spin_unlock_irqrestore(&memdesc->lock, irqflags);
+			} else if (memdesc->sgt) {
+				u64 skip = offset;
+
+				for_each_sg(memdesc->sgt->sgl, sg,
+					    memdesc->sgt->orig_nents, i) {
+					if (skip < sg->length) {
+						expected = sg_phys(sg) + skip;
+						backing = true;
+						break;
+					}
+					skip -= sg->length;
+				}
+			}
+
+			if (device->mmu.type == KGSL_MMU_TYPE_IOMMU && pt && pt->priv) {
+				struct kgsl_iommu_pt *iommu_pt = pt->priv;
+
+				if (iommu_pt->domain) {
+					resolved = iommu_iova_to_phys(iommu_pt->domain, target);
+					walked = true;
+				}
+			}
+		}
+		dev_err(device->dev,
+			"DIAG %s-walk target=%llx offset=%llx walked=%d resolved=%pa backing=%d expected=%pa match=%d mapped_flag=%d\n",
+			name, target, offset, walked, &resolved, backing, &expected,
+			walked && resolved && backing && resolved == expected,
+			!!(memdesc->priv & KGSL_MEMDESC_MAPPED));
+	}
+	if (kgsl_memdesc_is_secured(memdesc) || !memdesc->sgt ||
+			!IS_ALIGNED(target, sizeof(u32)) ||
+			offset > memdesc->size || memdesc->size - offset < sizeof(u32)) {
+		dev_err(device->dev,
+			"DIAG %s-cpu-sample-skipped target=%llx entry_gpu=%llx size=%llx flags=%llx priv=%lx secure=%d sgt=%p aligned=%d offset=%llu in_range=%d memtype=%u cpu_map=%d\n",
+			name, target, memdesc->gpuaddr, memdesc->size,
+			memdesc->flags, (unsigned long)memdesc->priv,
+			kgsl_memdesc_is_secured(memdesc), (void *)memdesc->sgt,
+			!!IS_ALIGNED(target, sizeof(u32)), offset,
+			offset <= memdesc->size &&
+			memdesc->size - offset >= sizeof(u32),
+			kgsl_memdesc_get_memtype(memdesc),
+			kgsl_memdesc_use_cpu_map(memdesc));
+		goto out;
+	}
+
+	for_each_sg(memdesc->sgt->sgl, sg, memdesc->sgt->orig_nents, i) {
+		phys_addr_t phys = sg_phys(sg);
+
+		if (!i)
+			first = phys;
+		else if (phys != next)
+			contiguous = false;
+		if (offset >= covered && offset - covered < sg->length) {
+			target_phys = phys + offset - covered;
+			found = true;
+		}
+		next = phys + sg->length;
+		covered += sg->length;
+	}
+
+	bytes = min_t(u64, sizeof(values), memdesc->size - offset);
+	copied = sg_pcopy_to_buffer(memdesc->sgt->sgl,
+			memdesc->sgt->orig_nents, values, bytes, offset);
+	dev_err(device->dev,
+		"DIAG %s packet=%llx target=%llx data=%08x cpu=%08x/%08x copied=%zu/%zu (no cache maintenance)\n",
+		name, packet, target, data, values[0], values[1], copied, bytes);
+	dev_err(device->dev,
+		"DIAG %s-allocation gpu=%llx size=%llx flags=%llx sg=%u/%u first=%pa covered=%llx contiguous=%d target-found=%d target-phys=%pa identity=%d\n",
+		name, memdesc->gpuaddr, memdesc->size, memdesc->flags,
+		memdesc->sgt->nents, memdesc->sgt->orig_nents, &first,
+		covered, contiguous, found, &target_phys,
+		found && target == target_phys);
+	if (!strcmp(name, "uche-trap") && memdesc->hostptr) {
+		u32 *host = memdesc->hostptr + offset;
+		struct page *page = NULL;
+		phys_addr_t backing = 0;
+
+		if (is_vmalloc_addr(host))
+			page = vmalloc_to_page(host);
+		else if (virt_addr_valid(host))
+			page = virt_to_page(host);
+		if (page)
+			backing = page_to_phys(page) + offset_in_page(host);
+		dev_err(device->dev,
+			"DIAG uche-backing dev=%s dma=%llx priv=%lx page-found=%d actual=%pa gpu-match=%d\n",
+			memdesc->dev ? dev_name(memdesc->dev) : "(none)",
+			(u64)memdesc->physaddr, (unsigned long)memdesc->priv,
+			page != NULL, &backing, page && backing == target);
+		/* DMA allocation's CPU mapping, not its cached linear-map alias. */
+		for (i = 0; i + 4 <= min_t(u64, 32, (memdesc->size - offset) / 4); i += 4)
+			dev_err(device->dev,
+				"DIAG uche-cpu +%02x: %08x %08x %08x %08x\n",
+				i * 4, READ_ONCE(host[i]), READ_ONCE(host[i + 1]),
+				READ_ONCE(host[i + 2]), READ_ONCE(host[i + 3]));
+	}
+out:
+	kgsl_mem_entry_put(entry);
+}
+
 /*
  * adreno_fault_dump_ib() - Diagnostic dump of the words around a fault IB
  * @device: KGSL device
@@ -1755,6 +1917,10 @@ static void adreno_fault_dump_ib(struct kgsl_device *device,
 	base = entry->memdesc.gpuaddr;
 	start = max(gpuaddr & ~15ULL, base + 64) - 64;
 	end = min(gpuaddr + 64, base + entry->memdesc.size);
+	if (!strcmp(name, "ib2")) {
+		start = gpuaddr;
+		end = min(gpuaddr + 512, base + entry->memdesc.size);
+	}
 
 	src = kgsl_gpuaddr_to_vaddr(&entry->memdesc, start);
 	if (!src) {
@@ -1763,6 +1929,21 @@ static void adreno_fault_dump_ib(struct kgsl_device *device,
 		kgsl_mem_entry_put(entry);
 		return;
 	}
+	/* Bounded candidate scan, not an assertion that this packet executed. */
+	if (adreno_is_a5xx(ADRENO_DEVICE(device))) {
+		u64 candidate;
+
+		for (candidate = start; candidate + 16 <= end; candidate += 4) {
+			u32 *words = src + ((candidate - start) >> 2);
+
+			if (READ_ONCE(words[0]) == cp_type7_packet(CP_MEM_WRITE, 3))
+				adreno_fault_dump_target(device, process, "mem-write", candidate,
+					(u64)READ_ONCE(words[1]) |
+					((u64)READ_ONCE(words[2]) << 32),
+					READ_ONCE(words[3]));
+		}
+	}
+
 
 	for (addr = start; addr + 16 <= end; addr += 16, src += 4)
 		dev_err(device->dev, "DIAG %s %llx%s: %08x %08x %08x %08x\n",
@@ -1866,12 +2047,28 @@ static void adreno_fault_header(struct kgsl_device *device,
 			pr_fault(device, drawobj,
 				"%s fault rb %d rb sw r/w %4.4x/%4.4x\n",
 				type, rb->id, rptr, rb->wptr);
+		if (adreno_is_a5xx(adreno_dev)) {
+			static atomic_t traps = ATOMIC_INIT(0);
+			unsigned int lo, hi;
+
+			if (atomic_inc_return(&traps) <= 8) {
+				kgsl_regread(device, A5XX_UCHE_TRAP_LOG_LO, &lo);
+				kgsl_regread(device, A5XX_UCHE_TRAP_LOG_HI, &hi);
+				/* No packet/data: sample the UCHE-reported address. */
+				adreno_fault_dump_target(device,
+					drawobj->context->proc_priv, "uche-trap",
+					0, ((u64)hi << 32) | lo, 0);
+			}
+		}
+		if (adreno_is_a5xx(adreno_dev))
+			a5xx_dump_smmu_state(adreno_dev);
+
 
 		adreno_fault_dump_ib(device, drawobj->context->proc_priv,
 				     "ib1", adreno_fault_ib1_pos(device, cmdobj,
 								 ib1base, ib1sz));
 		adreno_fault_dump_ib(device, drawobj->context->proc_priv,
-				     "ib2", ib2sz ? ib2base : 0);
+				     "ib2", ib2base);
 	} else {
 		dev_err(device->dev,
 			"RB[%d] : %s fault status %8.8X rb %4.4x/%4.4x ib1 %16.16llX/%4.4x ib2 %16.16llX/%4.4x\n",

@@ -697,28 +697,38 @@
 		reg = <0x01c40000 0x10000>;
 		clocks = <&gcc GCC_OXILI_AHB_CLK>, <&gcc GCC_BIMC_GFX_CLK>;
 		/*
-		 * DO NOT "fix" these to the gpu node's clock-names.
+		 * RESOLVED AGAINST STOCK (run174).
 		 *
-		 * These names are read from THIS node but resolved by
-		 * devm_clk_get() against the *gpu* device, because the
-		 * kgsl-iommu node matches no 6.12 OF bus and so never gets a
-		 * platform device of its own. They therefore do not resolve
-		 * ("dt: Couldn't get clock: gpu_ahb_clk"), _kgsl_iommu_probe
-		 * returns -ENODEV, and kgsl runs NOMMU (see &gpu's dropped
-		 * iommus above for why the bank must then stay untranslated).
+		 * Stock CAF attaches gfx3d_user to a real SMMU: its dmesg shows
+		 *   iommu: Adding device 1c40000.qcom,kgsl-iommu:gfx3d_user to
+		 *   group 2
+		 *   arm-smmu 1c40000.arm,smmu-kgsl: AARCH64 is supported for
+		 *   1c40000.qcom,kgsl-iommu:gfx3d_user
+		 * and /proc/iomem shows 01c40000-01c4ffff : arm,smmu-kgsl@1c40000.
+		 * Our port measured `DIAG fault-smmu: sctlr=0 translating=0`,
+		 * i.e. NO translation at draw time. Stock also prints
+		 * "Couldn't get clock: gpu_ahb_clk" and then RETRIES until the
+		 * device is attached, so those lines are not evidence of failure.
 		 *
-		 * That early return is load-bearing. Every boot that let the
-		 * probe get past it died with no recoverable log: run13, run15,
-		 * run34, run36 (~60 s reset) and run129 (splash hang under
-		 * panic=0), the last one with &gpu's iommus already removed,
-		 * so the double bank owner was not the cause. run35 and run128,
-		 * with these names, reach userspace. The killer lies somewhere
-		 * in child population, of_dma_configure(), kgsl_iommu_init()
-		 * (global pagetable alloc/attach, raw CB reads) or the SMMU
-		 * global-space writes in kgsl_iommu_start(); which one needs
-		 * early-visible evidence (UART earlycon), not a guess.
+		 * GCC_OXILI_AHB_CLK and GCC_BIMC_GFX_CLK are this GPU device's
+		 * iface_clk and mem_iface_clk. Naming them so lets _kgsl_iommu_probe
+		 * proceed and match stock instead of forcing NOMMU.
+		 *
+		 * Previously this early return was load-bearing because every boot
+		 * that let the probe get past it died with no recoverable log
+		 * (run13, run15, run34, run36, run129). run129 hung at the splash
+		 * because `panic=0` turns a panic into a hang, which is why no
+		 * evidence survived. Those attempts ran with `panic=0`; they were
+		 * never retried with a rebooting panic, so "fatal, untraceable"
+		 * was an artefact of the cmdline, not a property of the SMMU path.
+		 * This boot therefore DROPS panic=0 (see package-diag-boot
+		 * --drop-cmdline) so a fault reboots into a recoverable state.
+		 *
+		 * &gpu's own `iommus` stays deleted: with both KGSL and qcom_iommu
+		 * driving bank 0, the physical addresses NOMMU assumes became
+		 * IOVAs (run128: fsr=0x200 on every CP fetch).
 		 */
-		clock-names = "gpu_ahb_clk", "gcc_bimc_gfx_clk";
+		clock-names = "iface_clk", "mem_iface_clk";
 		qcom,secure_align_mask = <0xfff>;
 		qcom,retention;
 		qcom,global_pt;

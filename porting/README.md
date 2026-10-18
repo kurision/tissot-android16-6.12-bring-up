@@ -1,10 +1,28 @@
 # tissot / Mi A1 → android-mainline
 
+## Current ACK 6.12 port (2026-10-17)
+
+- [BUIL_TISSOT.md](../BUIL_TISSOT.md): build, package, RAM boot and capture instructions.
+- [HANDOFF.md](HANDOFF.md): current run187 verdict, artifact provenance and next investigation.
+- [FAILING-COMPONENTS.md](FAILING-COMPONENTS.md): current failures and historical evidence.
+- [TRACKER-kgsl-port.md](TRACKER-kgsl-port.md) and
+  [TRACKER-tissot-hardware.md](TRACKER-tissot-hardware.md): GPU work and hardware coverage.
+- [REFERENCE-boot-testing.md](REFERENCE-boot-testing.md): operational evidence reference;
+  read before a boot cycle.
+
+Run187 completes Android boot but visible rendering remains unresolved: the user
+observed a dimly backlit panel and persistent capture records UCHE OOB faults.
+Evidence is under `artifacts/snapshot60/`, including `run187-summary.json`.
+The reconnaissance and phase plan below are the original mainline baseline;
+they do not describe the current ACK build or device status.
+
+## Historical reconnaissance baseline
+
 Porting workspace for the Xiaomi Mi A1 (`tissot`, MSM8953 / Snapdragon 625) onto a
 mainline kernel. Everything here was derived from one boot of the device plus a
 line-by-line comparison against android-mainline's tree.
 
-## Read this first
+## Original mainline starting point
 
 `msm8953-mainline/linux` already ships a **`6.12/main` branch with tissot
 support** — panel, sound card, touch, sensors, LED/haptics/WLED nodes, UFS/SD,
@@ -13,7 +31,7 @@ panel. See `findings/05-prior-art.md`. The phase plan assumes android-mainline a
 the target because that is what was asked; if `6.12/main` is good enough,
 phases 2-5 shrink dramatically.
 
-## Status
+## Original phase status
 
 | Phase | Scope | State |
 |---|---|---|

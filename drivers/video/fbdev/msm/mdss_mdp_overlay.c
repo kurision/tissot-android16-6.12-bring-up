@@ -2625,10 +2625,16 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 		ret = mdss_mdp_display_commit(mdp5_data->ctl, NULL,
 			&commit_cb);
 		ATRACE_END("display_commit");
-		/* DEBUG run123: first two kernel flushes only */
-		if (diag123_kickoffs < 2) {
-			diag123_kickoffs++;
+		/*
+		 * DEBUG run123/run189: the old probe stopped after two commits,
+		 * so "only N lines" said nothing about whether the display is
+		 * still being programmed. Report the first two, then every
+		 * 600th (about ten seconds at 60 Hz) with the running total.
+		 */
+		diag123_kickoffs++;
+		if (diag123_kickoffs <= 2 || !(diag123_kickoffs % 600)) {
 			mdss_mdp_diag_pipes("kickoff post-commit");
+			pr_info("DIAG123 kickoff count=%u\n", diag123_kickoffs);
 		}
 	}
 	__vsync_set_vsync_handler(mfd);

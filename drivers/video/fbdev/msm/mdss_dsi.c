@@ -387,7 +387,15 @@ int mdss_dsi_panel_power_off(struct mdss_panel_data *pdata)
 
 
     if (xiaomi_msm8953_mach_get() == XIAOMI_MSM8953_MACH_TISSOT) {
-        if ((panel_suspend_power_flag != 3) && acc_vreg) {
+        /*
+         * run196: the else-branch below disabled the panel rails whenever
+         * acc_vreg was zero and then decremented it to -1, i.e. it disabled
+         * rails that had never been enabled. That is what produced
+         * "unbalanced disables for l6" from _regulator_disable(). The
+         * counter is the whole record of whether this driver holds the
+         * rails, so it is the only thing allowed to decide.
+         */
+        if (acc_vreg > 0) {
             ret = msm_mdss_enable_vreg(
                 ctrl_pdata->panel_power_data.vreg_config,
                 ctrl_pdata->panel_power_data.num_vreg, 0);
@@ -395,16 +403,6 @@ int mdss_dsi_panel_power_off(struct mdss_panel_data *pdata)
             if (ret)
                 pr_err("%s: failed to disable vregs for %s\n",
                     __func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-        } else {
-            if (!acc_vreg) {
-                ret = msm_mdss_enable_vreg(
-                        ctrl_pdata->panel_power_data.vreg_config,
-                        ctrl_pdata->panel_power_data.num_vreg, 0);
-                acc_vreg--;
-                if (ret)
-                    pr_err("%s: failed to disable vregs for %s\n",
-                         __func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-            }
         }
     } else {
         ret = msm_mdss_enable_vreg(
@@ -441,9 +439,21 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
                 ctrl_pdata->panel_power_data.num_vreg, 1);
             acc_vreg++;
             if (ret) {
-                pr_err("%s: failed to enable vregs for %s\n",
-                    __func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-                return ret;
+                /*
+                 * run194: the vdd rail here is an RPM-served pm8953 LDO and
+                 * its enable request never gets an ack, so qcom_rpm_smd_write
+                 * returns -ETIMEDOUT. Aborting here cost the whole display:
+                 * mdss_dsi_on() returned -ETIMEDOUT before it touched the PHY
+                 * or the clock source, mdss_mdp_video_display() logged "intf
+                 * #2 link ready error (-110)", mdss_fb_open() then failed and
+                 * the panel stayed dark. The bootloader has already brought
+                 * the panel rails up, so a failed re-assert is not evidence
+                 * that the rail is off. Report it and carry on with pinctrl
+                 * and the panel reset.
+                 */
+                pr_err("%s: %s enable rc=%d, continuing anyway\n",
+                    __func__, __mdss_dsi_pm_name(DSI_PANEL_PM), ret);
+                ret = 0;
             }
         }
     } else {
@@ -1532,9 +1542,12 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 		 * sent to panel
 		 */
 		mdss_dsi_restore_intr_mask(ctrl_pdata);
-		pr_debug("%s: panel already on\n", __func__);
+		pr_info("DIAG dsi_on: ctrl=%d panel already on (cont splash), PHY not re-initialised\n",
+			ctrl_pdata->ndx);
 		goto end;
 	}
+	pr_info("DIAG dsi_on: ctrl=%d cold bring-up, cur_power_state=%d\n",
+		ctrl_pdata->ndx, cur_power_state);
 
 	ret = mdss_dsi_panel_power_ctrl(pdata, MDSS_PANEL_POWER_ON);
 	if (ret) {
@@ -1600,6 +1613,9 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 				  MDSS_DSI_ALL_CLKS, MDSS_DSI_CLK_OFF);
 
 end:
+	pr_info("DIAG dsi_on: done ctrl=%d rc=%d state=0x%x pwr=%d clk_rate=%llu\n",
+		ctrl_pdata->ndx, ret, ctrl_pdata->ctrl_state,
+		pinfo->panel_power_state, pinfo->clk_rate);
 	pr_debug("%s-:\n", __func__);
 	return ret;
 }

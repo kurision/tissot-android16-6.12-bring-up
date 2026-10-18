@@ -52,6 +52,7 @@ struct qcom_iommu_dev {
 	void __iomem		*local_base;
 	u32			 sec_id;
 	u8			 max_asid;
+	bool			 use_aarch64_pt;
 	struct qcom_iommu_ctx	*ctxs[];   /* indexed by asid */
 };
 
@@ -157,13 +158,21 @@ static void qcom_iommu_tlb_inv_range_nosync(unsigned long iova, size_t size,
 	for (i = 0; i < fwspec->num_ids; i++) {
 		struct qcom_iommu_ctx *ctx = to_ctx(qcom_domain, fwspec->ids[i]);
 		size_t s = size;
+		u64 addr;
 
-		iova = (iova >> 12) << 12;
-		iova |= ctx->asid;
-		do {
-			iommu_writel(ctx, reg, iova);
-			iova += granule;
-		} while (s -= granule);
+		if (qcom_domain->iommu->use_aarch64_pt) {
+			addr = (iova >> 12) | ((u64)ctx->asid << 48);
+			do {
+				iommu_writeq(ctx, reg, addr);
+				addr += granule >> 12;
+			} while (s -= granule);
+		} else {
+			addr = ((iova >> 12) << 12) | ctx->asid;
+			do {
+				iommu_writel(ctx, reg, addr);
+				addr += granule;
+			} while (s -= granule);
+		}
 	}
 }
 
@@ -240,6 +249,7 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
 	struct io_pgtable_ops *pgtbl_ops;
 	struct io_pgtable_cfg pgtbl_cfg;
+	bool aarch64 = qcom_iommu->use_aarch64_pt;
 	int i, ret = 0;
 	u32 reg;
 
@@ -247,9 +257,10 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 	if (qcom_domain->iommu)
 		goto out_unlock;
 
+	/* CAF caps GPU input addresses at 39 bits for three-level 4 KiB tables. */
 	pgtbl_cfg = (struct io_pgtable_cfg) {
 		.pgsize_bitmap	= qcom_iommu_ops.pgsize_bitmap,
-		.ias		= 32,
+		.ias		= aarch64 ? 39 : 32,
 		.oas		= 40,
 		.tlb		= &qcom_flush_ops,
 		.iommu_dev	= qcom_iommu->dev,
@@ -258,7 +269,8 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 	qcom_domain->iommu = qcom_iommu;
 	qcom_domain->fwspec = fwspec;
 
-	pgtbl_ops = alloc_io_pgtable_ops(ARM_32_LPAE_S1, &pgtbl_cfg, qcom_domain);
+	pgtbl_ops = alloc_io_pgtable_ops(aarch64 ? ARM_64_LPAE_S1 : ARM_32_LPAE_S1,
+					 &pgtbl_cfg, qcom_domain);
 	if (!pgtbl_ops) {
 		dev_err(qcom_iommu->dev, "failed to allocate pagetable ops\n");
 		ret = -ENOMEM;
@@ -277,9 +289,16 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 			ret = qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, ctx->asid);
 			if (ret) {
 				dev_err(qcom_iommu->dev, "secure init failed: %d\n", ret);
-				goto out_clear_iommu;
+				goto out_free_pgtable;
 			}
 			ctx->secure_init = true;
+		}
+		{
+			u32 pre = iommu_readl(ctx, ARM_SMMU_CB_SCTLR);
+
+			dev_info(qcom_iommu->dev,
+				 "DIAG cb-owner: asid=%d sctlr_after_secure_cfg=%08x secure_ctx=%d\n",
+				 ctx->asid, pre, ctx->secured_ctx);
 		}
 
 		/* Secured QSMMU-500/QSMMU-v2 contexts cannot be programmed */
@@ -290,6 +309,16 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 
 		/* Disable context bank before programming */
 		iommu_writel(ctx, ARM_SMMU_CB_SCTLR, 0);
+
+		if (aarch64) {
+			ret = qcom_scm_iommu_set_pt_format(qcom_iommu->sec_id,
+							   ctx->asid, 1);
+			if (ret) {
+				dev_err(ctx->dev, "cannot set AArch64 page-table format: %d\n",
+					ret);
+				goto out_free_pgtable;
+			}
+		}
 
 		/* Clear context bank fault address fault status registers */
 		iommu_writel(ctx, ARM_SMMU_CB_FAR, 0);
@@ -303,9 +332,11 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 
 		/* TCR */
 		iommu_writel(ctx, ARM_SMMU_CB_TCR2,
-				arm_smmu_lpae_tcr2(&pgtbl_cfg));
+			     arm_smmu_lpae_tcr2(&pgtbl_cfg) |
+			     (aarch64 ? ARM_SMMU_TCR2_AS : 0));
 		iommu_writel(ctx, ARM_SMMU_CB_TCR,
-			     arm_smmu_lpae_tcr(&pgtbl_cfg) | ARM_SMMU_TCR_EAE);
+			     arm_smmu_lpae_tcr(&pgtbl_cfg) |
+			     (aarch64 ? 0 : ARM_SMMU_TCR_EAE));
 
 		/* MAIRs (stage-1 only) */
 		iommu_writel(ctx, ARM_SMMU_CB_S1_MAIR0,
@@ -326,10 +357,12 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 
 		/* DIAG (run127): what we just programmed, read back. */
 		dev_info(qcom_iommu->dev,
-			 "DIAG init_domain: master=%s cb=%d ttbr0=%016llx sctlr=%08x\n",
+			 "DIAG init_domain: master=%s cb=%d ttbr0=%016llx sctlr=%08x ias=%u aarch64=%u tcr=%08x tcr2=%08x\n",
 			 dev_name(dev), ctx->asid,
 			 (unsigned long long)iommu_readq(ctx, ARM_SMMU_CB_TTBR0),
-			 iommu_readl(ctx, ARM_SMMU_CB_SCTLR));
+			 iommu_readl(ctx, ARM_SMMU_CB_SCTLR), pgtbl_cfg.ias, aarch64,
+			 iommu_readl(ctx, ARM_SMMU_CB_TCR),
+			 iommu_readl(ctx, ARM_SMMU_CB_TCR2));
 
 		ctx->domain = domain;
 	}
@@ -341,6 +374,15 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 
 	return 0;
 
+out_free_pgtable:
+	while (i--) {
+		struct qcom_iommu_ctx *ctx = to_ctx(qcom_domain, fwspec->ids[i]);
+
+		if (!ctx->secured_ctx)
+			iommu_writel(ctx, ARM_SMMU_CB_SCTLR, 0);
+		ctx->domain = NULL;
+	}
+	free_io_pgtable_ops(pgtbl_ops);
 out_clear_iommu:
 	qcom_domain->iommu = NULL;
 out_unlock:
@@ -886,6 +928,26 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 		dev_err(dev, "missing qcom,iommu-secure-id property\n");
 		return -ENODEV;
 	}
+
+	/*
+	 * run199: this was derived from the compatible strings alone, which
+	 * made the GPU bank ARM_64_LPAE_S1 with .ias=39. Stock CAF sets
+	 * qcom,use-3-lvl-tables on this very SMMU
+	 * (arch/arm64/boot/dts/vendor/qcom/msm-arm-smmu-8953.dtsi:29), which
+	 * selects ARM_32_LPAE_S1 - 32-bit stage-1 descriptors, the format the
+	 * A506 walk was validated against. AArch64 descriptors are a different
+	 * walk, and a wrong walk produces exactly the signature this port has:
+	 * the driver, the SMMU and an iommu_iova_to_phys() software walk all
+	 * agree that a buffer is mapped and resolves to the right page, while
+	 * the UCHE still reports it out of bounds
+	 * ("UCHE: Out of bounds access addr=0000000000139000"). That is the
+	 * hardware disagreeing with software about the same tables.
+	 *
+	 * Match stock. KGSL_MMU_64BIT is withheld in adreno.c, so KGSL only
+	 * uses 32-bit VAs (global base 0xf8000000) and they all fit a 4 GiB
+	 * 32-bit aperture, so nothing needs the wider format.
+	 */
+	qcom_iommu->use_aarch64_pt = false;
 
 	if (qcom_iommu_has_secure_context(qcom_iommu)) {
 		ret = qcom_iommu_sec_ptbl_init(dev);

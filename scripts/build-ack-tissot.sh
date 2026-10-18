@@ -47,6 +47,10 @@ make_args=(
     RUSTC="${RUSTC:-rustc}"
     HOSTRUSTC="${HOSTRUSTC:-${RUSTC:-rustc}}"
     BINDGEN="${BINDGEN:-bindgen}"
+    # scripts/Makefile.autofdo assigns RUSTFLAGS_AUTOFDO_CLANG with :=, so the
+    # environment cannot override it and rustc 1.99 rejects the old
+    # -Zdebug-info-for-profiling spelling. Pass it as a make argument.
+    ${RUSTFLAGS_AUTOFDO_CLANG+RUSTFLAGS_AUTOFDO_CLANG="$RUSTFLAGS_AUTOFDO_CLANG"}
 )
 
 # A compiler alone is not enough: missing bindgen, libclang or rust-src silently

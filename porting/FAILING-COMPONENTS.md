@@ -1,9 +1,79 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-16, after run158 (GPU start fixed by soft reset `4aafe26dc`; boot completes at ~104 s without watchdog; draws still hang and the screen is black).
+Last update: 2026-10-17, after run198. The display bring-up defect is found and
+fixed; the screen is still black because the GPU produces no pixels. The UCHE
+fault survives a correct software walk and a correct hardware address mode.
 
-## Current evidence — snapshot60 run158 (boot completes; GPU starts; display black)
+## Current evidence — snapshot60 run198 (2026-10-17)
+
+Full analysis: `artifacts/snapshot60/run198-live/gpu-analysis.md` (GPU) and
+`artifacts/snapshot60/run196-live/display-analysis.md` (display, includes the
+framebuffer decode).
+
+| Component | Evidence | Current status / next action |
+|---|---|---|
+| Display bring-up | run194 showed `mdss_dsi_panel_power_on: failed to enable vregs for PANEL_PM`, `mdss_dsi_on:Panel power on failed. rc=-110`, `mdss_mdp_video_display: intf #2 link ready error (-110)`, `mdss_fb_open: can't turn on fb0! rc=-110`. run196 with the failure made non-fatal: `DIAG dsi_on: done ctrl=0 rc=0 state=0x4 pwr=1 clk_rate=802589760`, and **0** `turn on fb0` / `link ready error` in the whole log | **FIXED.** CAF aborts `mdss_dsi_on()` when the RPM-served panel `vdd` rail fails to enable; the bootloader has already supplied that rail, so the abort is wrong. Do not re-open: the video bring-up path is byte-identical to CAF 4.19 and the byte clock 802,589,760 is exactly `1148*1942*60*24/4`. |
+| Panel regulator refcount | run196 `WARNING ... unbalanced disables for l6` from `_regulator_disable`: the tissot power-off branch disabled the rails when `acc_vreg == 0` and decremented to -1 | **Fixed in run197** (`acc_vreg > 0` is now the only condition), untested in isolation — run197 shipped the fix together with the GPU change. |
+| Visible rendering / GPU | run198: `UCHE: Out of bounds access addr=0000000000139000`, `addr_mode=0`, `cp_status=80423c68`, first fault at t=41.87 s on `surfaceflinger[716]` — the first GL context ever to submit. 937 `GPU hang detected`, 593 `gpu fault ctx`, 2 `gpu fault threshold exceeded` in ~700 s | **OPEN.** A software walk proves the buffer maps and translates correctly. One real port-vs-stock divergence was found and fixed (below) and ruled out as the cause. |
+| GPU hardware address mode | `adreno_support_64bit()` is gated on `BITS_PER_LONG==64`; stock CAF 4.19 is 32-bit so the A506 never enters 64-bit mode, this arm64 port did while `KGSL_MMU_64BIT` was withheld | **Divergence found and FIXED in run198** (all three uses gated on `MMU_FEATURE(KGSL_MMU_64BIT)`; `addr_mode` now reads 0, and `KGSL_PROP_DEVICE_BITNESS` no longer advertises 48 over a 32-bit pool). **Ruled out as the fault cause**: trap address, `cp_status` and fault counts are unchanged. |
+| Framebuffer content | `screencap` decoded by hand on the live port boot: 1080x1920, **42,625 sampled pixels, one colour, `#000000`**, six captures byte-identical. `screenrecord` (a different path, via VirtualDisplay) gives 6 byte-identical frames and 1x1 RGB `(0,0,4)` | The panel is being driven with a black frame, so the display link being fixed did not and could not change what is visible. This also **corrects** the handoff's claim that `screencap` returns a constant image regardless of display state — it is constant while the content is. |
+| GPU clock management | `DIAG bringup` `gfx_rate` reads 650 MHz on most bring-ups, ~320 MHz on some, and **~100 MHz** (the floor) at least once. `libperfmgr: Failed to write to node: /sys/class/kgsl/kgsl-3d0/max_pwrlevel ... fd: -1` | Open but **not established as the cause**: a low clock should mean slow, not wrong. `fd: -1` means the perf HAL cannot open the nodes at all. |
+
+## Historical evidence — snapshot60 run188 (2026-10-17)
+
+[Build and capture instructions](../BUIL_TISSOT.md) ·
+[current handoff](HANDOFF.md) · [GPU investigation](TRACKER-kgsl-port.md).
+Evidence below is under `artifacts/snapshot60/`; older sections are historical
+and must not override this status.
+
+| Component | Evidence | Current status / next action |
+|---|---|---|
+| Android boot completion | `run188-live/poll.jsonl:30`: both completion properties first sampled at device uptime 101.93 s; `final-state.log`: still set at 412.29 s, SF/system_server PIDs 711/1122 unchanged | **Working in run188**, reproducing run187. Keep identity and uptime with every completion sample. |
+| Visible display / boot animation | **No physical panel observation was collected for run188** | **Open, and unverified for this run.** Do not carry run187's dimly backlit panel forward as run188 evidence. Ask the observer before the next recovery reboot. |
+| GPU rendering | `run188-logdump.log:3669` UCHE OOB `addr=0x139000`; `:3690` `uche-trap-walk … walked=1 resolved=0x330ad000 backing=1 expected=0x330ad000 match=1`; all 13 walk lines identical; `:3696` `sctlr=00001167 translating=1 fsr=00000400 far=0`; 436 `GPU hang detected`, 543 UCHE records; thresholds exceeded at `:4503` (surfaceflinger) and `:11417` (nexuslauncher) | **Open.** "Buffer not mapped" and "walk resolves to the wrong physical page" are **ruled out** by the software walk; the entry is in the GPU's current page table (`:3687`) and the MMU reports no translation fault. Still **unproven** what the MMU actually fetched (leaf PTE attributes, map/unmap ordering) and why the UCHE flags a legal, correctly mapped address at offset 0. |
+| GPU SMMU | `run188-logdump.log:3696`: translating=1, `fsr=0x400` = FORMAT=2 with no active fault bits, `far=0`; IAS=39/AArch64 from run187 `:442,454` | Translation path **boots** and does not report a fault; the trap is internal to the UCHE. KGSL's 32-bit allocation layout is unchanged. Not a rendering fix. |
+| CPU scheduling / frequency | `run188-cpu-note.json`: 8/8 online, steal 0, 4016 jiffies in a 5 s window vs ~4000 expected, 62.2 % busy; **no `cpufreq` sysfs at all** (`CONFIG_CPUFREQ_DT` unset, no `littledcvs`, cpu nodes carry no `clocks`); stock scales 1.40–2.78 GHz (`run188-stock-cpufreq.log`) | Scheduling **healthy**. Frequency **unmanaged and unreadable on the port** — intended OPP is **unverified**; jiffie rates say nothing about the clock. Stock's 2.784 GHz ceiling is itself a vendor OPP-table artifact. |
+| Ashmem / run186 reset | Carried: run187's config restore holds; `/dev/ashmem` present in every run188 live poll | Remains **fixed**. Run188 reset was host-requested for recovery (`run188-recovery.log:36`), not spontaneous. |
+| KGSL page freeing | Unchanged since run187; 0 invalid-page-free warnings in run188 | **Patched and exercised.** No claim that this fixes UCHE. |
+| Other subsystems | Not an end-to-end audio/WLAN/camera/sensor validation; `run188-live/logcat-stream.log` is 32.7 MB and only its tail dump was read | Carry historical issues below. Running services are not a functional test. |
+
+Run188 image SHA-256:
+`f690ade9d7b8e7923d72c8b5e31b7bc7f0632847069297ba76e2aa07ac0e6fd8`.
+Summary: `run188-summary.json`. Logdump cleared only after the partition was
+verified byte-identical to the preserved run187 copy; 18,300,386 B text prefix,
+4 CRC-valid slots, sha256 `63a3243576a1440a46b9e18f050ee25954321d7d8b927615ef73027ff5c7dfa7`.
+The phone is back on rooted stock 4.19. Nothing flashed.
+
+### Previous current section — snapshot60 run187
+
+| Component | Evidence | Current status / next action |
+|---|---|---|
+| Android boot completion | `run187-live/poll.jsonl:27`: both completion properties set at 103.73 s; `final-state.log`: still set at 479.70 s; SF/system_server PIDs 706/1126 unchanged | **Working in run187**, corroborating earlier completed boots. Keep identity and uptime with every completion sample. |
+| Visible display / boot animation | User: splash for about 10 s, then dimly backlit screen; `run187-live/panel-observation.json`; display state ON, Awake in `display-state.log` | **Open.** No visible animation or Android UI confirmed. Display power/backlight state does not prove scanout or exclude display-pipeline defects. |
+| GPU rendering | `run187-logdump.log:3673`: UCHE OOB at 42.150316 s, target 0x139000; 607 UCHE and 316 fault-context records; 0 CP-init failures observed | **Open.** Startup and boot completion do not prove rendering. Inspect actual page-table entries/attributes and GPU-visible contents; root cause unverified. |
+| GPU SMMU | `run187-logdump.log:442,454,3700`: IAS=39/AArch64, translating=1, FSR=0x400 (FORMAT=2; no active fault bits in sampled values); MDSS stays IAS=32/AArch32 (:469) | Corrected format path **boots**, but UCHE still faults. KGSL's allocation layout remains 32-bit deliberately; this is not a rendering fix. |
+| Ashmem / run186 reset | Five system_server attempts failed to create ashmem in run186; ACKRESET1 at 0x3f30000 says zygote-fatal at 79.857 s. Run187 embedded config restores Rust/ashmem; `run187-logdump.log:280`; `/dev/ashmem` in live polls | Run186 blocker **removed in run187**. Pin tools and check the shipped config. Final run187 reset was host-requested for evidence recovery, not spontaneous. |
+| KGSL page freeing | `kgsl_pool.c` validated vmemmap descriptors with linear-only virt_addr_valid; warnings at `run180-logdump.log:10126`, `run184-logdump.log:10821`. Corrected to PFN validation and accepts vmalloc page arrays; host regression checks pass | **Patched and exercised.** 0 invalid-page-free warnings observed in run187. No claim that this fixes UCHE or proves all memory/reclaim behavior. |
+| Other subsystems | This run was not an end-to-end audio/WLAN/camera/sensor validation; native fatal signals remain in logcat | Carry historical issues below. Running services are not a functional test; do not mark these components fixed. |
+
+Run187 image SHA-256:
+`7cc2d6e385590f97f12baeac4db74d50e185795b5ddadb65374d325188bf4188`.
+Summary: `run187-summary.json`. Raw 64 MiB logdump device-hash verified;
+21,200,714 B text prefix, strictly increasing sequences, all 3335 USB records
+matched. The phone is back on rooted stock 4.19 after the host's ordinary reboot.
+Nothing flashed or cleared.
+
+Earlier claims that IAS=32 means two levels, IAS=40 means three, SCTLR CFRE
+did not stick, or run184's page wait proves ownership of a GPU buffer are
+withdrawn; see the handoff corrections. Visible rendering remains the priority.
+
+## Historical evidence and component inventories
+
+The dated observations below remain useful history, not a fresh validation of
+every subsystem. Later runs supersede earlier startup and charging-HAL blockers.
+
+## Historical evidence — snapshot60 run158 (boot completes; GPU starts; display black)
 
 - **Boot**: `sys.boot_completed=1` at ~104 s on the first SystemServer, no
   watchdog kill, no new `/data/anr` files. bootanim played and `stopped`.
@@ -22,7 +92,7 @@ Last update: 2026-10-16, after run158 (GPU start fixed by soft reset `4aafe26dc`
   `screen_toggled: 0` at 10:25:11 also shows the display was turned off
   shortly after boot.
 
-## Current evidence — snapshot60 run153/run154 (boot completes; GPU never starts)
+## Historical evidence — snapshot60 run153/run154 (boot completes; GPU never starts)
 
 Last confirmed-good image: **run154** (kernel-only delta over run150). Two
 corrections that override older sections below:
@@ -167,7 +237,7 @@ Still open, in priority order:
 | mm-pp-dpps backlight | 135 `avc` denials on `name="brightness"` from `mm-pp-daemon` | Same genfscon mechanism should fix it; add to `porting/policy/` when convenient. |
 | Display helper / camera / vibrator / sensors | unchanged from run130 | Revisit after the boot-completion blocker. |
 
-## Current evidence — snapshot60 run137/run139 (both QPNP drivers bound)
+## Historical evidence — snapshot60 run137/run139 (both QPNP drivers bound)
 
 The VADC reference-channel gap named in run136 is fixed; the charger now
 probes and the port exposes the full donor supply set.
@@ -208,7 +278,7 @@ charging is plausible. **Plausible is not measured**, and no live
 `status`, `current_now`, `charge_counter` or `voltage_now` has been read on
 this port.
 
-## Current evidence — snapshot60 run136 (first boot with both new initcalls enabled)
+## Historical evidence — snapshot60 run136 (first boot with both new initcalls enabled)
 
 Run136 reached sustained ADB on `6.12.93-4k-ga54b131a885c-dirty` for the
 whole 150 s poll (`run136-adb-timeline.log:12-37`), init starting services by
@@ -241,7 +311,7 @@ the untouched run130 ramdisk), `run136-build.log`, `run136-adb-timeline.log`,
 `run136-usb.log`, `run136-host-logcat.log`. `boot-run130.img` verified
 unchanged at `30bacf46ecf72dd6ca71de3f83601b7e1e71f8173b59c59326af2eb5f4d1b7f1`.
 
-## Current evidence — snapshot60 run130
+## Historical evidence — snapshot60 run130
 
 Run130 reached sustained ADB on `6.12.93-4k-ga54b131a885c`, still responsive
 at 495.89 s uptime, with a backlit black screen and no `sys.boot_completed`.
@@ -747,7 +817,7 @@ but on in early-return run105; that selects different handoff paths
 - PARKED — needs driver rewrite/port; see `BACKLOG-driver-rewrites.md`.
 - WATCH — flaky/unexplained, monitoring across boots.
 - CLOSED — not a bug / wontfix, with reason.
-## In-tree (kernel) components
+## Historical inventory — in-tree (kernel) components (run130–139)
 
 | Component | Symptom (evidence) | Status | Next action |
 |---|---|---|---|
@@ -759,7 +829,7 @@ but on in early-return run105; that selects different handoff paths
 | QSEE listener registration | SMC `0x32000206` `ret=-5` ×8/boot; 8 siblings succeed same path | CLOSED | TZ refuses those IDs; tolerated; no kernel fix applies |
 | `mdp5 INTF1_UNDER_RUN` | Single `errors: 04000000` at first modeset, panel healthy after | CLOSED | Benign bringup transient |
 | Coldboot time | 34.3 / 11.1 / 13.7 / 13.7 / 12.6 / 16.4 s vs stock 2.8 s (s50–s56) | WATCH | ~11–18 s band; s50 34 s the outlier. Bisect if a run exceeds ~25 s |
-## Proprietary (vendor blobs / downstream drivers)
+## Historical inventory — proprietary components (run130–139)
 
 | Component | Symptom (evidence) | Status | Next action |
 |---|---|---|---|
@@ -774,7 +844,7 @@ but on in early-return run105; that selects different handoff paths
 | Modem packet path (IPA/RMNET) | QRTR signalling works; no IPA v2 in-tree, RMNET off | SCOPED | IPA-v2 backport (backlog #6) |
 | EGL/GLES userspace | run130: Adreno 506 renderer initializes, but SF and bootanimation wait on unsignalled KGSL fences (H130:1373,3838,6591) | BLOCKED | Keep userspace fence evidence alongside the GPU-start investigation; no successful rendered frame established |
 
-## Working (do not regress)
+## Historically working (retain the stated run and proof limits)
 wled OVP IRQ pairing (0 `enable_irq` WARN s50–s52) · GPU fw load
 (`qcom/*.fw` from ramdisk) · DSI/panel (`otm1911` status `0x9c`) ·
 eMMC HS400 + SD SDR104 · USB adb handoff · QSEE SMC

@@ -1542,10 +1542,19 @@ static int adreno_probe(struct platform_device *pdev)
 	 * The SMMU APIs use unsigned long for virtual addresses which means
 	 * that we cannot use 64 bit virtual addresses on a 32 bit kernel even
 	 * though the hardware and the rest of the KGSL driver supports it.
+	 *
+	 * run185 re-enabled it and that is a REGRESSION (28 CP-init failures
+	 * against 0, SurfaceFlinger crash-looping on "no suitable EGLConfig"), so
+	 * it is withheld again. A506 does carry ADRENO_64BIT, but the GPU SMMU
+	 * aperture here is .ias=32: setup_64bit_pagetable() would hand KGSL
+	 * 0x500000000..0x600000000 and every map fails -ERANGE (run174:
+	 * x0=0xffffffde, x1=0x500000000) -> GPUOBJ_ALLOC errno 19 ->
+	 * EGL_BAD_ALLOC -> SIGABRT. KGSL stays on its 32-bit VA ranges, which
+	 * are wholly below 4 GiB.
 	 */
 	if (adreno_support_64bit(adreno_dev))
-		device->mmu.features |= KGSL_MMU_64BIT;
-
+		dev_info(device->dev,
+			"KGSL_MMU_64BIT withheld: GPU SMMU aperture is 32-bit\n");
 	if (adreno_is_a6xx(adreno_dev))
 		device->mmu.features |= KGSL_MMU_SMMU_APERTURE;
 
@@ -2199,9 +2208,24 @@ static int _adreno_start(struct adreno_device *adreno_dev)
 
 	_set_secvid(device);
 
-	/* Enable 64 bit gpu addr if feature is set */
+	/*
+	 * Gate this on the MMU's own VA regime, not on adreno_support_64bit().
+	 * adreno_support_64bit() compiles to true whenever BITS_PER_LONG is
+	 * 64, and the A506 carries ADRENO_64BIT, so on this arm64 port it is
+	 * always true. Stock CAF 4.19 is a 32-bit kernel where it is always
+	 * false, so stock never switches these units into 64-bit address mode.
+	 * Meanwhile KGSL_MMU_64BIT is deliberately withheld above (see the
+	 * comment there), which keeps kgsl_iommu.c on
+	 * setup_32bit_pagetable() and every PM4/IB gpuaddr at 32 bits.
+	 * Switching the hardware to 64-bit addressing while the driver builds
+	 * 32-bit descriptors is what made the UCHE compute an out-of-range
+	 * address and raise A5XX_INT_UCHE_OOB_ACCESS on a buffer that is
+	 * correctly mapped: "UCHE: Out of bounds access addr=...139000", with
+	 * addr_mode=1 read back from A5XX_UCHE_ADDR_MODE_CNTL. Match the
+	 * hardware to the MMU and to stock.
+	 */
 	if (gpudev->enable_64bit &&
-			adreno_support_64bit(adreno_dev))
+			MMU_FEATURE(&device->mmu, KGSL_MMU_64BIT))
 		gpudev->enable_64bit(adreno_dev);
 
 	if (device->pwrctrl.bus_control) {
@@ -2764,11 +2788,16 @@ static int adreno_prop_u32(struct kgsl_device *device,
 	} else if (param->type == KGSL_PROP_MIN_ACCESS_LENGTH)
 		of_property_read_u32(device->pdev->dev.of_node,
 			"qcom,min-access-length", &val);
-	else if (param->type == KGSL_PROP_UBWC_MODE)
-		of_property_read_u32(device->pdev->dev.of_node,
-			"qcom,ubwc-mode", &val);
+	/*
+	 * KGSL_PROP_DEVICE_BITNESS advertises the address width the MMU is
+	 * actually using, not the width of a 64-bit kernel. Same gate as the
+	 * ADDR_MODE_CNTL writes above: with KGSL_MMU_64BIT withheld the GPU
+	 * runs the 32-bit regime, and telling gralloc/EGL "48" while the MMU
+	 * pool is 32-bit invites buffers whose addresses fall outside the
+	 * regime the driver builds.
+	 */
 	else if (param->type == KGSL_PROP_DEVICE_BITNESS)
-		val = adreno_support_64bit(adreno_dev) ? 48 : 32;
+		val = MMU_FEATURE(&device->mmu, KGSL_MMU_64BIT) ? 48 : 32;
 	else if (param->type == KGSL_PROP_SPEED_BIN)
 		val = adreno_dev->speed_bin;
 
@@ -3113,9 +3142,9 @@ int adreno_soft_reset(struct kgsl_device *device)
 
 	_set_secvid(device);
 
-	/* Enable 64 bit gpu addr if feature is set */
+	/* Enable 64 bit gpu addr if the MMU is using the 64-bit regime */
 	if (gpudev->enable_64bit &&
-			adreno_support_64bit(adreno_dev))
+			MMU_FEATURE(&device->mmu, KGSL_MMU_64BIT))
 		gpudev->enable_64bit(adreno_dev);
 
 

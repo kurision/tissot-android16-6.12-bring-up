@@ -655,6 +655,8 @@
 #define A5XX_UCHE_PERFCTR_UCHE_SEL_5        0xEA5
 #define A5XX_UCHE_PERFCTR_UCHE_SEL_6        0xEA6
 #define A5XX_UCHE_PERFCTR_UCHE_SEL_7        0xEA7
+#define A5XX_UCHE_TRAP_LOG_LO               0xEB1
+#define A5XX_UCHE_TRAP_LOG_HI               0xEB2
 
 /* UCHE Power Counter UCHE Registers Select */
 #define A5XX_UCHE_POWERCTR_UCHE_SEL_0       0xEA8

@@ -3106,6 +3106,38 @@ static void mdss_mdp_debug_emmc_marker(struct mdss_data_type *mdata)
 	mdss_mdp_debug_emmc_mark(MDSS_MARK_HWVER, 0x20524556, ver);
 }
 
+/*
+ * mdss_mdp_cold_boot: bring the panel up from scratch even when the
+ * bootloader left a display running.
+ *
+ * The continuous-splash path assumes the bootloader's DSI link is an
+ * exact match for what this driver would otherwise program:
+ * mdss_dsi_on() returns early on is_panel_on_interactive(), so the PHY
+ * PLL, the lane VREGs, the clock source and the panel reset GPIO are
+ * never touched and qcom,mdss-dsi-on-command is never sent. That is
+ * safe when the bootloader used this driver's panel timings and is not
+ * safe otherwise, and a mismatch looks exactly like what we see: the
+ * MDP is committed frame after frame and the panel stays dark.
+ *
+ * Forcing num_of_display_on to zero in mdss_mdp_probe() takes the
+ * ordinary cold-boot path instead: mdss_hw_init(), the full
+ * mdss_dsi_on() sequence and the panel DCS sequence. Set
+ * mdss_mdp_cold_boot=1 on the kernel command line to A/B that without a
+ * device tree change.
+ */
+/*
+ * early_param, not module_param: start_kernel() scans __start___param with
+ * min_level = max_level = -1, and parse_one() drops anything whose level is
+ * outside that window, so a module_param never sees the boot command line.
+ */
+static int mdss_mdp_cold_boot;
+
+static int __init mdss_mdp_cold_boot_setup(char *val)
+{
+	return kstrtoint(val, 0, &mdss_mdp_cold_boot);
+}
+early_param("mdss_mdp_cold_boot", mdss_mdp_cold_boot_setup);
+
 static int mdss_mdp_probe(struct platform_device *pdev)
 {
 	int rc;
@@ -3362,6 +3394,11 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 		 */
 		if (split_display)
 			num_of_display_on--;
+	}
+	if (mdss_mdp_cold_boot && num_of_display_on) {
+		pr_info("mdss_mdp: mdss_mdp_cold_boot=1, ignoring bootloader's display\n");
+		num_of_display_on = 0;
+		intf_sel = 0;
 	}
 	if (!num_of_display_on) {
 		mdss_mdp_footswitch_ctrl_splash(false);

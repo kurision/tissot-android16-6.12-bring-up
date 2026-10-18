@@ -187,6 +187,9 @@ sphinx_*/
 # hundreds of megabytes and reproducible from porting/artifacts/snapshotNN/.
 porting/artifacts/*.img
 porting/artifacts/snapshot*/*.img
+porting/artifacts/**/*.img
+porting/artifacts/**/*.gz-dtb
+porting/artifacts/**/kdir-*/
 porting/artifacts/snapshot*/*.gz
 porting/artifacts/snapshot*/base-ramdisk
 porting/artifacts/snapshot*/Image.gz

@@ -2013,25 +2013,49 @@ int a5xx_critical_packet_submit(struct adreno_device *adreno_dev,
  * Read-only; success-path behaviour is unchanged.
  *
  * Register offsets are from drivers/iommu/arm/arm-smmu/arm-smmu.h (CB block):
- * SCTLR 0x0, TTBR0 0x20, FSR 0x58.
+ * SCTLR 0x0, TTBR0 0x20, FSR 0x58, FAR 0x60, FSYNR0 0x68.
+ *
+ * Safe to read from the dispatcher workqueue: qcom_iommu does
+ * pm_runtime_forbid() at probe, so this SMMU keeps its clocks. Do NOT move
+ * these reads into hardirq -- run118/run119 recorded an external abort from
+ * reading a context bank of a runtime-suspended IOMMU.
  */
 #define DIAG_CB_SCTLR	0x0
 #define DIAG_CB_TTBR0	0x20
 #define DIAG_CB_FSR	0x58
+#define DIAG_CB_FAR	0x60
+#define DIAG_CB_FSYNR0	0x68
 
 static void __iomem *diag_gpu_cb;
 static bool diag_gpu_cb_done;
 
 static void __iomem *diag_gpu_cb_base(struct kgsl_device *device)
 {
-	struct device_node *iommu_np, *child;
+	struct device_node *soc_np, *child, *iommu_np = NULL;
 	struct resource res;
 
 	if (diag_gpu_cb_done)
 		return diag_gpu_cb;
 	diag_gpu_cb_done = true;
 
-	iommu_np = of_parse_phandle(device->pdev->dev.of_node, "iommus", 0);
+	/*
+	 * The board DT deletes this node's iommus phandle on purpose, so the
+	 * phandle lookup cannot work. Walk the SoC node instead: gpu_iommu is
+	 * the only qcom,msm-iommu-v2 node there (apps_iommu is v1) and its
+	 * qcom,msm-iommu-v2-ns child is gfx3d_user. Mapping the context bank
+	 * does not program it and does not attach a DMA domain.
+	 */
+	soc_np = of_get_parent(device->pdev->dev.of_node);
+	if (!soc_np)
+		return NULL;
+
+	for_each_child_of_node(soc_np, child) {
+		if (!of_device_is_compatible(child, "qcom,msm-iommu-v2"))
+			continue;
+		iommu_np = of_node_get(child);
+		break;
+	}
+	of_node_put(soc_np);
 	if (!iommu_np)
 		return NULL;
 
@@ -2039,8 +2063,8 @@ static void __iomem *diag_gpu_cb_base(struct kgsl_device *device)
 		if (!of_device_is_compatible(child, "qcom,msm-iommu-v2-ns"))
 			continue;
 		if (of_address_to_resource(child, 0, &res) == 0)
-			diag_gpu_cb = ioremap(res.start, resource_size(&res));
-		of_node_put(child);
+			diag_gpu_cb = devm_ioremap(&device->pdev->dev, res.start,
+					resource_size(&res));
 		break;
 	}
 
@@ -2071,6 +2095,7 @@ static void diag_gpu_smmu_state(struct adreno_device *adreno_dev,
 		fsr = readl_relaxed(cb + DIAG_CB_FSR);
 	}
 
+
 	dev_info(device->dev,
 		 "DIAG gpu_smmu: cb=%s sctlr=%08x translating=%u ttbr0=%016llx fsr=%08x mmu_type=%u\n",
 		 cb ? "gfx3d_user" : "unavailable", sctlr, !!(sctlr & 0x1),
@@ -2087,6 +2112,35 @@ static void diag_gpu_smmu_state(struct adreno_device *adreno_dev,
 		 (unsigned long long)diag_memdesc_phys(pm4),
 		 (unsigned long long)pfp->gpuaddr,
 		 (unsigned long long)diag_memdesc_phys(pfp));
+}
+
+/*
+ * a5xx_dump_smmu_state() - DIAG: sample the gfx3d_user context bank at a
+ * fault, so a bank that translates at draw time is separated from one that
+ * is only bypassed at boot. Read-only, process context (dispatcher
+ * workqueue), never hardirq.
+ */
+void a5xx_dump_smmu_state(struct adreno_device *adreno_dev)
+{
+	static atomic_t samples = ATOMIC_INIT(0);
+	struct kgsl_device *device = &adreno_dev->dev;
+	void __iomem *cb = diag_gpu_cb_base(device);
+	u32 sctlr, fsr, fsynr;
+	u64 ttbr0, far;
+
+	if (!cb || atomic_inc_return(&samples) > 4)
+		return;
+
+	sctlr = readl_relaxed(cb + DIAG_CB_SCTLR);
+	ttbr0 = readq_relaxed(cb + DIAG_CB_TTBR0);
+	fsr = readl_relaxed(cb + DIAG_CB_FSR);
+	far = readq_relaxed(cb + DIAG_CB_FAR);
+	fsynr = readl_relaxed(cb + DIAG_CB_FSYNR0);
+
+	dev_err(device->dev,
+		"DIAG fault-smmu: sctlr=%08x translating=%u ttbr0=%016llx fsr=%08x far=%016llx fsynr=%08x\n",
+		sctlr, !!(sctlr & 0x1), (unsigned long long)ttbr0, fsr,
+		(unsigned long long)far, fsynr);
 }
 
 /*
@@ -2933,10 +2987,60 @@ static void a5xx_err_callback(struct adreno_device *adreno_dev, int bit)
 		dev_crit_ratelimited(device->dev,
 					"RBBM: ATB bus overflow\n");
 		break;
-	case A5XX_INT_UCHE_OOB_ACCESS:
+	case A5XX_INT_UCHE_OOB_ACCESS: {
+		static atomic_t samples = ATOMIC_INIT(0);
+		unsigned int lo, hi;
+
+		kgsl_regread(device, A5XX_UCHE_TRAP_LOG_LO, &lo);
+		kgsl_regread(device, A5XX_UCHE_TRAP_LOG_HI, &hi);
 		dev_crit_ratelimited(device->dev,
-					"UCHE: Out of bounds access\n");
+			"UCHE: Out of bounds access addr=%08x%08x\n", hi, lo);
+		if (atomic_inc_return(&samples) <= 8) {
+			unsigned int cp, hw, base, base_hi, remaining;
+			unsigned int addr_mode, mode, gmem_min, gmem_max;
+
+			kgsl_regread(device, A5XX_CP_STATUS_1, &cp);
+			kgsl_regread(device, A5XX_CP_HW_FAULT, &hw);
+			kgsl_regread(device, A5XX_CP_IB2_BASE, &base);
+			kgsl_regread(device, A5XX_CP_IB2_BASE_HI, &base_hi);
+			kgsl_regread(device, A5XX_CP_IB2_BUFSZ, &remaining);
+			kgsl_regread(device, A5XX_UCHE_ADDR_MODE_CNTL, &addr_mode);
+			kgsl_regread(device, A5XX_UCHE_MODE_CNTL, &mode);
+			kgsl_regread(device, A5XX_UCHE_GMEM_RANGE_MIN_LO, &gmem_min);
+			kgsl_regread(device, A5XX_UCHE_GMEM_RANGE_MAX_LO, &gmem_max);
+			dev_crit(device->dev,
+				"DIAG uche-oob: cp_status=%08x hw_fault=%08x ib2=%08x%08x/%x addr_mode=%x mode=%x gmem=%08x-%08x\n",
+				cp, hw, base_hi, base, remaining,
+				addr_mode, mode, gmem_min, gmem_max);
+
+			/*
+			 * RBBM_STATUS decodes to CP_BUSY with CP_ME_BUSY
+			 * clear: the CP stopped fetching with the micro-engine
+			 * idle and no CP error latched. Sample the queueing
+			 * state at the first OOB so the stall can be attributed
+			 * to a specific wait rather than guessed at.
+			 */
+			if (atomic_inc_return(&samples) <= 2) {
+				unsigned int rptr, wptr, ahb, prot;
+				unsigned int int0, status3, switch_cntl;
+
+				kgsl_regread(device, A5XX_CP_RB_RPTR, &rptr);
+				kgsl_regread(device, A5XX_CP_RB_WPTR, &wptr);
+				kgsl_regread(device, A5XX_CP_AHB_FAULT, &ahb);
+				kgsl_regread(device, A5XX_CP_PROTECT_STATUS,
+						&prot);
+				kgsl_regread(device, A5XX_RBBM_INT_0_STATUS, &int0);
+				kgsl_regread(device, A5XX_RBBM_STATUS3, &status3);
+				kgsl_regread(device, A5XX_CP_CONTEXT_SWITCH_CNTL,
+						&switch_cntl);
+				dev_err(device->dev,
+					"DIAG cp-stall: rptr=%x wptr=%x ahb=%08x protect=%08x int0=%08x status3=%08x switch_cntl=%08x\n",
+					rptr, wptr, ahb, prot, int0, status3,
+					switch_cntl);
+			}
+		}
 		break;
+	}
 	case A5XX_INT_UCHE_TRAP_INTR:
 		dev_crit_ratelimited(device->dev, "UCHE: Trap interrupt\n");
 		break;
