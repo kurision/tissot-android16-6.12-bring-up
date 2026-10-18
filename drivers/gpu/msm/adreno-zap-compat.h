@@ -110,18 +110,6 @@ static inline void adreno_zap_stage(struct device *dev,
 		.size = cpu_to_le64(size),
 	};
 
-	/*
-	 * run242: this print fired once per GPU stage transition, 76134 times
-	 * in one boot, and 76134 of that boot's 118915 kernel log lines were
-	 * this one line. At roughly 10 ms apart per submission it also starves
-	 * the boot: run241 reset on its own and run242 never reached the ROM.
-	 * The stage record is still written to ramoops below, once per stage,
-	 * which is what the recovery path reads; only the console spam is
-	 * gone.
-	 */
-	dev_dbg(dev, "zapstg stage=%u ret=%d a=%llu b=%llu\n", stage, ret,
-		(unsigned long long)phys, (unsigned long long)size);
-
 	/* Preserve the first visit when recovery restarts the GPU. */
 	if (stage >= ZAP_STAGE_UNSECURE_DONE &&
 	    test_and_set_bit(stage, &recorded))
