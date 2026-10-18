@@ -1,10 +1,84 @@
 # Failing components tracker (tissot 6.12 bringup)
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-18, after run221 KGSL-off isolation control.
-Early reset avoided during the observed window; exact GPU-on fault unresolved.
-Earlier address-mode/page-table claims below were corrected by run201/202;
-use the [current handoff](HANDOFF.md), not historical diagnoses.
+Last update: 2026-10-18, after run227.
+
+**GPU 3D row: the ~89 s reset is STILL unresolved. run226 found a real panic;
+run227 proved it is not the cause.**
+
+run227 disabled the only variable — the `_apply_impl_defs()` call in
+`kgsl_iommu_start()` — and the board reset anyway, at the same kernel uptime.
+
+| | run225 | run226 | run227 |
+|---|---|---|---|
+| `_apply_impl_defs()` | on | on | **off** |
+| SError/panic | no | **yes 43.0196 s** | **no** |
+| reset marks in logdump | 0 | 2 | **0** |
+| last durable sample | 41.770 s | 43.043 s | 41.940 s |
+| reset at kernel uptime | 89.1 s | 89.1 s | **89.5 s** |
+
+Established: the board resets at kernel uptime **~89 s**, always; the kernel
+stops making durable progress at **~42 s**, always; that is a **~47 s silence**.
+No panic, no lockup-detector panic, no oops, no TZ involvement. APPS WDT reads
+`en=00000000` throughout, so it did not bite. run221 (KGSL off) survived 436 s,
+so the reset is conditional on KGSL.
+
+Ruled out by this experiment: the run226 asynchronous SError in
+`_apply_impl_defs()` (`kgsl_iommu.c:1636`, the micro-MMU `HALT_REQ` halt
+handshake, on surfaceflinger's second open) as the reset mechanism. It is a
+genuine port bug — CAF runs that sequence from `qsmmuv2_device_reset()` under a
+`vdd-supply` vote, the port runs it per-open with clocks only — but it is
+confirmed-but-unfixed and **not** the reset.
+
+Bootchain now measured rather than estimated: reset→stock USB gadget is
+**49.8 s** (`adb reboot` 13:44:03.8 → gadget 13:44:57.4), of which 20.805 s is
+the stock kernel's own path to USB. This corrects an earlier ~20.9 s estimate
+that had wrongly attributed the reset to `panic=60`.
+
+Next target is the ~47 s gap, not the SError. Full detail:
+[handoff](HANDOFF.md#correction--run227-refutes-the-run226-root-cause).
+
+**Historical — run226 (superseded, kept for the SError detail):** run226
+captured an asynchronous SError that panics the kernel:
+
+```
+[   43.019558][ C5] SError Interrupt on CPU5, code 0x00000000bf000002 -- SError
+[   43.019816][ C5] Kernel panic - not syncing: Asynchronous SError Interrupt
+[   43.019989][ C5]  readl+0x3c/0x80
+[   43.020010][ C5]  kgsl_iommu_start+0x2a0/0x5d8
+[   43.020052][ C5]  adreno_start+0x584/0xb6c
+[   43.020067][ C5]  kgsl_open+0x14c/0x6a4
+```
+
+`kgsl_iommu_start+0x2a0` → `_apply_impl_defs()` at
+`drivers/gpu/msm/kgsl_iommu.c:1636`: the micro-MMU `HALT_REQ` halt handshake
+polls `0x6000` for `IDLE` and takes an asynchronous SError doing so. The
+sequence is a faithful port of CAF `qsmmuv2_device_reset()`, but the port runs
+it from `kgsl_iommu_start()` on **every** GPU open with only a clock vote (no
+SMMU power-domain vote), where CAF runs it from the arm-smmu driver's reset
+path under its own power management.
+
+Trigger is `surfaceflinger` opening `/dev/kgsl-3d0`; the second
+`kgsl_iommu_start()` (GPU in INIT) faults, the first (GPU in SLUMBER) succeeds.
+
+Also corrected: the reset is **not** ~250 ms after the last kernel progress.
+The earlier runs timed it from the ACM reader ending, which is the port's own
+USB handoff. Actual reset is kernel uptime ~95-110 s, because `panic=60`
+delays `emergency_restart()` by 60 s after the 43.02 s panic. run222-run225's
+"no kernel-initiated restart" reading was an artifact of `panic()` calling
+`smp_send_stop()` before `emergency_restart()`, which both freezes the
+snapshotter and trips `ramoops_reset_note()`'s `!irqs_disabled()` guard.
+
+Full detail, ESR decode and the upstream precedent:
+[handoff](HANDOFF.md#run226-the-_apply_impl_defs-serror-real-bug-but-not-the-reset).
+
+**Still open:** making the handshake safe (power-domain vote vs dropping
+`_apply_impl_defs()`), and whether `/dev/kgsl-3d0` survives to the point of
+accepting submissions and rendering — the panic occurs before either.
+
+Historical entries below. Earlier address-mode/page-table claims were corrected
+by run201/202; the reset-timing claims by run226. Use the
+[current handoff](HANDOFF.md), not historical diagnoses.
 
 **Latest control — run221:** command-line-only KGSL init blacklist, same
 kernel/DTB/config/Android init/ramdisk as GPU-on baseline. Port remains on
