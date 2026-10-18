@@ -2109,39 +2109,6 @@ static void ramoops_diag_dump_prev(void)
  * (PLL early) for both clusters and CCI. Reads only.
  */
 /*
- * DEBUG run121: time a fixed busy loop on each online CPU (IPI context,
- * IRQs off). Absolute MHz depends on the loop's cycles/iteration; the
- * CPU0:CPU4 ratio is what matters (CPU0 runs GPLL0 = 800 MHz).
- */
-#define RAMOOPS_CPUCLK_LOOPS	1000000UL
-
-static void ramoops_cpuclk_spin(void *arg)
-{
-	unsigned long n = RAMOOPS_CPUCLK_LOOPS;
-	u64 *ns = arg, t0;
-
-	t0 = ktime_get_ns();
-	asm volatile("1:	subs	%0, %0, #1\n"
-		     "	b.ne	1b\n" : "+r" (n) : : "cc");
-	*ns = ktime_get_ns() - t0;
-}
-
-static void ramoops_cpuclk_measure(const char *when)
-{
-	u64 ns;
-	int cpu;
-
-	for_each_online_cpu(cpu) {
-		ns = 0;
-		if (smp_call_function_single(cpu, ramoops_cpuclk_spin, &ns, 1))
-			continue;
-		pr_info("DIAG cpuclk %s cpu%d loop_ns=%llu loops_per_us=%llu\n",
-			when, cpu, ns,
-			ns ? RAMOOPS_CPUCLK_LOOPS * 1000ULL / ns : 0);
-	}
-}
-
-/*
  * DEBUG run121: run120 read c1 (CPU4-7) cfg=0 (source 0, likely XO
  * 19.2 MHz) while c0 runs GPLL0/1 = 800 MHz. Stock's early_initcall
  * reprograms this alias1 mux (clock-cpu-8953.c cpu_clock_pwr_init);
@@ -2223,9 +2190,7 @@ static void ramoops_debug_cpuclk(void)
 			src == 5 ? "" : " (src not PLL: rate unknown)");
 	}
 
-	ramoops_cpuclk_measure("before");
 	ramoops_cpuclk_c1_to_gpll0();
-	ramoops_cpuclk_measure("after");
 }
 
 static int ramoops_probe(struct platform_device *pdev)
