@@ -154,7 +154,14 @@ static int make_dir(const char *path)
  * The diag configuration is c.2: configfs refuses a second configuration
  * with the same bConfigurationValue (usb_add_config_only, -EBUSY), and
  * Android creates b.1 in this same gadget (snapshot47 run1).
+ *
+ * Built only with -DANDROID_USB_CONSOLE. The gadget claims the board's only
+ * UDC, so while it is bound adbd cannot bind and adb never enumerates; the
+ * handoff that used to release it depends on a trigger that does not fire.
+ * The logdump is the evidence path (CRC-verified runs 231-233), so the
+ * default build leaves the UDC alone and adb works from boot.
  */
+#ifdef ANDROID_USB_CONSOLE
 static int setup_gadget(void)
 {
 	DIR *dir;
@@ -185,6 +192,7 @@ static int setup_gadget(void)
 	closedir(dir);
 	return ret;
 }
+#endif /* ANDROID_USB_CONSOLE */
 
 static int open_logdump(void)
 {
@@ -229,6 +237,7 @@ static int open_logdump(void)
 /* Block until the host has set the gadget configuration (i.e. actually
  * attached and opened the port); otherwise the ACM buffer fills up and the
  * stream is lost to a late host. The controller name comes from g1/UDC. */
+#ifdef ANDROID_USB_CONSOLE
 static void wait_usb_configured(void)
 {
 	char name[64], path[128];
@@ -285,6 +294,13 @@ static int open_usb_sink(void)
 	}
 	return -1;
 }
+#else
+static int open_usb_sink(void)
+{
+	/* UDC is reserved for adbd; see the setup_gadget() comment. */
+	return -1;
+}
+#endif /* ANDROID_USB_CONSOLE */
 
 static int open_sink(int console, int *usb)
 {
@@ -296,7 +312,12 @@ static int open_sink(int console, int *usb)
 			return out;
 		usleep(500000);
 	}
+#ifdef ANDROID_USB_CONSOLE
 	say(console, "DIAG: no logdump after 60s; trying USB\n");
+#else
+	say(console, "DIAG: no logdump after 60s; USB console off,"
+			" UDC left for adbd\n");
+#endif
 	out = open_usb_sink();
 	if (out >= 0)
 		*usb = 1;
@@ -1010,6 +1031,7 @@ failed:
  */
 #define USB_RC "/vendor/etc/init/hw/init.qcom.usb.rc"
 
+#ifdef ANDROID_USB_CONSOLE
 static void guard_usb_handoff(int proc, int log)
 {
 	static const char action[] =
@@ -1058,6 +1080,7 @@ done:
 		 "DIAG: USB handoff rc appended to %s errno=%d\n", USB_RC, error);
 	say(log, message);
 }
+#endif /* ANDROID_USB_CONSOLE */
 
 #ifdef ANDROID_EARLY_LOGCAT
 /*
@@ -1899,7 +1922,9 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 		 " and vendor contexts before policy load\n");
 	say(log, "DIAG: bootdevice canonical alias and legacy wait path ready\n");
 	/* After the alias release: a late override must never block boot. */
+#ifdef ANDROID_USB_CONSOLE
 	guard_usb_handoff(proc, log);
+#endif
 #ifdef ANDROID_DISPLAY_GATE
 	guard_displaygate(proc, log);
 #endif
