@@ -215,7 +215,8 @@ struct msm8953_spm *devm_msm8953_spm_get(struct device *dev)
 		return ERR_PTR(-EPROBE_DEFER);
 	if (!device_link_add(dev, &supplier->dev, DL_FLAG_AUTOREMOVE_CONSUMER)) {
 		put_device(&supplier->dev);
-		return ERR_PTR(-EINVAL);
+		return ERR_PTR(dev_err_probe(dev, -EINVAL,
+					     "device link to the SAW failed\n"));
 	}
 	spm = platform_get_drvdata(supplier);
 	if (!device_is_bound(&supplier->dev) || !spm) {

@@ -99,9 +99,14 @@ static const struct voltage_range hf_range1 = {1550000, 1550000, 3125000, 25000}
 #define QPNP_FTS426_HFS430_MODE_PWM	0x07
 #define QPNP_FTS426_HFS430_MODE_AUTO	0x06
 
-/* The highest register this driver touches inside the PMIC. */
+/*
+ * regmap compares the absolute register address against max_register, and
+ * every access here is spmi_base_addr (up to 0xffff) plus a register offset
+ * that reaches 0x6c. A window of 0x6c therefore rejected the type register
+ * read at 0x2004 outright.
+ */
 static const struct regmap_config spmi_regulator_regmap_config = {
-	.max_register = 0x6c,
+	.max_register = 0xffff,
 };
 
 #define QPNP_SMPS_STEP_CTRL_STEP_MASK	0x18
@@ -926,7 +931,7 @@ static int qcom_spm_reg_probe(struct platform_device *pdev)
 
 	rc = of_property_read_u32(pdev->dev.of_node, "reg", &base);
 	if (rc)
-		return rc;
+		return dev_err_probe(&pdev->dev, rc, "bad reg property\n");
 	if (base > 0xffff)
 		return -EINVAL;
 	reg->spmi_base_addr = base;
@@ -1016,7 +1021,8 @@ static int qcom_spm_reg_probe(struct platform_device *pdev)
 
 	rc = qcom_spm_reg_avs_register(reg, pdev->dev.of_node);
 	if (rc)
-		return rc;
+		return dev_err_probe(&pdev->dev, rc,
+				     "AVS limit regulator failed\n");
 
 	platform_set_drvdata(pdev, reg);
 
