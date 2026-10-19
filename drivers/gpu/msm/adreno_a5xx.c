@@ -1452,7 +1452,6 @@ static void a5xx_dump_bringup(struct adreno_device *adreno_dev,
 			      const char *stage)
 {
 	struct kgsl_device *device = &adreno_dev->dev;
-	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
 	unsigned int status, intstatus, rptr, wptr, base, cp_status, hw_fault;
 
 	kgsl_regread(device, A5XX_RBBM_STATUS, &status);
@@ -2080,8 +2079,6 @@ static void diag_gpu_smmu_state(struct adreno_device *adreno_dev,
 		struct adreno_ringbuffer *rb)
 {
 	struct kgsl_device *device = &adreno_dev->dev;
-	struct kgsl_memdesc *pm4 = &ADRENO_FW(adreno_dev, ADRENO_FW_PM4)->memdesc;
-	struct kgsl_memdesc *pfp = &ADRENO_FW(adreno_dev, ADRENO_FW_PFP)->memdesc;
 	void __iomem *cb = diag_gpu_cb_base(device);
 	u32 sctlr = 0, fsr = 0;
 	u64 ttbr0 = 0;
