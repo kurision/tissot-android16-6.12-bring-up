@@ -13,13 +13,18 @@ description: >
   The APCS block on MSM8953 contains the single APCS HF PLL that feeds both
   Cortex-A53 clusters and the system CCI, plus the three RCGCGR mux-dividers
   in front of them. All eight cores share one PLL and one voltage domain, so
-  the PLL is not exported as a separate clock: it reaches the three
-  mux-dividers as their first parent.
+  the PLL and mux-dividers are private to the controller. The three exported
+  clock IDs report the rates of the two clusters and CCI. The two CPU clock
+  IDs alias one shared domain clock. CPU rate changes are coupled across both
+  clusters; CCI is read-only and follows the PLL at a fixed divide by 2.5.
 
   The block also owns the shared APC voltage rail. The regulator it drives is
   corner encoded rather than microvolt based, so the rail is programmed from
   a fused rate to corner plan read from this node, and the highest corner
-  voted by any of the three clocks is applied before that clock changes rate.
+  needed by the three outputs is applied before any frequency increase. The
+  old voltage requirement is retained until all outputs have changed rate.
+  The HF PLL logic additionally requires an active-only MX SVS level vote
+  throughout the stock frequency range.
 
 properties:
   compatible:
@@ -60,6 +65,14 @@ properties:
       microvolts, with regulator-min-microvolt and regulator-max-microvolt
       spanning the corner range.
 
+  power-domains:
+    items:
+      - description: Active-only MX domain supplying the HF PLL logic
+
+  power-domain-names:
+    items:
+      - const: mx
+
   "#clock-cells":
     const: 1
 
@@ -81,6 +94,8 @@ required:
   - clocks
   - clock-names
   - vdd-cl-supply
+  - power-domains
+  - power-domain-names
   - "#clock-cells"
 
 additionalProperties: false
@@ -88,6 +103,7 @@ additionalProperties: false
 examples:
   - |
     #include <dt-bindings/clock/qcom,gcc-msm8953.h>
+    #include <dt-bindings/power/qcom-rpmpd.h>
 
     xo: xo {
         #clock-cells = <0>;
@@ -114,6 +130,8 @@ examples:
         clocks = <&xo>, <&gcc GPLL0_EARLY>, <&gcc GPLL2_EARLY>;
         clock-names = "xo", "gpll0_early", "gpll2_early";
         vdd-cl-supply = <&apc_vreg>;
+        power-domains = <&rpmpd MSM8953_VDDMX_AO>;
+        power-domain-names = "mx";
         qcom,speed0-bin-v0-cl = <0 0 652800000 1 1036800000 2
                                  1401600000 3 1689600000 4
                                  1804800000 5 1958400000 6
