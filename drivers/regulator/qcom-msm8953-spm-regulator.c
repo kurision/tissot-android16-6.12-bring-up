@@ -155,6 +155,7 @@ struct qcom_spm_reg {
 	enum qpnp_logical_mode		init_mode;
 	enum qpnp_logical_mode		mode;
 	u16				spmi_base_addr;
+	u8				type_reg[2];
 	int				step_rate;
 	u32				max_step_uv;
 	unsigned int			vlevel;
@@ -621,6 +622,7 @@ static int qpnp_smps_check_type(struct qcom_spm_reg *reg)
 			      reg->spmi_base_addr + QPNP_SMPS_REG_TYPE, type, 2);
 	if (rc)
 		return rc;
+	memcpy(reg->type_reg, type, sizeof(type));
 
 	if (type[0] == QPNP_FTS2_TYPE && type[1] == QPNP_FTS2_SUBTYPE)
 		reg->regulator_type = QPNP_TYPE_FTS2;
@@ -946,7 +948,10 @@ static int qcom_spm_reg_probe(struct platform_device *pdev)
 
 	rc = qpnp_smps_check_type(reg);
 	if (rc)
-		return dev_err_probe(&pdev->dev, rc, "unsupported SMPS type\n");
+		return dev_err_probe(&pdev->dev, rc,
+				     "unsupported SMPS type %02x/%02x at 0x%x\n",
+				     reg->type_reg[0], reg->type_reg[1],
+				     reg->spmi_base_addr);
 
 	switch (reg->regulator_type) {
 	case QPNP_TYPE_FTS2:
