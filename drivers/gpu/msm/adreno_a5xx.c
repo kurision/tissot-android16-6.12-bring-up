@@ -2068,12 +2068,6 @@ static void __iomem *diag_gpu_cb_base(struct kgsl_device *device)
 	return diag_gpu_cb;
 }
 
-static u64 diag_memdesc_phys(const struct kgsl_memdesc *memdesc)
-{
-	if (memdesc->sgt && memdesc->sgt->sgl)
-		return (u64)sg_phys(memdesc->sgt->sgl);
-	return 0;
-}
 
 static void diag_gpu_smmu_state(struct adreno_device *adreno_dev,
 		struct adreno_ringbuffer *rb)
