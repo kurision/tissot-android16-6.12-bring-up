@@ -19,6 +19,9 @@
  * @last_timestamp: Last timestamp when signaling fences
  * @device: kgsl device
  * @context: kgsl context
+ * @diag: run266 diagnostic counters for the fence release path. Plain
+ *	   counters, not a lock: the release path must not take one, and a torn
+ *	   diagnostic count costs nothing but a wrong number in a log.
  */
 struct kgsl_sync_timeline {
 	struct kref kref;
@@ -32,6 +35,9 @@ struct kgsl_sync_timeline {
 	unsigned int last_timestamp;
 	struct kgsl_device *device;
 	struct kgsl_context *context;
+	struct {
+		unsigned int calls;
+	} diag;
 };
 
 /**

@@ -21,6 +21,94 @@ struct kgsl_timeline_fence {
 	struct list_head node;
 };
 
+/*
+ * run266 diagnostic for the kgsl_timeline.c timeline API.
+ *
+ * run265/run266 correction: the fence the display waits on is NOT this
+ * one. mdss_wait_sync_fence() printed drv:kgsl-timeline, and that is the
+ * driver name of kgsl_sync.c's fence (kgsl_sync_fence_driver_name()
+ * returns "kgsl-timeline"); this file's fence reports "kgsl-sw-timeline".
+ * The fence that timed out is released by kgsl_sync_timeline_signal() in
+ * kgsl_sync.c, through the kgsl event group, which the GPU dispatcher
+ * drives. The instrumentation for that path is in kgsl_sync.c,
+ * kgsl_events.c and adreno_dispatch.c.
+ *
+ * This file's API is a different, newer timeline interface that the
+ * compositor on this ROM does not use: in run266 not one call to
+ * kgsl_timeline_signal() or kgsl_timeline_fence_alloc() happened, and the
+ * new DIAG lines were absent from the logdump while the strings were
+ * present in the kernel, which is what showed the instrument was on the
+ * wrong path. The diagnostic is kept because the API is real and a future
+ * userspace could use it.
+ *
+ * The first calls are printed in full, because the interesting event is the
+ * transition; after that the output is sampled, because the console is a
+ * 1 MiB ring and an unbounded print here evicts the evidence it is meant to
+ * preserve. The counters are per timeline, so a stuck timeline keeps its own
+ * budget.
+ */
+#define KGSL_TL_DIAG_FIRST	64
+#define KGSL_TL_DIAG_EVERY	256
+
+static void kgsl_timeline_diag_signal(struct kgsl_timeline *timeline,
+				      u64 seqno, u64 value, unsigned int pending,
+				      unsigned int signalled, bool stale)
+{
+	unsigned int n;
+
+	/*
+	 * The counts are read and written without the timeline lock: they are
+	 * diagnostics, and a torn count is not worth a lock on the retire
+	 * path. The decision to print is made from the local copy.
+	 */
+	n = timeline->diag.calls;
+
+	if (n >= KGSL_TL_DIAG_FIRST && (n % KGSL_TL_DIAG_EVERY))
+		return;
+
+	timeline->diag.calls = n + 1;
+	if (stale)
+		timeline->diag.stale++;
+	if (signalled)
+		timeline->diag.signalled++;
+
+	pr_info("DIAG timeline_signal id=%d name=%s seqno=%llu value=%llu pending=%u signalled=%u stale=%u calls=%u stale_total=%u signalled_total=%u\n",
+		timeline->id, timeline->name, seqno, value, pending, signalled,
+		stale, timeline->diag.calls, timeline->diag.stale,
+		timeline->diag.signalled);
+}
+
+/*
+ * The fence side of the same boundary. A fence that was created already
+ * retired is not queued, and the dma-fence core bit is set for it by
+ * dma_fence_is_signaled_locked() inside dma_fence_init()'s caller, so it
+ * never needs the dispatcher. A fence that is queued needs a
+ * kgsl_timeline_signal() call to be released. "added=0" therefore marks a
+ * fence that the dispatcher is not responsible for, and "added=1" marks one
+ * that is.
+ */
+static void kgsl_timeline_diag_fence(struct kgsl_timeline *timeline,
+				     u64 seqno, u64 value, bool added,
+				     unsigned int queued)
+{
+	static unsigned int calls;
+
+	unsigned int n = calls;
+
+	/*
+	 * A file-scope counter, not a per-timeline one: fence creation is
+	 * frequent on every context, and the interesting case is the first
+	 * few and then a sample. Racy on purpose, like the counters above.
+	 */
+	if (n >= KGSL_TL_DIAG_FIRST && (n % KGSL_TL_DIAG_EVERY))
+		return;
+
+	calls = n + 1;
+
+	pr_info("DIAG timeline_fence id=%d name=%s seqno=%llu value=%llu added=%u queued=%u calls=%u\n",
+		timeline->id, timeline->name, seqno, value, added, queued, calls);
+}
+
 struct dma_fence *kgsl_timelines_to_fence_array(struct kgsl_device *device,
 		u64 timelines, u32 count, u64 usize, bool any)
 {
@@ -258,38 +346,60 @@ void kgsl_timeline_signal(struct kgsl_timeline *timeline, u64 seqno)
 {
 	struct kgsl_timeline_fence *fence, *tmp;
 	struct list_head temp;
+	unsigned int pending = 0, signalled = 0;
+	u64 value = 0;
+	bool stale = false;
 
 	INIT_LIST_HEAD(&temp);
 
 	spin_lock_irq(&timeline->lock);
 
-	if (seqno < timeline->value)
+	if (seqno < timeline->value) {
+		/*
+		 * A seqno below the value the timeline already reached. The
+		 * fence list is not walked in this case, so a fence whose
+		 * seqno sits between this seqno and the value is not
+		 * signalled by this call.
+		 */
+		stale = true;
 		goto unlock;
+	}
 
 	trace_kgsl_timeline_signal(timeline->id, seqno);
 
 	timeline->value = seqno;
+	value = seqno;
 
 	spin_lock(&timeline->fence_lock);
-	list_for_each_entry_safe(fence, tmp, &timeline->fences, node)
+	list_for_each_entry_safe(fence, tmp, &timeline->fences, node) {
+		pending++;
 		if (timeline_fence_signaled(&fence->base) &&
 				kref_get_unless_zero(&fence->base.refcount))
 			list_move(&fence->node, &temp);
+	}
 	spin_unlock(&timeline->fence_lock);
 
 	list_for_each_entry_safe(fence, tmp, &temp, node) {
 		dma_fence_signal_locked(&fence->base);
 		dma_fence_put(&fence->base);
+		signalled++;
 	}
 
 unlock:
 	spin_unlock_irq(&timeline->lock);
+
+	/* Outside the lock: a printk may sleep. */
+	kgsl_timeline_diag_signal(timeline, seqno, value, pending, signalled,
+				  stale);
 }
 
 struct dma_fence *kgsl_timeline_fence_alloc(struct kgsl_timeline *timeline,
 		u64 seqno)
 {
 	struct kgsl_timeline_fence *fence;
+	unsigned int queued = 0;
+	u64 value = 0;
+	bool added = false;
 
 	fence = kzalloc(sizeof(*fence), GFP_KERNEL);
 	if (!fence)
@@ -312,11 +422,33 @@ struct dma_fence *kgsl_timeline_fence_alloc(struct kgsl_timeline *timeline,
 	 * can get chance to signal.
 	 */
 	spin_lock_irq(&timeline->lock);
-	if (!dma_fence_is_signaled_locked(&fence->base))
+	if (!dma_fence_is_signaled_locked(&fence->base)) {
 		kgsl_timeline_add_fence(timeline, fence);
+		added = true;
+	}
+	value = timeline->value;
 
 	trace_kgsl_timeline_fence_alloc(timeline->id, seqno);
 	spin_unlock_irq(&timeline->lock);
+
+	/*
+	 * run265: whether a fence ends up on the list decides if it can
+	 * ever be signalled. A fence that was created already-signalled is
+	 * not on the list, and one that is on the list is only released by
+	 * a kgsl_timeline_signal() call that walks the list. Print both
+	 * facts, sampled, so the logdump can show a fence that was created
+	 * but never queued.
+	 */
+	spin_lock(&timeline->fence_lock);
+	{
+		struct kgsl_timeline_fence *entry;
+
+		list_for_each_entry(entry, &timeline->fences, node)
+			queued++;
+	}
+	spin_unlock(&timeline->fence_lock);
+
+	kgsl_timeline_diag_fence(timeline, seqno, value, added, queued);
 
 	return &fence->base;
 }

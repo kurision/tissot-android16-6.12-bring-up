@@ -28,6 +28,16 @@ struct kgsl_timeline {
 	const char name[32];
 	/** @dev_priv: pointer to the owning device instance */
 	struct kgsl_device_private *dev_priv;
+	/**
+	 * @diag: run265 diagnostic counters for the retire-to-fence path.
+	 * Plain counters, not a lock: the retire path must not take one, and a
+	 * torn diagnostic count costs nothing but a wrong number in a log.
+	 */
+	struct {
+		unsigned int calls;
+		unsigned int stale;
+		unsigned int signalled;
+	} diag;
 };
 
 /**

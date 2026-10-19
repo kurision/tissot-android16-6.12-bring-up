@@ -1083,13 +1083,38 @@ out:
  * signal-delivery or exit-path changes. Enabled by ramoops.reset_capture.
  * Callbacks only filter, read fields and printk: no allocation, I/O,
  * sleeps, locks or storage flush.
+ *
+ * run265: the per-event signal print is gone, and only the counts are
+ * kept. PowerManagerService retries a failing binder transaction and the
+ * kernel raises SIGBUS on it every time, thousands of times a minute; the
+ * unbounded print turned the 1 MiB console ring into nothing but signal
+ * records (6081 of the 13764 messages in the recovered run265 logdump were
+ * signal_generate, and in the final two seconds of the console 237 of 237
+ * messages were signal records), so the kgsl evidence the ring exists to
+ * hold had been evicted long before the snapshot.
+ *
+ * The counts are the part worth keeping: the first occurrence of each
+ * signal number is printed once, so the sender is known, and the tally per
+ * signal number is printed when the capture stops. The counters are plain
+ * integers updated without a lock; a torn diagnostic count costs nothing
+ * but a wrong number in a log, and a lock here would be in the signal path.
  */
+#define RAMOOPS_SIG_DIAG_MAX	64
+#define RAMOOPS_EXIT_DIAG_FIRST	128
+#define RAMOOPS_EXIT_DIAG_EVERY	256
+
+static unsigned int ramoops_diag_sig_count[RAMOOPS_SIG_DIAG_MAX];
+static bool ramoops_diag_sig_seen[RAMOOPS_SIG_DIAG_MAX];
+static unsigned int ramoops_diag_exit_printed;
+static unsigned int ramoops_diag_exit_total;
+
 static void ramoops_diag_signal_generate(void *unused, int sig,
 					 struct kernel_siginfo *info,
 					 struct task_struct *task,
 					 int group, int result)
 {
 	int code;
+	bool first = false;
 
 	(void)unused;
 	switch (sig) {
@@ -1110,6 +1135,17 @@ static void ramoops_diag_signal_generate(void *unused, int sig,
 	}
 	if (task->flags & PF_KTHREAD)
 		return;
+	if (sig <= 0 || sig >= RAMOOPS_SIG_DIAG_MAX)
+		return;
+
+	ramoops_diag_sig_count[sig]++;
+	if (!ramoops_diag_sig_seen[sig]) {
+		ramoops_diag_sig_seen[sig] = true;
+		first = true;
+	}
+	if (!first)
+		return;
+
 	/* Same sentinel contract as TP_STORE_SIGINFO; never dereference. */
 	if (info == SEND_SIG_NOINFO)
 		code = SI_USER;
@@ -1117,8 +1153,9 @@ static void ramoops_diag_signal_generate(void *unused, int sig,
 		code = SI_KERNEL;
 	else
 		code = info->si_code;
-	pr_info("DIAG signal_generate sig=%d code=%d sender_pid=%d sender_tgid=%d sender_comm=%.16s target_pid=%d target_tgid=%d target_comm=%.16s group=%d result=%d\n",
-		sig, code, task_pid_nr(current), task_tgid_nr(current),
+	pr_info("DIAG signal_first sig=%d code=%d count=%u sender_pid=%d sender_tgid=%d sender_comm=%.16s target_pid=%d target_tgid=%d target_comm=%.16s group=%d result=%d\n",
+		sig, code, ramoops_diag_sig_count[sig],
+		task_pid_nr(current), task_tgid_nr(current),
 		current->comm, task_pid_nr(task), task_tgid_nr(task),
 		task->comm, group, result);
 }
@@ -1132,6 +1169,11 @@ static void ramoops_diag_process_exit(void *unused, struct task_struct *task)
 		return;
 	if (task_pid_nr(task) != task_tgid_nr(task))
 		return;
+	ramoops_diag_exit_total++;
+	if (ramoops_diag_exit_printed >= RAMOOPS_EXIT_DIAG_FIRST &&
+	    (ramoops_diag_exit_printed % RAMOOPS_EXIT_DIAG_EVERY))
+		return;
+	ramoops_diag_exit_printed++;
 	group_exit = (unsigned int)!!(READ_ONCE(task->signal->flags) & SIGNAL_GROUP_EXIT);
 	pr_info("DIAG process_exit pid=%d tgid=%d comm=%.16s exit_code=0x%x group_exit_code=0x%x group_exit=%u\n",
 		task_pid_nr(task), task_tgid_nr(task), task->comm,
@@ -1164,12 +1206,25 @@ static void ramoops_process_trace_start(struct ramoops_snapper *s)
 
 static void ramoops_process_trace_stop(struct ramoops_snapper *s)
 {
+	unsigned int sig, total = 0;
+
 	if (!s->process_registered)
 		return;
 	unregister_trace_sched_process_exit(ramoops_diag_process_exit, NULL);
 	unregister_trace_signal_generate(ramoops_diag_signal_generate, NULL);
 	tracepoint_synchronize_unregister();
 	s->process_registered = false;
+
+	/* The counts are the part that must not be lost by the sampling. */
+	for (sig = 1; sig < RAMOOPS_SIG_DIAG_MAX; sig++) {
+		if (!ramoops_diag_sig_count[sig])
+			continue;
+		total += ramoops_diag_sig_count[sig];
+		pr_info("DIAG signal_count sig=%d count=%u\n", sig,
+			ramoops_diag_sig_count[sig]);
+	}
+	pr_info("DIAG capture totals: signals=%u exits=%u exits_printed=%u\n",
+		total, ramoops_diag_exit_total, ramoops_diag_exit_printed);
 }
 
 /*
@@ -1970,12 +2025,23 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 #define TISSOT_APPS_WDT_STS	0x44
 #define TISSOT_APPS_WDT_BARK	0x4c
 #define TISSOT_APPS_WDT_BITE	0x5c
+
+static u32 ramoops_apps_wdt_last[4];
 static void ramoops_debug_apps_wdt(void)
 {
 	void __iomem *wdt;
 	u32 en, sts, bark, bite;
 	u32 en2, sts2, bark2, bite2;
+	static unsigned int calls;
 
+	/*
+	 * run266: this runs from the panic and reset paths and from the
+	 * periodic snapshot, and it printed 3070 times in one boot - two
+	 * lines per call - which is a quarter of the console the kgsl
+	 * evidence needs. The registers do not change between calls
+	 * (en/sts/bark/bite are stable in every run266 sample), so print the
+	 * first few calls and then only when the values change.
+	 */
 	wdt = ioremap(TISSOT_APPS_WDT_BASE, SZ_4K);
 	if (!wdt) {
 		pr_info("DIAG apps_wdt ioremap failed\n");
@@ -1993,10 +2059,26 @@ static void ramoops_debug_apps_wdt(void)
 	bark2 = readl_relaxed(wdt + 0x10);
 	bite2 = readl_relaxed(wdt + 0x14);
 	iounmap(wdt);
-	pr_info("DIAG apps_wdt en=%08x sts=%08x bark=%08x bite=%08x\n",
-		en, sts, bark, bite);
-	pr_info("DIAG apps_wdt2 en=%08x sts=%08x bark=%08x bite=%08x\n",
-		en2, sts2, bark2, bite2);
+
+	if (calls < 8) {
+		calls++;
+		pr_info("DIAG apps_wdt en=%08x sts=%08x bark=%08x bite=%08x\n",
+			en, sts, bark, bite);
+		pr_info("DIAG apps_wdt2 en=%08x sts=%08x bark=%08x bite=%08x\n",
+			en2, sts2, bark2, bite2);
+		return;
+	}
+
+	/* After that, only when something actually moved. */
+	if (en != ramoops_apps_wdt_last[0] || sts != ramoops_apps_wdt_last[1] ||
+	    bark != ramoops_apps_wdt_last[2] || bite != ramoops_apps_wdt_last[3]) {
+		ramoops_apps_wdt_last[0] = en;
+		ramoops_apps_wdt_last[1] = sts;
+		ramoops_apps_wdt_last[2] = bark;
+		ramoops_apps_wdt_last[3] = bite;
+		pr_info("DIAG apps_wdt changed en=%08x sts=%08x bark=%08x bite=%08x\n",
+			en, sts, bark, bite);
+	}
 }
 
 static void __iomem *ramoops_diag_map(void)

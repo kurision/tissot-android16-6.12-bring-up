@@ -68,6 +68,7 @@ static void _process_event_group(struct kgsl_device *device,
 {
 	struct kgsl_event *event, *tmp;
 	unsigned int timestamp;
+	unsigned int pending = 0;
 	struct kgsl_context *context;
 
 	if (group == NULL)
@@ -101,7 +102,28 @@ static void _process_event_group(struct kgsl_device *device,
 	group->processed = timestamp;
 
 out:
+	list_for_each_entry(event, &group->events, node)
+		pending++;
+
 	spin_unlock(&group->lock);
+
+	/*
+	 * run266: an event that stays on the list is a fence the display
+	 * will keep waiting for. Sampled, for the same console reason.
+	 */
+	{
+		static unsigned int calls;
+
+		unsigned int n = calls;
+
+		if (n < 64 || !(n % 256)) {
+			calls = n + 1;
+			pr_info("DIAG event_group ts=%u processed=%u pending=%u flush=%d calls=%u\n",
+				timestamp, group->processed, pending, flush,
+				calls);
+		}
+	}
+
 	kgsl_context_put(context);
 }
 

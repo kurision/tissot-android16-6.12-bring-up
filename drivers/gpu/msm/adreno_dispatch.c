@@ -2897,6 +2897,8 @@ static void _dispatcher_update_timers(struct adreno_device *adreno_dev)
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 	struct adreno_dispatcher *dispatcher = &adreno_dev->dispatcher;
+	bool preempt, empty = true;
+	unsigned int inflight;
 
 	/* Kick the idle timer */
 	mutex_lock(&device->mutex);
@@ -2906,12 +2908,38 @@ static void _dispatcher_update_timers(struct adreno_device *adreno_dev)
 	mutex_unlock(&device->mutex);
 
 	/* Check to see if we need to update the command timer */
-	if (adreno_in_preempt_state(adreno_dev, ADRENO_PREEMPT_NONE)) {
+	preempt = adreno_in_preempt_state(adreno_dev, ADRENO_PREEMPT_NONE);
+	if (!preempt) {
 		struct adreno_dispatcher_drawqueue *drawqueue =
 			DRAWQUEUE(adreno_dev->cur_rb);
 
-		if (!adreno_drawqueue_is_empty(drawqueue))
+		empty = adreno_drawqueue_is_empty(drawqueue);
+		if (!empty)
 			mod_timer(&dispatcher->timer, drawqueue->expires);
+	}
+
+	/*
+	 * run266: the dispatcher is the only caller of
+	 * kgsl_process_event_groups(), and the event groups are the only
+	 * thing that releases the GPU fences the display waits on. If the
+	 * command timer is not re-armed here, the dispatcher stops, and
+	 * every fence after this point stays unsignalled: the display
+	 * times out, drops frames and spins. Print the decision, so the
+	 * logdump shows which of the three conditions stopped the
+	 * re-arm. Sampled: the console is a 1 MiB ring.
+	 */
+	inflight = dispatcher->inflight;
+	{
+		static unsigned int calls;
+
+		unsigned int n = calls;
+
+		if (n < 64 || !(n % 256)) {
+			calls = n + 1;
+			pr_info("DIAG dispatcher_timers inflight=%u preempt=%d empty=%d rearmed=%d calls=%u\n",
+				inflight, preempt, empty, !preempt && !empty,
+				calls);
+		}
 	}
 }
 
