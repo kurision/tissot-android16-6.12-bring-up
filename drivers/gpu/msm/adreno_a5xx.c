@@ -1463,10 +1463,6 @@ static void a5xx_dump_bringup(struct adreno_device *adreno_dev,
 	kgsl_regread(device, A5XX_CP_STATUS_1, &cp_status);
 	kgsl_regread(device, A5XX_CP_HW_FAULT, &hw_fault);
 
-	dev_info(device->dev,
-		 "DIAG bringup[%s]: rbbm=%08X int0=%08X rb_ptr=%X/%X rb_base=%08X cp_status_1=%08X cp_hw_fault=%08X gfx_rate=%lu\n",
-		stage, status, intstatus, rptr, wptr, base, cp_status, hw_fault,
-		kgsl_get_clkrate(pwr->grp_clks[0]));
 }
 
 /*
@@ -1834,9 +1830,6 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 	const struct adreno_a5xx_core *a5xx_core = to_a5xx_core(adreno_dev);
 	uint64_t gpuaddr;
 
-	dev_info(device->dev,
-		"DIAG microcode: entry zap_loaded=%u secured=%u\n",
-		adreno_dev->zap_loaded, device->mmu.secured);
 
 	gpuaddr = pm4_fw->memdesc.gpuaddr;
 	kgsl_regwrite(device, A5XX_CP_PM4_INSTR_BASE_LO,
@@ -1850,7 +1843,6 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 	kgsl_regwrite(device, A5XX_CP_PFP_INSTR_BASE_HI,
 				upper_32_bits(gpuaddr));
 
-	dev_info(device->dev, "DIAG microcode: instr-base written\n");
 
 	/*
 	 * Resume call to write the zap shader base address into the
@@ -1881,11 +1873,8 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 	 * to CPU access to SECVID_TRUST_CNTL can fault on protected parts.
 	 */
 	if (a5xx_core->zap_name && !adreno_dev->zap_loaded) {
-		dev_info(device->dev, "DIAG microcode: zap begin name=%s\n",
-				a5xx_core->zap_name);
 		ptr = adreno_zap_subsystem_get(&device->pdev->dev,
 				a5xx_core->zap_name);
-		dev_info(device->dev, "DIAG microcode: zap done ptr=%p\n", ptr);
 
 		/* Return error if the zap shader cannot be loaded */
 		if (IS_ERR_OR_NULL(ptr))
@@ -1893,7 +1882,6 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 		adreno_dev->zap_loaded = 1;
 	}
 
-	dev_info(device->dev, "DIAG microcode: done\n");
 
 	return 0;
 }
@@ -2105,22 +2093,7 @@ static void diag_gpu_smmu_state(struct adreno_device *adreno_dev,
 	}
 
 
-	dev_info(device->dev,
-		 "DIAG gpu_smmu: cb=%s sctlr=%08x translating=%u ttbr0=%016llx fsr=%08x mmu_type=%u\n",
-		 cb ? "gfx3d_user" : "unavailable", sctlr, !!(sctlr & 0x1),
-		 (unsigned long long)ttbr0, fsr, device->mmu.type);
 
-	dev_info(device->dev,
-		 "DIAG gpu_memdesc: rb{gpu=%016llx phys=%016llx sz=%llu} memstore{gpu=%016llx phys=%016llx} pm4{gpu=%016llx phys=%016llx} pfp{gpu=%016llx phys=%016llx}\n",
-		 (unsigned long long)rb->buffer_desc.gpuaddr,
-		 (unsigned long long)diag_memdesc_phys(&rb->buffer_desc),
-		 (unsigned long long)rb->buffer_desc.size,
-		 (unsigned long long)device->memstore.gpuaddr,
-		 (unsigned long long)diag_memdesc_phys(&device->memstore),
-		 (unsigned long long)pm4->gpuaddr,
-		 (unsigned long long)diag_memdesc_phys(pm4),
-		 (unsigned long long)pfp->gpuaddr,
-		 (unsigned long long)diag_memdesc_phys(pfp));
 }
 
 /*

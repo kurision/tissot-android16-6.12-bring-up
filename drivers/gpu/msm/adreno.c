@@ -1552,7 +1552,6 @@ static int adreno_probe(struct platform_device *pdev)
 	 */
 	if (adreno_support_64bit(adreno_dev)) {
 		device->mmu.features |= KGSL_MMU_64BIT;
-		dev_info(device->dev, "DIAG KGSL_MMU_64BIT enabled\n");
 	}
 	if (adreno_is_a6xx(adreno_dev))
 		device->mmu.features |= KGSL_MMU_SMMU_APERTURE;
@@ -2127,9 +2126,6 @@ int adreno_set_unsecured_mode(struct adreno_device *adreno_dev,
 				adreno_readreg(adreno_dev,
 					ADRENO_REG_RBBM_SECVID_TRUST_CONTROL,
 					&trust);
-			dev_info(KGSL_DEVICE(adreno_dev)->dev,
-				"DIAG secvid: zap_loaded=%d ret=%d trust_cntl=%08x\n",
-				adreno_dev->zap_loaded, ret, trust);
 		}
 	}
 
@@ -2179,8 +2175,6 @@ static int _adreno_start(struct adreno_device *adreno_dev)
 	 * power-on/MMU steps below. One marker per step localises it.
 	 * Read-only; no success-path behaviour changes.
 	 */
-	dev_info(device->dev, "DIAG _adreno_start: entry state=%u\n",
-			device->state);
 
 	/* disallow l2pc during wake up to improve GPU wake up time */
 	kgsl_pwrctrl_update_l2pc(&adreno_dev->dev,
@@ -2191,8 +2185,6 @@ static int _adreno_start(struct adreno_device *adreno_dev)
 
 	regulator_left_on = regulators_left_on(device);
 
-	dev_info(device->dev, "DIAG _adreno_start: rail-probe left_on=%d\n",
-			regulator_left_on);
 
 	/*
 	 * Keep high bus vote to reduce AHB latency
@@ -2202,22 +2194,14 @@ static int _adreno_start(struct adreno_device *adreno_dev)
 		msm_bus_scale_client_update_request(device->pwrctrl.gpu_cfg,
 			KGSL_GPU_CFG_PATH_HIGH);
 
-	dev_info(device->dev,
-		 "DIAG _adreno_start: bus-cfg-high done gpu_cfg=%u\n",
-		 device->pwrctrl.gpu_cfg);
 
 	/* Put the GPU in a responsive state */
 	status = kgsl_pwrctrl_change_state(device, KGSL_STATE_AWARE);
 	if (status) {
-		dev_info(device->dev,
-			 "DIAG _adreno_start: AWARE failed status=%d\n",
 			 status);
 		goto error_pwr_off;
 	}
 
-	dev_info(device->dev,
-		 "DIAG _adreno_start: AWARE ok state=%u gfx_rate=%lu\n",
-		 device->state, kgsl_get_clkrate(device->pwrctrl.grp_clks[0]));
 
 	/* Set any stale active contexts to NULL */
 	adreno_set_active_ctxs_null(adreno_dev);
@@ -2253,13 +2237,9 @@ static int _adreno_start(struct adreno_device *adreno_dev)
 
 	status = kgsl_mmu_start(device);
 	if (status) {
-		dev_info(device->dev,
-			 "DIAG _adreno_start: mmu-start failed status=%d\n",
-			 status);
 		goto error_boot_oob_clear;
 	}
 
-	dev_info(device->dev, "DIAG _adreno_start: mmu-start ok\n");
 
 	/* Send OOB request to turn on the GX */
 	status = gmu_core_dev_oob_set(device, oob_gpu);
@@ -2274,13 +2254,9 @@ static int _adreno_start(struct adreno_device *adreno_dev)
 		goto error_oob_clear;
 	}
 
-	dev_info(device->dev,
-		 "DIAG _adreno_start: gmu-path done (secured=%u)\n",
-		 device->mmu.secured);
 
 	_set_secvid(device);
 
-	dev_info(device->dev, "DIAG _adreno_start: secvid done\n");
 
 	/*
 	 * Gate this on the MMU's own VA regime, not on adreno_support_64bit(),
@@ -2292,9 +2268,6 @@ static int _adreno_start(struct adreno_device *adreno_dev)
 			MMU_FEATURE(&device->mmu, KGSL_MMU_64BIT))
 		gpudev->enable_64bit(adreno_dev);
 
-	dev_info(device->dev,
-		 "DIAG _adreno_start: addr-mode done 64bit=%lu\n",
-		 MMU_FEATURE(&device->mmu, KGSL_MMU_64BIT));
 
 	if (device->pwrctrl.bus_control) {
 		/* VBIF waiting for RAM */
@@ -2417,7 +2390,6 @@ static int _adreno_start(struct adreno_device *adreno_dev)
 	/* Start the GPU */
 	gpudev->start(adreno_dev);
 
-	dev_info(device->dev, "DIAG _adreno_start: gpu-start returned\n");
 
 	/*
 	 * The system cache control registers
