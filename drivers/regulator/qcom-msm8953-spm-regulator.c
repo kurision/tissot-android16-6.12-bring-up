@@ -107,13 +107,8 @@ static const struct voltage_range hf_range1 = {1550000, 1550000, 3125000, 25000}
  */
 static const struct regmap_config spmi_regulator_regmap_config = {
 	.max_register = 0xffff,
-	/*
-	 * regmap_init() rejects a config with reg_bits 0, and the SPMI base
-	 * bus reads one byte of address per register, so it has to be 8 here.
-	 * This was the -EINVAL: with no reg_bits the regmap was never created,
-	 * so no rail of this driver could ever probe.
-	 */
-	.reg_bits = 8,
+	/* Preserve the peripheral base in absolute addresses such as 0x2004. */
+	.reg_bits = 16,
 	.val_bits = 8,
 };
 
@@ -927,8 +922,8 @@ static int qcom_spm_reg_probe(struct platform_device *pdev)
 		return dev_err_probe(&pdev->dev, -EINVAL, "no SPMI parent\n");
 
 	reg->regmap =
-		devm_regmap_init_spmi_base(to_spmi_device(pdev->dev.parent),
-					   &spmi_regulator_regmap_config);
+		devm_regmap_init_spmi_ext(to_spmi_device(pdev->dev.parent),
+					  &spmi_regulator_regmap_config);
 	if (IS_ERR(reg->regmap))
 		return dev_err_probe(&pdev->dev, PTR_ERR(reg->regmap),
 				     "SPMI regmap creation failed\n");
@@ -936,7 +931,8 @@ static int qcom_spm_reg_probe(struct platform_device *pdev)
 	if (!reg->bypass_spm) {
 		reg->spm = devm_msm8953_spm_get(&pdev->dev);
 		if (IS_ERR(reg->spm))
-			return PTR_ERR(reg->spm);
+			return dev_err_probe(&pdev->dev, PTR_ERR(reg->spm),
+					     "SAW4 voltage controller lookup failed\n");
 	}
 
 	rc = of_property_read_u32(pdev->dev.of_node, "reg", &base);

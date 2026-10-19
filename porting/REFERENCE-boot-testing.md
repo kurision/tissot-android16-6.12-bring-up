@@ -9,7 +9,7 @@ was observed this session; commands assume adb serial `2819f2320604`.
 
 | Tool | What it does | Gotchas |
 |---|---|---|
-| `usb-boot-capture.py` | adb reboot bootloader → `fastboot boot` (RAM only) → stream `/dev/ttyACM0` (diag gadget `18d1:9008` serial `tissot-diag`) until the EOF marker | Needs **pyserial** (`/tmp/kgsl-capture-venv` was made with `uv venv` + `uv pip install pyserial`; system python has no pip). The ACM stream **dies when adbd takes over the USB** — a `reader-error ... device disconnected` with 0 bytes can still be a *successful* boot; the durable evidence is the logdump/pstore, not ACM. Never poll the job; it has no host deadline. |
+| `usb-boot-capture.py` | adb reboot bootloader → `fastboot boot` (RAM only) → stream `/dev/ttyACM0` (diag gadget `18d1:9008` serial `tissot-diag`) until the EOF marker. **Only for inits built with `-DANDROID_USB_CONSOLE`**; the default build creates no gadget, so expect the device never to appear. Needs **pyserial** (`/tmp/kgsl-capture-venv` was made with `uv venv` + `uv pip install pyserial`; system python has no pip). Never poll the job; it has no host deadline. |
 | `package-diag-boot.py` | Builds the boot image: base header/ramdisk from the previous snapshot, new kernel from a `kdir/`, new `init` cpio record only. Asserts every other record/header byte survives. | Refuses to overwrite outputs. `--keep-stock-console` (added 2026-10-10) keeps `console=tty0` instead of forcing `console=ttynull` — required for panel-visible panic capture. `kdir/` must contain `Image.gz`, `Image.gz-dtb`, `msm8953-xiaomi-tissot.dtb`, and a matching `SHA256SUMS`. |
 | `clear-logdump.sh <tag>` | Zeroes the 64 MiB logdump partition pre-boot and proves readback-zero | Needs `su`; works on the stock ROM, exits **127 on the port kernel**. Run from the snapshot dir; writes `<tag>-preclear.*`. |
 | `pull-run-evidence.sh <run> <image>` | Pulls `/dev/block/by-name/logdump` (67108864 B, sha-verified) → `<tag>-logdump.bin` + readable `-logdump.log` + `-sd.log`; validates pstore slots (magic `RAMO`, DBGC console) | Run from a `snapshot<N>/` dir; needs `su` + adb `shell_v2`. Refuses to overwrite existing evidence. Exit 1 if nothing valid — that is the "no kernel log" signal. |
@@ -65,28 +65,47 @@ Levers, in order of cost:
    that boot's own shutdown overwrites it; the stock 4.19's ramoops is a
    different region (0x91400000) and has no `/dev/mem`, so it cannot read it.
 
-### The UDC-handoff capture cutoff (tooling defect, not a boot defect)
+### The diag USB console is off by default (run234) — read this before trusting a capture
 
-The diag init's `guard_usb_handoff` (`scripts/initramfs-diag/init.c:777-818`)
-unbinds the ACM function at the vendor stack's configfs switch. `write_all`
-then fails, and `write_capture` used to return -1 for **both** sinks, ending
-`dump_log` for the SD mirror too — at `t≈23.6 s`, 504 lines / 39 KB. Control
-boots cut off identically (run16: 491 lines, last `seq=433, t=23.6 s`), which
-is how to tell this apart from a driver fault: a kgsl-only cutoff is suspect,
-but an identical cutoff on a known-good control is the tooling.
+**The ACM console is no longer built.** `setup_gadget()`, `open_usb_sink()` and
+`guard_usb_handoff()` are gated behind `-DANDROID_USB_CONSOLE`
+(`scripts/initramfs-diag/init.c`), which the default build omits.
 
-Fixed by making the sinks independent — `write_capture` now returns a bitmask
-(bit 0 primary, bit 1 mirror), `dump_log` retires a dead primary (`out = -1`)
-and keeps the SD mirror running to its 900 s deadline, and `sinks_dead()`
-stops the loop only when nothing is left. Covered by
-`sink_retirement_selftest` in `init.c`. Everything past the handoff exists
-only in the SD log afterwards; on the panel it is `console=tty0`, over UART
-only with an adapter attached.
+Why: the diag gadget binds the board's only UDC, so adbd can never bind and
+**adb never enumerates on the port kernel**. The `sys.usb.configfs` handoff
+that used to release the UDC did not fire, and because `open_sink()` only
+falls back to USB when the logdump partition is unavailable — which it never
+is — the gadget bought nothing and cost adb. run234 dropped it and adb came up
+~35 s after boot. Re-enable with `-DANDROID_USB_CONSOLE` if a live console is
+ever needed again.
 
-Poll adb every **4 s** for the first 150 s of a boot
-(`snapshot60/run25-adb-timeline.log.py`). Slower polls land entirely after the
-device resets and report the stock 4.19 kernel, which is what made adb look
-broken in earlier runs.
+**This is what produced the false "reset".** With the gadget bound, every
+capture stopped at ~42-43.7 s, and for many runs that cutoff was read as the
+board dying. It was not: the logdump snapshots show the port kernel running to
+1695.9 s (run231), 331.4 s (run232) and 323.5 s (run233), each ending
+mid-`init` with no panic, SError or reset markers. Any conclusion drawn from
+where a capture stopped — the "~89 s reset", the "~47 s silence", the
+PS_HOLD/cold-boot and TrustZone-watchdog theories — is void. **Read the
+logdump, not the capture length, before calling anything a reset.**
+
+Boot and collect evidence without the ACM stream:
+
+```sh
+bash porting/logging/clear-logdump.sh <run>            # while stock adb is up
+adb -s 2819f2320604 reboot bootloader
+fastboot -s 2819f2320604 boot boot-run<N>.img         # RAM only, nothing flashed
+# poll adb; on the port kernel it comes up in ~35 s
+bash porting/logging/pull-run-evidence.sh <N> boot-run<N>.img   # after a later stock boot
+```
+
+`usb-boot-capture.py` still works for images built with
+`-DANDROID_USB_CONSOLE`, and `package-diag-boot.py` refuses to overwrite an
+existing `--out` file — a silent no-op that looks like "the flag was ignored".
+Use a fresh name.
+
+A transient `PermissionError` on `/dev/ttyACM0` is a udev race (the node is
+recreated root-owned 0600 on each re-enumeration), not a device fault. Retry
+the open; don't conclude anything from the first failure.
 
 ## Pitfalls that cost real cycles (2026-10-10)
 
@@ -171,28 +190,31 @@ Do not rerun an old fragment merge or use a host-architecture make command.
 Build the kernel with the existing arm64 wrapper/environment; the only
 kernel source change for this experiment is the pstore diagnostic extension.
 
-From the kernel repository root, using the existing static arm64 libc
-toolchain for the diagnostic init:
+From the kernel repository root, using the static arm64 toolchain for the
+diagnostic init:
 
 ```sh
-aarch64-linux-musl-gcc -Os -static \
+aarch64-linux-gnu-gcc -Os -static \
   -DANDROID_CAPTURE -DANDROID_EARLY_LOGCAT \
   scripts/initramfs-diag/init.c \
-  -o porting/artifacts/snapshot60/init-run83
+  -o porting/artifacts/snapshot60/init-run<N>
 ```
 
-Run84 is init-only: reuse the verified run83 kernel payload, rebuild
-only init with the same defines (now including the committed
-`ack-sync-loop` service), and repackage from the run83 kernel. If the
-build host did not retain `kdir-run83`, reconstruct it by splitting
-`boot-run83.img`'s kernel payload at the DTB magic (`d00dfeed`),
-writing `Image.gz`, the DTB and fresh `SHA256SUMS`. No kernel rebuild,
-no config/DT/policy change.
+**Toolchain correction (run234).** This section previously said
+`aarch64-linux-musl-gcc`, and the tracker elsewhere mentions
+`zig cc -target aarch64-linux-musl`. Both are wrong for recent runs: neither
+`zig` nor any musl cross-toolchain is installed on this host, and the shipped
+`init-run228` is demonstrably **glibc**, not musl — its fingerprint carries
+`_IO_stdin_used` and `__libc_start_main` with no musl `__init_libc`, and
+`guard_usb_handoff` disassembles instruction-identical to a build made with
+`aarch64-linux-gnu-gcc -Os -static`. Use the gcc command above.
 
-If the previous init used additional build defines, retain those too.
-`BOOT_DEADLINE_SECONDS` must stay zero. The compiler name above is the
-musl cross-toolchain convention; use the equivalent existing compiler if
-that machine uses another static libc toolchain.
+Do not add `-DANDROID_USB_CONSOLE` by default; see the section above on why the
+diag gadget is off. Add it only when a live console stream is specifically
+needed, and expect adb to stop working.
+
+`BOOT_DEADLINE_SECONDS` must stay zero. Keep any additional defines the
+previous init used.
 
 After building fresh `out/arch/arm64/boot/Image.gz` and the unchanged DTB:
 

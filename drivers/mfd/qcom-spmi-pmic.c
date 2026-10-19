@@ -71,6 +71,7 @@ static const struct of_device_id pmic_spmi_id_table[] = {
 	{ .compatible = "qcom,pm8937", .data = N_USIDS(2) },
 	{ .compatible = "qcom,pm8941", .data = N_USIDS(2) },
 	{ .compatible = "qcom,pm8950", .data = N_USIDS(2) },
+	{ .compatible = "qcom,pm8953", .data = N_USIDS(2) },
 	{ .compatible = "qcom,pm8994", .data = N_USIDS(2) },
 	{ .compatible = "qcom,pm8998", .data = N_USIDS(2) },
 	{ .compatible = "qcom,pma8084", .data = N_USIDS(2) },
@@ -299,11 +300,13 @@ static int pmic_spmi_probe(struct spmi_device *sdev)
 	if (sdev->usid % ctx->num_usids == 0) {
 		ret = pmic_spmi_load_revid(regmap, &sdev->dev, &ctx->pmic);
 		if (ret < 0)
-			return ret;
+			return dev_err_probe(&sdev->dev, ret,
+					     "failed to read PMIC revision\n");
 	} else {
 		ret = pmic_spmi_get_base_revid(sdev, ctx);
 		if (ret)
-			return ret;
+			return dev_err_probe(&sdev->dev, ret,
+					     "failed to get base PMIC revision\n");
 	}
 
 	mutex_lock(&pmic_spmi_revid_lock);

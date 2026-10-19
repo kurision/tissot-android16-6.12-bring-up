@@ -1,4 +1,5 @@
 # Working rules for this repo
+Don't do clean builds unless required, use the default /out dir no need to create out dir per run.
 
 ## Agent workflow
 

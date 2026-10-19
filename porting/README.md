@@ -1,5 +1,305 @@
 # tissot / Mi A1 → android-mainline
 
+## The port in full: 231 commits, 2026-10-06 → 2026-10-18
+
+This is the whole journey, not just the GPU endgame. It spans **two branches**
+and you need both to read it:
+
+| branch | commits | dates | what it is |
+|---|---|---|---|
+| `mdss-bisect` | **231** | 2026-10-06 → 10-16 | the real work: QSEECom, ION, display, WLAN, policy, then the GPU |
+| `master` | 28 | 2026-10-17 → 10-18 | a fresh re-import at "run198" plus the SError fix and adb unlock |
+
+They share **no merge base** — different root commits (`ae580fc8a` vs
+`4d4fcc16b`), because the original repo was deleted and `master` was rebuilt
+from the finished tree. So `master`'s 28 commits contain almost none of the
+history that produced the driver, and reading only `master` badly understates
+the effort. Author breakdown on `mdss-bisect`: 226 commits Anil Kumal, 5
+sneha.katwal.
+
+Commit character on `mdss-bisect`, which tells you how the work was done:
+
+```
+diag:     30     porting:  34     docs:    56
+fix(:      6     feat(:     1     port(:    2
+```
+
+Roughly **120 of 231 commits are diagnostics and evidence**, not code. That is
+the actual methodology: instrument, boot, read, conclude, revert. Several
+commits are explicit reverts of earlier diagnostics that turned out to be wrong
+(`58bcef215`, `a7fe6fb5a`, `876248591`), and one
+(`377949eac docs: the device fragment was never merged; 17 built-ins missing
+from every shipped kernel`) documents a multi-day config mistake.
+
+### Day by day
+
+**2026-10-06 — foundation (10 commits).** Snapshot of ACK android16-6.12,
+relocate ramoops, keep bring-up tooling, then `23f85fef1` imports the first
+real port chunk: QSEECom/ION 6.12-API migration, the OTM1911 DRM panel, WLED and
+fbcon DT, tissot display nodes. `compat_ion` is added because upstream's
+`compat_alloc_user_space` is gone, so the stack-carve helper had to be kept.
+
+**2026-10-07 — QSEECom from the ground up (33 commits).** This is the work you
+asked about, and it is the single biggest item in the port.
+`a33336265 port(tissot): legacy QSEECom + ION bring-up for ACK 6.12` writes
+`drivers/misc/qseecom.c` — **10,317 lines** — because upstream has no such
+driver. Note that upstream *does* ship a QSEECom driver, but it is a different
+thing: `drivers/firmware/qcom/qcom_qseecom.c` is 120 lines, a 2023 Maximilian
+Luz rewrite, and is **disabled** in our config (`CONFIG_QCOM_QSEECOM=n`) while
+our `CONFIG_QSEECOM=y` selects the legacy one. The commit implements the legacy
+client ABI (20-byte MDTP compat ioctl, fixed-width CE forwarding), unlocked
+DMA-BUF use, platform-owned `dma_parms`, failed-open cleanup, and non-ICE key
+handling split from unsupported ICE.
+
+The rest of the day is the debugging that followed, and it is instructive:
+ION heaps bound to TZ-shared carveouts (`2f5c7e101`), carveout SMC spill with
+tzbuf backing and dma-buf locking (`15218cbd4`), QSEE SMC call/return tracing
+(`aaa1f484d`). Multiple policy commits (`bc871cd44`, `f5416e35a`, `7bea83fe8`)
+add SSD overlay contexts, observer debug grants and init relabel grants — the
+SELinux layer was load-bearing from day two, not a later addition.
+
+**2026-10-08 — proving the TEE path (10 commits).** A per-daemon liveness probe
+(`537a3ce83`) finds the recorder is blind to Android's `/proc`; a pid-ceiling
+probe (`613bdfc0a`) confirms there is no pid namespace to enter, so that probe
+is dead. Then `d0f4d613e` traces all QSEE svc-0 SMCs and asserts the selinux
+bootparam in the build — revealing **the device fragment was never merged and
+17 built-ins were missing from every previously shipped kernel**
+(`377949eac`). That is a process bug found by instrumenting the build rather
+than the device.
+
+**2026-10-09 — the widest day: USB/adb, display, touch, WLAN, FastRPC (41
+commits).** `86cf5e369` hands USB to adb. `f630f7c07` gets **adb working on 6.12
+via an init-driven USB handoff** — the first time a mainline kernel here talked
+to a host — and immediately finds graphics blocks boot. The adreno 506 GPU node
+is enabled (`e883a4be9`), GPU firmware staging and exfiltration added
+(`677e57dab`), and WCN3680 WLAN enabled with wcn36xx plus pronto PIL
+(`d62974bac`) with a build assertion to stop silent downgrades (`677226833`).
+Touch gets a real fix: `18cdcb220`/`394f6b75e` make edt-ft5x06 retry identify
+across reset toggles, and `ff2d31d65` allows 500 ms post-reset boot time — the
+touch row closes here. FastRPC/ADSP work begins, including harvesting modem
+firmware and rebinding ADSP/WCNSS late.
+
+**2026-10-10 — stage 1 passes, stage 2 begins (11 commits).**
+`f9d9b30f1 diag: add guard-input stager, the missing packaging step` and
+`fa37accb3 diag: take guard files verbatim, not derived; adb works on 6.12`
+close the adb gap. Headless stubs clear the crash loop (`9bbfe6f5c`), and the
+boot blocker is identified as surfaceflinger (`a1e4992dc`). Then
+`f3248eda0 gpu: bind tissot GPU node to kgsl, drop drm/msm claim` — the board
+now claims the GPU for KGSL and removes the `qcom,kgsl-3d0` entry from
+`adreno_device.c`'s dt_match **and** from `msm_drv.c`'s `msm_gpu_match`
+component list, without which msm_drm waits forever for a component that never
+binds. Stage 1 verdict: **PASS, display safe GPU-less**
+(`08aec7abf`). `7ba68117a` then vendors the donor's 90-file `drivers/gpu/msm`
+plus the **1,884-line uapi header kept verbatim as the blob ABI contract**,
+with driver-private compat layers replacing vendor-only APIs.
+
+**2026-10-13 — the MDSs silent-death bisect (33 commits).** The longest single
+investigation. Six run42 changes are reverted for a clean control
+(`db5ddd4a4`), then MDP silent-death is isolated to `idle_pc_restore` hw_init
+across runs 50–62 (`6ad77e420`), followed by full-probe plus a 45 s defer
+(`c510185d0`). Display probes for runs 66–76 (`0b426ffb2`) add a vreg guard,
+fbcon off, deferred kick, fb traces and selinux probes, landing on a composer
+policy block. `ff6c9b18a` adds the policy-append hook and mdss caps delta.
+Run85 reaches **BootAnimation plus GPU start -110** (`e542e2744`). GPU power
+transitions are traced (`68f757b9b`) and then reverted (`58bcef215`) when the
+volume proves unhelpful.
+
+**2026-10-14 — watchdog exoneration and the DSI PLL (41 commits).** A
+systematic watchdog audit concludes **stock pets the watchdogs and the port
+builds none** (`f835efb01`, `474163070`), which closes off a whole class of
+theory. Per-access eMMC markers and reserved-RAM markers are developed because
+the VFS markers do not survive (`58e6c03cf`), and `f834a9b1e mdss: skip late
+hw_init when MDSS is runtime-suspended` is the real display fix. Run116 finds a
+**DSI PLL defect** (`0dfba107b`). ashmem is enabled and the DSI PLL lifecycle
+repaired (`17a964539`), fbdev probes MDP without the boottime gate
+(`5a970d696`), and KGSL registers a CPU latency QoS request (`537a374fa`).
+
+**2026-10-15 — context-bank ownership and battery (9 commits).** KGSL cannot
+reach its SMMU path until `250485599 gpu: give the gpu context bank a single
+owner`, refined by `fef07bec1 gpu: keep kgsl NOMMU and leave the gpu context
+bank untranslated`. The QPNP fuel gauge and charger land (`48a3edebe`), the
+PMI8950 VADC reference channels are defined so the charger binds
+(`a32fe6a2a`), and the battery supply is labelled so the charging-control HAL
+registers.
+
+**2026-10-16 — FastRPC, and the GPU hang chain (43 commits).** Packaging is
+hardened against duplicate ramdisk records (`9cc4eaab3`). FastRPC converges:
+a DMA pool is added and reverted (`5080f3fab`/`a7fe6fb5a`) because the real
+problem is a **node-name mismatch** (`d6ec3cfc5`, `a07c1b12c`), then the
+missing session is found (`5a2768b8c`), then run149 shows adsprpc failing at an
+unimplemented ioctl 12 rather than a driver bug (`6d11ff430`) — with the scope
+corrected again because **CAF ioctl numbering differs from mainline**
+(`0df15065a`). Two policy label attempts are made and reverted
+(`bd02a4791`/`876248591`), the second documenting that **genfscon type validity
+is not checkable offline** (`d9c1ba0fa`). The GPU hang is then narrowed step by
+step: hangs at ME_INIT but boot completes anyway (`3c5c8c250`), the ring base is
+correct and the hang predates ME_INIT (`623bc708b`), RBBM state is sampled at
+three points in `a5xx_start()` (`c2dd623be`), clean through `a5xx_start()` and
+hanging at microcode load (`01cbe43a0`), bracketed with state probes
+(`ac7728da2`, `5ee66cef0`), and finally `4aafe26dc msm: kgsl: soft reset A5xx on
+start when GX power is not regulator managed`. A506 KGSL quirks are restored in
+DT (`c72069425`), and CP fetch-pointer IB dumps land (`12fd6a087`, `8f6a13ced`).
+
+**2026-10-17 → 10-18 — `master`: the SError and adb (28 commits).** Re-imported
+at run198. `0fc24c807` makes the IOMMU use CAF's page-table format for the GPU
+bank. The QMSSU SError fix and the false-reset retraction (`915bcfa1f`) and the
+UDC/adb unlock (`24bcdc3ed`) — detailed in the sections below. A parallel work
+stream adds `msm8953-apm.c` and `qcom-msm8953-mem-acc.c` (`60d877157`).
+
+### What "written from the ground up" actually covers
+
+Not just QSEECom. Written or substantially rewritten for this port:
+
+| component | size | note |
+|---|---|---|
+| `drivers/misc/qseecom.c` | 10,317 lines | legacy TEE client; upstream has no equivalent |
+| `drivers/staging/android/ion` + `compat_ion` | — | upstream `compat_alloc_user_space` removed |
+| `drivers/gpu/msm/` (KGSL) | 90 files, ~76k lines | vendor 4.19 → 6.12 |
+| `include/uapi/linux/msm_kgsl.h` | 1,884 lines | kept verbatim; blob ABI contract |
+| `scripts/initramfs-diag/init.c` | — | custom static init; see trickery below |
+| `drivers/soc/qcom/msm8953-apm.c`, `drivers/regulator/qcom-msm8953-mem-acc.c` | 233 / 155 | in flight on `master` |
+
+The KGSL port also needed driver-private compat layers for vendor-only APIs:
+`msm-bus-compat.c` (legacy `msm_bus_scale_*` parsed from `qcom,msm-bus,*` DT
+properties, falling back to accepted no-op votes when the interconnect path is
+absent, since bus voting is perf-only) and `secure_buffer_compat.c`
+(`hyp_assign_table()`).
+
+### The trickery, and why each piece exists
+
+- **Custom diagnostic init** (`scripts/initramfs-diag/init.c`, static ARM64).
+  Installs read-only fstab and vendor contexts, appends actions to
+  `init.qcom.usb.rc` and `logd.rc` via bind mounts, holds a canonical bootdevice
+  alias, streams logcat to persistent storage, runs a `sync` loop so a hard
+  reset leaves evidence, and manages the USB handoff. This is the single
+  biggest reason any of the above was debuggable at all.
+- **SELinux policy work** — SSD overlay contexts, observer debug grants, init
+  relabel grants, composer caps deltas, backlight and battery supply labels,
+  and a policy-append hook in the packaging harness. Several of these are
+  explicit "temp-only TEE bypass" experiments to prove a downstream path.
+- **The UDC conflict** (`24bcdc3ed`). The diag ACM gadget binds the board's only
+  UDC, so adbd can never bind. Gated behind `ANDROID_USB_CONSOLE`, off by
+  default. This is what turned "the board resets" into "our own capture ended".
+- **pstore/ramoops logdump channel** — committed slots, bounded retry for late
+  eMMC attach, SEA fault context capture, and reset-path markers that survive
+  into the next boot.
+- **Firmware harvesting** — GPU/ADSP/WCNSS/modem firmware staged, exfiltrated
+  and rebound late, because upstream expects it staged and this ROM does not.
+- **Kernel command line** tuned for survivability: `panic=60`,
+  `ramoops.reset_capture=1`, `pstore.backend=ramoops`, `mdss_mdp_cold_boot=1`.
+
+---
+
+## Where this port got to: GPU booted, adb up, real rendering
+
+Summary of the journey from the initial tree to a booting kernel with a working
+GPU. Written 2026-10-18. Operational docs are listed under
+[Current ACK 6.12 port](#current-ack-612-port-2026-10-17) below.
+
+### Start state
+
+`4d4fcc16b android-6.12 port: tissot bring-up tree at run198`. The ACK 6.12
+tree already had upstream mainline support for this hardware — panel, sound
+card, touch, sensors, LED/haptics, UFS/SD, USB — but **no GPU driver at all**.
+`/dev/kgsl-3d0` did not exist, so the vendor `libGLESv2_adreno.so`, sdm HWC and
+gralloc all failed and SurfaceFlinger could not compose. The "GPU 3D" row of
+`FAILING-COMPONENTS.md` was backlog #1.
+
+### What had to be ported
+
+**KGSL, forward-ported from CAF OSS 4.19 to 6.12.** This was the bulk of the
+work: 93 files, ~76,000 lines under `drivers/gpu/msm/`, taken from the
+`../kgsl` CAF OSS tree at `2b2d762c` and converted to 6.12 APIs. Research and
+conversion criteria are in
+[REFERENCE-driver-forward-porting.md](REFERENCE-driver-forward-porting.md).
+Because a compile is not a port, each conversion was checked against upstream
+callers, the upstream conversion commit series, and the AOSP sources, with
+DMA-BUF reservation, page references vs DMA pins, and compatibility shims
+treated as explicit review targets.
+
+**SMMU page-table format for the GPU bank** (`0fc24c807`): mainline's
+`qcom_iommu` writes a different page-table format than the CAF SMMU driver the
+GPU's firmware expects.
+
+**Display** (`9462ebf80`, `0d5f9bbe4`, `b978a1d3e`): panel policy selected after
+node resolution, panel supply topology matched to the stock DT, and reset/TE
+pin states restored.
+
+**CPU/regulator prerequisites** (`60d877157`, in progress in a parallel work
+stream): `msm8953-apm.c` and `qcom-msm8953-mem-acc.c`.
+
+### Donor-contract violations found and fixed
+
+These were the substance of the port — places where a faithful API conversion
+still violated what the CAF driver actually guarantees. Fixed in
+`915bcfa1f`, and covered by 13 host regressions under
+`porting/logging/test_kgsl_*.py` (all pass under GCC and Clang with UBSan;
+`checkpatch --strict` clean):
+
+- msm-bus field order (`<src dst ab ib>`) and bytes/s → kB/s conversion
+- parser null-deref and double-free; interconnect lookup error handling;
+  signed-overflow dimension check
+- `pm_runtime_resume_and_get()` in `kgsl_open()`; IOMMU clock leak on
+  global-map failure
+- `_aware()` failure state and cleanup; `counter_delta()` baseline update
+- boottime snapshot timestamps; removed false `NR_SLAB_UNRECLAIMABLE_B`
+  accounting; post-start error propagation in `a5xx_rb_start()`
+- fail-closed MMU probing with `of_node_get/put` balance; `FOLL_LONGTERM`
+  pinning of user pointers; physical SG mapping/sync that fails loudly on ZAP
+  (`389156a34`)
+
+### The SMMU SError, and the false reset it caused
+
+The long-running blocker was an asynchronous `SError` (ESR `0xbf000002`)
+inside `kgsl_iommu_start()` on every GPU open, panicking the kernel. run230
+removed the port-added `_apply_impl_defs()` and the reported PC moved to an
+ordinary kernel load — proving the fault is asynchronous and its reported
+instruction was never the culprit. The remaining MMIO was KGSL re-programming
+the donor's `GPU_SMMU_HUM_CFG` (`0x6800`) and `GPU_SMMU_DORA_ORDERING`
+(`0x64a0`) on every start, under KGSL's own clock vote with no power or
+quiesce sequencing. CAF does that from the SMMU driver's power-sequenced reset
+path; mainline `qcom_iommu` writes neither register. Issuing those writes
+once per boot removed the fault (`915bcfa1f`).
+
+That fix also retired a long-running false lead. Runs 226–233 reported a
+"~89 s reset" with a "~47 s silence" before it, and an extensive PS_HOLD /
+TrustZone-watchdog theory was built on that. The logdump console snapshots
+disprove it: the port kernel was alive at **1695.9 s** (run231), **331.4 s**
+(run232) and **323.5 s** (run233), each ending mid-`init` with no panic,
+SError or reset marker. What ended every capture at ~43 s was our own ACM
+console stream stopping, not the board dying. Every conclusion derived from
+where a capture stopped is void.
+
+Two further trickery items, from the `master` era: the **`ramoops`/pstore
+logdump channel** (`9d8caf69a`, `03a27bebb`, plus the committed-slot and
+bounded-retry work on `mdss-bisect`) so a panic or reset still leaves a
+CRC-verifiable console afterwards; and **evidence discipline** — each run a
+single-variable change with cmdline, ramdisk, init and config held
+byte-identical (asserted with `cmp` before every build), treating the resolved
+`.config` as ground truth rather than the defconfig.
+
+### Verified end state (run234)
+
+Measured on the device, not inferred:
+
+- `uname -r` `6.12.93-4k`; `/dev/kgsl-3d0` present; adb up ~35 s after boot.
+- SurfaceFlinger: `GLES: Qualcomm, Adreno (TM) 506, OpenGL ES 3.2 V@0502.0` —
+  the 2020 vendor blob driving the ported driver, full GLES 3.2 extension set.
+- `screencap` returns a real 1080x1920 frame (lockscreen, wallpaper, status
+  bar, vendor USB dialog).
+
+That is `/dev/kgsl-3d0` with the stock ioctl ABI, the vendor EGL, gralloc and
+sdm HWC together — the "GPU 3D" row closed.
+
+**Still open:** the board has been observed returning to stock on some later
+boots (run235/run236); that reset is not yet explained and is the live
+question. Separately, several hardware buttons do not work (nav keys are never
+reported; the touch digitizer's measured range exceeds the declared one), and
+Bluetooth/WiFi/camera lack their vendor drivers entirely. A parallel work
+stream is currently landing CPU/regulator prerequisites
+(`msm8953-apm.c`, `qcom-msm8953-mem-acc.c`), which is a plausible thread to
+pull on for the reset.
+
 ## Current ACK 6.12 port (2026-10-17)
 
 - [BUIL_TISSOT.md](../BUIL_TISSOT.md): build, package, RAM boot and capture instructions.
@@ -12,9 +312,13 @@
 - [REFERENCE-driver-forward-porting.md](REFERENCE-driver-forward-porting.md):
   4.19 → 6.12 API conversion research, semantic review and focused static checks.
 
-Run187 completes Android boot but visible rendering remains unresolved: the user
-observed a dimly backlit panel and persistent capture records UCHE OOB faults.
-Evidence is under `artifacts/snapshot60/`, including `run187-summary.json`.
+Run234 completes the GPU port: `/dev/kgsl-3d0` is up with the stock ioctl ABI,
+the vendor EGL reports `Adreno (TM) 506, OpenGL ES 3.2`, adb works on the port
+kernel and `screencap` returns a real frame. The earlier "visible rendering
+unresolved" state from run187 (dim backlight, UCHE OOB faults) is resolved; the
+GPU 3D row of `FAILING-COMPONENTS.md` is closed. Note also that the long
+"~89 s reset" investigation was chasing an artifact of our own USB console
+ending — see [HANDOFF.md](HANDOFF.md) before reusing any of that reasoning.
 The reconnaissance and phase plan below are the original mainline baseline;
 they do not describe the current ACK build or device status.
 

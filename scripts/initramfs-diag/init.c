@@ -155,18 +155,26 @@ static int make_dir(const char *path)
  * with the same bConfigurationValue (usb_add_config_only, -EBUSY), and
  * Android creates b.1 in this same gadget (snapshot47 run1).
  *
- * Built only with -DANDROID_USB_CONSOLE. The gadget claims the board's only
- * UDC, so while it is bound adbd cannot bind and adb never enumerates; the
- * handoff that used to release it depends on a trigger that does not fire.
- * The logdump is the evidence path (CRC-verified runs 231-233), so the
- * default build leaves the UDC alone and adb works from boot.
+ * Creating g1 is unconditional; binding it to a UDC is not, and that split is
+ * the whole point.
+ *
+ *   - bind_udc=0 (default build): g1 exists for the vendor stack to add c.1
+ *     to, but the UDC is left alone so adbd can bind it and adb enumerates.
+ *   - bind_udc=1 (ANDROID_USB_CONSOLE): the ACM console works too, but this
+ *     process then holds the board's only UDC and adbd's bind can never
+ *     succeed.
+ *
+ * 24bcdc3ed put this whole function behind #ifdef ANDROID_USB_CONSOLE, so in
+ * the default build g1 was never created at all: run234b reached adb but never
+ * reached the ROM, while run234 (same kernel, old init) reached the ROM and
+ * had no adb. Wrapping the function rather than the bind removed the gadget
+ * Android needs, which is why the function has to compile unconditionally.
  */
-#ifdef ANDROID_USB_CONSOLE
-static int setup_gadget(void)
+static int setup_gadget(int bind_udc)
 {
 	DIR *dir;
 	struct dirent *entry;
-	int ret = -1;
+	int ret = 0;
 
 	if (make_dir(G) || make_dir(G "/strings/0x409") ||
 	    make_dir(G "/configs/c.2") || make_dir(G "/functions/acm.gs0") ||
@@ -179,9 +187,12 @@ static int setup_gadget(void)
 	if (symlink(G "/functions/acm.gs0", G "/configs/c.2/f1") &&
 	    errno != EEXIST)
 		return -1;
+	if (!bind_udc)
+		return 0;
 	dir = opendir("/sys/class/udc");
 	if (!dir)
 		return -1;
+	ret = -1;
 	while ((entry = readdir(dir))) {
 		if (entry->d_name[0] == '.')
 			continue;
@@ -192,7 +203,6 @@ static int setup_gadget(void)
 	closedir(dir);
 	return ret;
 }
-#endif /* ANDROID_USB_CONSOLE */
 
 static int open_logdump(void)
 {
@@ -276,7 +286,7 @@ static int open_usb_sink(void)
 	int out, n, bound = 0;
 	for (n = 0; n < POLL_TRIES; n++) {
 		if (!bound)
-			bound = setup_gadget() == 0;
+			bound = setup_gadget(1) == 0;
 		out = bound ? open("/dev/ttyGS0", O_WRONLY | O_NONBLOCK |
 				  O_NOCTTY) : -1;
 		if (out >= 0) {
@@ -1104,6 +1114,12 @@ static void guard_early_logcat(int proc, int log)
 		"    group log shell readproc\n"
 		"    seclabel u:r:shell:s0\n"
 		"    restart_period 5\n"
+		"service ack-kmsg-dump /system/bin/sh -c \"exec /system/bin/cat /dev/kmsg >> /data/local/tmp/ack-kmsg.log\"\n"
+		"    class core\n"
+		"    disabled\n"
+		"    user root\n"
+		"    group shell readproc\n"
+		"    restart_period 5\n"
 		"service ack-sync-loop /system/bin/sh -c \"i=0; while true; do i=$$((i+1)); echo $$i $$(cat /proc/uptime) >> /data/local/tmp/ack-sync-probe.log; sync; sleep 5; done\"\n"
 		"    class core\n"
 		"    disabled\n"
@@ -1113,7 +1129,8 @@ static void guard_early_logcat(int proc, int log)
 		"    restart_period 5\n"
 		"\non post-fs-data\n"
 		"    start ack-early-logcat\n"
-		"    start ack-sync-loop\n";
+		"    start ack-sync-loop\n"
+		"    start ack-kmsg-dump\n";
 	char buf[8192], message[160];
 	int in = open(target, O_RDONLY | O_CLOEXEC);
 	int fd = memfd_create("ack-logcat-rc", MFD_CLOEXEC);
@@ -1922,6 +1939,17 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 		 " and vendor contexts before policy load\n");
 	say(log, "DIAG: bootdevice canonical alias and legacy wait path ready\n");
 	/* After the alias release: a late override must never block boot. */
+	/*
+	 * Create g1 here, before Android's init runs, and leave it unbound so
+	 * adbd can take the UDC. This is the same point the USB handoff used
+	 * to fire from, and it must stay on the ANDROID_CAPTURE path: the
+	 * console-capture block in main() is after an early `return
+	 * launch_android(argv)`, so a call there is dead code in this build.
+	 */
+	if (setup_gadget(0))
+		say(log, "DIAG: gadget g1 create failed; Android USB may stall\n");
+	else
+		say(log, "DIAG: gadget g1 created, UDC left for adbd\n");
 #ifdef ANDROID_USB_CONSOLE
 	guard_usb_handoff(proc, log);
 #endif
@@ -2489,7 +2517,7 @@ int main(int argc, char **argv)
 		mkdir("/sys/kernel/config", 0755);
 		mount("configfs", "/sys/kernel/config", "configfs", 0, NULL);
 		for (n = 0; n < POLL_TRIES; n++) {
-			if (!setup_gadget()) {
+			if (!setup_gadget(1)) {
 				dprintf(STDERR_FILENO, "HB: USB serial gadget bound\n");
 				return 0;
 			}

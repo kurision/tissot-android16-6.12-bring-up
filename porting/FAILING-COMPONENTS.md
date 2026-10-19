@@ -25,42 +25,59 @@ SELinux denials. Accelerometer/light data and battery telemetry work. Older
 hardware tables below are historical, not a current all-components verdict.
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-18, after run227.
+Last update: 2026-10-18, after run234.
 
-**GPU 3D row: the ~89 s reset is STILL unresolved. run226 found a real panic;
-run227 proved it is not the cause.**
+**GPU 3D row: RESOLVED at run234. The port drives the GPU. The "~89 s reset"
+was never a reset.**
 
-run227 disabled the only variable — the `_apply_impl_defs()` call in
-`kgsl_iommu_start()` — and the board reset anyway, at the same kernel uptime.
-
-| | run225 | run226 | run227 |
+| run | change | SError/panic | outcome |
 |---|---|---|---|
-| `_apply_impl_defs()` | on | on | **off** |
-| SError/panic | no | **yes 43.0196 s** | **no** |
-| reset marks in logdump | 0 | 2 | **0** |
-| last durable sample | 41.770 s | 43.043 s | 41.940 s |
-| reset at kernel uptime | 89.1 s | 89.1 s | **89.5 s** |
+| 226 | baseline | panic 43.02 s, ESR `0xbf000002` | panic |
+| 230 | drop `_apply_impl_defs()` | SError moved to a plain `ldr` | panic |
+| 231 | QSMMU `0x6800`/`0x64a0` once per boot | **none** | ran ≥1695.9 s |
+| 232 | GPU pinned to lowest pwrlevel | none | ran ≥331.4 s |
+| 233 | same image, capture lost to a udev race | none | ran ≥323.5 s, boot animation |
+| 234 | no diag USB gadget, UDC freed | none | **adb up, Adreno 506 GLES 3.2, renders** |
 
-Established: the board resets at kernel uptime **~89 s**, always; the kernel
-stops making durable progress at **~42 s**, always; that is a **~47 s silence**.
-No panic, no lockup-detector panic, no oops, no TZ involvement. APPS WDT reads
-`en=00000000` throughout, so it did not bite. run221 (KGSL off) survived 436 s,
-so the reset is conditional on KGSL.
+Two corrections retire the entire reset narrative.
 
-Ruled out by this experiment: the run226 asynchronous SError in
-`_apply_impl_defs()` (`kgsl_iommu.c:1636`, the micro-MMU `HALT_REQ` halt
-handshake, on surfaceflinger's second open) as the reset mechanism. It is a
-genuine port bug — CAF runs that sequence from `qsmmuv2_device_reset()` under a
-`vdd-supply` vote, the port runs it per-open with clocks only — but it is
-confirmed-but-unfixed and **not** the reset.
+**1. There is no reset.** The logdump console snapshots show the port kernel
+alive long after the ~42-43.7 s mark where every capture stopped: 1695.9 s
+(run231), 331.4 s (run232), 323.5 s (run233), each ending mid-`init` action
+with zero panic, SError or reset markers. The cutoff was the port's own ACM
+console stream ending when the diag gadget held the only UDC — read as a board
+death because run229's identical cutoff had a real PS_HOLD reset behind it.
+The "~89 s reset", the "~47 s silence", the TrustZone-watchdog theory and
+run227's "89.5 s reset" were all derived from that artifact. None survive.
 
-Bootchain now measured rather than estimated: reset→stock USB gadget is
-**49.8 s** (`adb reboot` 13:44:03.8 → gadget 13:44:57.4), of which 20.805 s is
-the stock kernel's own path to USB. This corrects an earlier ~20.9 s estimate
-that had wrongly attributed the reset to `panic=60`.
+**2. The SError was real, and is fixed.** run230 is the decisive step: with
+the halt/poll sequence removed the reported PC moved to an ordinary kernel load
+(`ldr x21,[x19,#0x10]`), which shows the SError is asynchronous and its
+reported instruction was never the culprit. The only MMIO left in that window
+was KGSL re-programming the donor's `GPU_SMMU_HUM_CFG` (`0x6800`) and
+`GPU_SMMU_DORA_ORDERING` (`0x64a0`) on every start, under KGSL's own clock vote
+with no power or quiesce sequencing. CAF runs that from
+`qsmmuv2_device_reset()` under a vdd vote; mainline `qcom_iommu` writes
+neither register. Issuing the writes once per boot removed the fault.
 
-Next target is the ~47 s gap, not the SError. Full detail:
-[handoff](HANDOFF.md#correction--run227-refutes-the-run226-root-cause).
+Verified live at run234 (single variable against run231 — the init; the kernel
+source is identical after reverting the run232 GPU power pin):
+
+- `uname -r` `6.12.93-4k`, uptime 402 s, `/dev/kgsl-3d0` present.
+- adb up ~35 s after boot; `init.svc.adbd=running`, `sys.usb.configfs=2`.
+- SurfaceFlinger: `GLES: Qualcomm, Adreno (TM) 506, OpenGL ES 3.2 V@0502.0
+  (GIT@03dd3ba, ...)` — the 2020 vendor blob on the ported driver, full GLES
+  3.2 extension set.
+- `screencap` returns a real 1080x1920 frame: lockscreen, wallpaper, status bar
+  and the vendor "Select USB mode" dialog.
+
+That is `/dev/kgsl-3d0` with the stock ioctl ABI, the vendor EGL, gralloc and
+sdm HWC — the definition of this row.
+
+Unverified: whether the `0x64a0` ordering write specifically, or the absent
+power/quiesce sequencing, is the SError trigger. The SError fix stands
+independently of the reset correction, on run230's PC move and run231's clean
+run.
 
 **Historical — run226 (superseded, kept for the SError detail):** run226
 captured an asynchronous SError that panics the kernel:
@@ -96,9 +113,10 @@ snapshotter and trips `ramoops_reset_note()`'s `!irqs_disabled()` guard.
 Full detail, ESR decode and the upstream precedent:
 [handoff](HANDOFF.md#run226-the-_apply_impl_defs-serror-real-bug-but-not-the-reset).
 
-**Still open:** making the handshake safe (power-domain vote vs dropping
-`_apply_impl_defs()`), and whether `/dev/kgsl-3d0` survives to the point of
-accepting submissions and rendering — the panic occurs before either.
+**Closed at run234:** both halves of this are answered — the SError is fixed
+and `/dev/kgsl-3d0` accepts submissions and renders (Adreno 506, GLES 3.2,
+`screencap` frame). What remains open is only *why* the SMMU faulted: the
+power-domain vote versus a permanent drop of the donor sequencing.
 
 Historical entries below. Earlier address-mode/page-table claims were corrected
 by run201/202; the reset-timing claims by run226. Use the
@@ -1128,4 +1146,3 @@ are identical, closing the register path. Open defect split out: DSI
 PLL clock imbalance (`pll0_pixel already disabled` WARN, ~30x lock
 failures) — display issue, not reset. Details: `TRACKER-kgsl-port.md`,
 "Run116".
-

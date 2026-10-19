@@ -148,11 +148,21 @@ static void msm8953_spm_do_set_vlevel(void *data)
 	struct msm8953_spm *spm = request->spm;
 	unsigned long flags;
 	u32 value, status, expected = request->level;
+	bool avs_enabled;
+	int ret;
 
 	raw_spin_lock_irqsave(&spm->lock, flags);
 	if (!(readl(spm->base + SAW4_ID) & SAW4_PMIC_ARB)) {
 		request->ret = -ENODEV;
 		goto unlock;
+	}
+
+	/* The raw lock excludes software only; pause the autonomous AVS engine. */
+	avs_enabled = readl(spm->base + SAW4_AVS_CTL) & SAW4_AVS_ENABLE;
+	if (avs_enabled) {
+		request->ret = msm8953_spm_update(spm, SAW4_AVS_CTL, SAW4_AVS_ENABLE, 0);
+		if (request->ret)
+			goto restore_avs;
 	}
 
 	/* Port 0 only, matching MSM8953's system-CCI voltage controller. */
@@ -168,6 +178,13 @@ static void msm8953_spm_do_set_vlevel(void *data)
 						1, SAW4_TIMEOUT_US, true,
 						spm->base + SAW4_PMIC_STATUS);
 	/* SAW4 limits live in AVS_LIMIT; do not apply the SAW1.1 bit-27 scheme. */
+restore_avs:
+	if (avs_enabled) {
+		ret = msm8953_spm_update(spm, SAW4_AVS_CTL,
+					 SAW4_AVS_ENABLE, SAW4_AVS_ENABLE);
+		if (!request->ret)
+			request->ret = ret;
+	}
 unlock:
 	raw_spin_unlock_irqrestore(&spm->lock, flags);
 }
