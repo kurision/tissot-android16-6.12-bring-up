@@ -641,6 +641,16 @@ static irqreturn_t adreno_irq_handler(struct kgsl_device *device)
 	unsigned int shadow_status = 0;
 	int i;
 	u64 ts, ts1, ts2;
+	/*
+	 * run271: this handler runs with interrupts disabled, and in the
+	 * stalling boot it accounted for 81 s of hard-IRQ time for 4217
+	 * interrupts - 19 ms each - while the system tick rate fell from
+	 * 204/s to 141/s. Time the handler and its two suspects (the GMU
+	 * AHB fence poll and the keepalive) so the next boot says which one
+	 * is slow. Sampled, and only when the handler is slow.
+	 */
+	u64 irq_t0 = ktime_get_ns();
+	u64 fence_ns = 0;
 
 	ts = gmu_core_dev_read_ao_counter(device);
 
@@ -664,6 +674,8 @@ static irqreturn_t adreno_irq_handler(struct kgsl_device *device)
 	 * and change the fence back to ALLOW. Poll so that this can happen.
 	 */
 	if (gmu_core_isenabled(device)) {
+		u64 fence_t0 = ktime_get_ns();
+
 		adreno_readreg(adreno_dev,
 				ADRENO_REG_GMU_AO_AHB_FENCE_CTRL,
 				&fence);
@@ -697,6 +709,7 @@ static irqreturn_t adreno_irq_handler(struct kgsl_device *device)
 			}
 			fence_retries++;
 		}
+		fence_ns = ktime_get_ns() - fence_t0;
 	}
 
 	adreno_readreg(adreno_dev, ADRENO_REG_RBBM_INT_0_STATUS, &status);
@@ -751,6 +764,26 @@ done:
 	atomic_dec(&adreno_dev->pending_irq_refcnt);
 	/* Ensure other CPUs see the decrement */
 	smp_mb__after_atomic();
+
+	/*
+	 * run271: print the handler's own duration, and the time spent in
+	 * the GMU AHB fence poll, whenever the handler was slow. The whole
+	 * handler runs with interrupts disabled, so a slow handler is a
+	 * system-wide stall: in run271 it cost 19 ms per interrupt and the
+	 * tick rate fell by a third. Printed at most once a second and
+	 * only when it is slow, so it cannot become the problem it is
+	 * measuring.
+	 */
+	{
+		u64 total_ns = ktime_get_ns() - irq_t0;
+		static u64 last_ns;
+
+		if (total_ns > 1000000ULL && total_ns - last_ns > 1000000000ULL) {
+			last_ns = total_ns;
+			pr_err_ratelimited("DIAG irq slow total=%llu fence=%llu retries=%u st=0x%x\n",
+					   total_ns, fence_ns, fence_retries, status);
+		}
+	}
 
 	return ret;
 

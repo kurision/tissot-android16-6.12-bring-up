@@ -110,6 +110,10 @@ out:
 	/*
 	 * run266: an event that stays on the list is a fence the display
 	 * will keep waiting for. Sampled, for the same console reason.
+	 *
+	 * run271: keep sampling for the whole boot. The counter used to
+	 * stop after the first 64 events, so the event group looked dead
+	 * after the first few seconds.
 	 */
 	{
 		static unsigned int calls;

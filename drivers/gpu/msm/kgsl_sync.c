@@ -115,6 +115,14 @@ static void kgsl_sync_fence_event_cb(struct kgsl_device *device,
 	 * run266: the event callback firing is the proof that the kgsl event
 	 * group was processed, which is the proof that the GPU dispatcher is
 	 * still running. Sampled, for the same console reason.
+	 *
+	 * run271: the sampling has to continue for the whole boot, not stop
+	 * after the first 64 events. run271 showed the file-scope counter
+	 * printing only between t=148.8 s and t=152.1 s, so the event
+	 * callback looked like it had stopped when it had not: the
+	 * per-timeline fence releases carried on to t=680 s. Print the
+	 * first KGSL_SYNC_DIAG_FIRST events and then every
+	 * KGSL_SYNC_DIAG_EVERYth, for the life of the boot.
 	 */
 	{
 		static unsigned int calls;
