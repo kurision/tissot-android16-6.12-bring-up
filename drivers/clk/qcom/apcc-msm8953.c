@@ -58,10 +58,21 @@
 #define APCC_CPU_DIV		1
 #define APCC_CCI_DIV		4
 #define APCC_TIMEOUT_US		500
-#define APCC_PLL_TIMEOUT_US	200
+/*
+ * The donor de-asserts the PLL reset and then waits 200 us before it
+ * trusts the lock indication, because the hardware shows early transient
+ * locks around 16 us after reset. It then polls the lock bit for up to
+ * 200 us, reading it twice so a transient lock is not accepted. The port
+ * used a single 200 us poll after a 50 us delay, which is shorter than the
+ * donor's budget and turned a lockable PLL into a spurious timeout.
+ */
+#define APCC_PLL_LOCK_DELAY_US	200
+#define APCC_PLL_LOCK_LOOPS	200
 #define APCC_MIN_RATE		652800000UL
 #define APCC_MAX_RATE		2016000000UL
 #define APCC_XO_RATE		19200000UL
+/* The mux ids are the clock ids, so a set of muxes is a bit mask. */
+#define APCC_MUX_ALL		((1U << APCC_NUM_CLOCKS) - 1)
 
 static const unsigned int apcc_pll_offsets[] = {
 	APCC_PLL_MODE, APCC_PLL_L, APCC_PLL_ALPHA, APCC_PLL_USER,
@@ -301,29 +312,67 @@ static int apcc_write_mux(struct apcc_msm8953 *apcc, unsigned int id, u32 cfg)
 	return (value & APCC_RCG_MASK) == (cfg & APCC_RCG_MASK) ? 0 : -EIO;
 }
 
-/* Park on an independent, rate-protected source before touching the shared PLL. */
-static int apcc_park(struct apcc_msm8953 *apcc)
+/*
+ * Park the selected outputs on the independent, rate-protected GPLL0 source
+ * before the shared PLL is touched.
+ *
+ * The divider is deliberately left alone: the donor switches a mux source
+ * and divider in a single write, and changing the CCI divider changes the
+ * rate of the interconnect the running CPUs use. A mux that already sits on
+ * GPLL0 is not written at all, because an update handshake on the mux that
+ * clocks the running CPU0 cluster is not free.
+ */
+static int apcc_park(struct apcc_msm8953 *apcc, unsigned int muxs)
 {
 	unsigned int i;
 	int ret;
 
 	for (i = 0; i < APCC_NUM_CLOCKS; i++) {
+		u32 cfg;
+
+		if (!(muxs & BIT(i)))
+			continue;
+		ret = regmap_read(apcc->mux[i], APCC_RCG_CFG, &cfg);
+		if (ret)
+			return ret;
+		if (((cfg >> 8) & 7) == APCC_SRC_GPLL0)
+			continue;
 		ret = apcc_write_mux(apcc, i, (APCC_SRC_GPLL0 << 8) |
-				     (i == APCC_CCI_CLK ? APCC_CCI_DIV : APCC_CPU_DIV));
+				     (cfg & GENMASK(4, 0)));
 		if (ret)
 			return ret;
 	}
 	return 0;
 }
 
+/*
+ * The donor waits 200 us after it de-asserts the reset before it trusts the
+ * lock indication, then polls the status bit for up to 200 us and reads it
+ * twice, so that the early transient locks the hardware shows are not taken
+ * for a stable lock. The lock bit is MODE bit 31 of the APCS HF PLL.
+ */
 static int apcc_wait_lock(struct apcc_msm8953 *apcc)
 {
 	u32 mode;
+	int i, ret;
 
-	/* Donor hwfsm enable waits 50 us before testing lock, not UPDATE/ACK. */
-	usleep_range(50, 60);
-	return regmap_read_poll_timeout(apcc->pll, APCC_PLL_MODE, mode,
-				       mode & APCC_PLL_LOCK, 1, APCC_PLL_TIMEOUT_US);
+	usleep_range(APCC_PLL_LOCK_DELAY_US, APCC_PLL_LOCK_DELAY_US + 10);
+	for (i = 0; i < APCC_PLL_LOCK_LOOPS; i++) {
+		ret = regmap_read(apcc->pll, APCC_PLL_MODE, &mode);
+		if (ret)
+			return ret;
+		if (mode & APCC_PLL_LOCK) {
+			/* Re-read: the donor rejects the transient locks. */
+			usleep_range(1, 2);
+			ret = regmap_read(apcc->pll, APCC_PLL_MODE, &mode);
+			if (ret)
+				return ret;
+			if (mode & APCC_PLL_LOCK)
+				return 0;
+		}
+		usleep_range(1, 2);
+	}
+	return -ETIMEDOUT;
 }
 
 static int apcc_write_cpu4_branch(struct apcc_msm8953 *apcc, u32 value)
@@ -341,7 +390,12 @@ static int apcc_write_cpu4_branch(struct apcc_msm8953 *apcc, u32 value)
 	return (observed & APCC_RCG_ENABLE) == (value & APCC_RCG_ENABLE) ? 0 : -EIO;
 }
 
-/* All three outputs must already be on GPLL0. Never configure a live consumer. */
+/*
+ * Program the shared PLL. In the rate-change path every consumer is parked
+ * on GPLL0 first; in the boot handoff the PLL feeds nothing yet, because the
+ * firmware left it off. Either way the PLL is not carrying a live consumer
+ * while it is reprogrammed.
+ */
 static int apcc_program_pll(struct apcc_msm8953 *apcc, unsigned long rate)
 {
 	u32 mode, user, l;
@@ -420,14 +474,19 @@ static int apcc_program_pll(struct apcc_msm8953 *apcc, unsigned long rate)
 	return ret ? ret : (user == l ? 0 : -EIO);
 }
 
-/* Restore the saved PLL only while all consumers are on the parking source. */
-static int apcc_restore(struct apcc_msm8953 *apcc)
+/*
+ * Restore the saved PLL only while the consumers of the selected muxes are
+ * on the parking source. Only the muxes this transaction moved are touched:
+ * a mux that already carries the saved configuration is not rewritten, so a
+ * rollback never issues an update handshake on a mux it did not change.
+ */
+static int apcc_restore(struct apcc_msm8953 *apcc, unsigned int muxs)
 {
 	struct apcc_state *saved = &apcc->saved;
 	struct apcc_state restored;
 	int i, ret;
 
-	ret = apcc_park(apcc);
+	ret = apcc_park(apcc, muxs);
 	if (ret)
 		goto fault;
 	if (saved->pll[0] & APCC_PLL_LOCK) {
@@ -450,6 +509,15 @@ static int apcc_restore(struct apcc_msm8953 *apcc)
 		}
 	}
 	for (i = 0; i < APCC_NUM_CLOCKS; i++) {
+		u32 cfg;
+
+		if (!(muxs & BIT(i)))
+			continue;
+		ret = regmap_read(apcc->mux[i], APCC_RCG_CFG, &cfg);
+		if (ret)
+			goto fault;
+		if ((cfg & APCC_RCG_MASK) == (saved->cfg[i] & APCC_RCG_MASK))
+			continue;
 		ret = apcc_write_mux(apcc, i, saved->cfg[i]);
 		if (ret)
 			goto fault;
@@ -483,6 +551,19 @@ fault:
 	dev_err(apcc->dev, "clock rollback failed: %d; retaining corner %d\n",
 		ret, apcc->corner);
 	return ret;
+}
+
+/*
+ * The rate a mux runs at once it is parked on GPLL0. The divider is kept, so
+ * the parked rate follows the mux's own divider and not the target ratio.
+ */
+static unsigned long apcc_parked_rate(struct apcc_msm8953 *apcc,
+				      const struct apcc_state *state,
+				      unsigned int id)
+{
+	unsigned int div = (state->cfg[id] & GENMASK(4, 0)) + 1;
+
+	return div_u64((u64)apcc->input_rates[1] * 2, max(div, 2U));
 }
 
 static int apcc_begin(struct apcc_msm8953 *apcc, unsigned long rate)
@@ -519,17 +600,25 @@ static int apcc_begin(struct apcc_msm8953 *apcc, unsigned long rate)
 	if (old_corner < 0)
 		return old_corner;
 	apcc->saved.corner = max(apcc->corner, old_corner);
-	park = apcc_plan_corner(&apcc->cpu_plan, apcc->input_rates[1]);
-	if (park < 0)
-		return park;
-	ret = apcc_plan_corner(&apcc->cci_plan, apcc_cci_rate(apcc->input_rates[1]));
-	if (ret < 0)
-		return ret;
-	park = max(park, ret);
+	/*
+	 * The corner that covers the parked rates. Every output keeps its own
+	 * divider while it is parked, so each one is costed separately.
+	 */
+	park = 0;
+	for (i = 0; i < APCC_NUM_CLOCKS; i++) {
+		const struct apcc_plan *plan = i == APCC_CCI_CLK ?
+					       &apcc->cci_plan : &apcc->cpu_plan;
+		int corner = apcc_plan_corner(plan,
+					      apcc_parked_rate(apcc, &apcc->saved, i));
+
+		if (corner < 0)
+			return corner;
+		park = max(park, corner);
+	}
 	ret = apcc_set_corner(apcc, max(max(apcc->saved.corner, target), park));
 	if (ret)
 		return ret;
-	ret = apcc_park(apcc);
+	ret = apcc_park(apcc, APCC_MUX_ALL);
 	if (ret)
 		goto rollback;
 	ret = apcc_program_pll(apcc, rate);
@@ -566,7 +655,7 @@ static int apcc_begin(struct apcc_msm8953 *apcc, unsigned long rate)
 	apcc->pending = true;
 	return 0;
 rollback:
-	apcc_restore(apcc);
+	apcc_restore(apcc, APCC_MUX_ALL);
 	return ret;
 }
 
@@ -577,7 +666,7 @@ static void apcc_finish(struct apcc_msm8953 *apcc, bool abort)
 	if (!apcc->pending)
 		return;
 	if (abort) {
-		apcc_restore(apcc);
+		apcc_restore(apcc, APCC_MUX_ALL);
 	} else {
 		ret = apcc_set_corner(apcc, apcc->target_corner);
 		if (ret)
@@ -812,9 +901,25 @@ out:
 	return ret;
 }
 
+/*
+ * Boot handoff.
+ *
+ * This follows the donor's early_initcall (clock-cpu-8953.c:
+ * cpu_clock_pwr_init): program the APCS HF PLL, then move the CPU4 alias1
+ * mux to that PLL and enable the CPU4 core branch. The donor leaves the
+ * running CPU0 cluster and the CCI on the firmware's GPLL0 source and
+ * reaches the coupled CPU/CCI state later, from the first cpufreq
+ * transition, which starts from exactly this state.
+ *
+ * Re-programming the mux of the running CPU0 cluster and the live CCI
+ * divider during early boot is not something the donor does, and this port
+ * has never executed it on hardware. The handoff therefore stays inside the
+ * donor's proven writes; the coupled transaction remains in the rate-change
+ * path, where the donor performs the same kind of mux writes.
+ */
 static int apcc_handoff(struct apcc_msm8953 *apcc)
 {
-	struct apcc_state boot;
+	struct apcc_state boot, observed;
 	int corner, ret;
 
 	if (apcc_power.faulted || !apcc_power.mx_active || !apcc_power.mx_voted)
@@ -845,12 +950,55 @@ static int apcc_handoff(struct apcc_msm8953 *apcc)
 	ret = apcc_enable_supply(apcc);
 	if (ret)
 		return ret;
-	/* This also handles firmware's GPLL0 / XO split, without pstore writes. */
-	ret = apcc_begin(apcc, APCC_MIN_RATE);
+	/* The snapshot a failed handoff is rolled back to. */
+	apcc->saved = boot;
+	apcc->saved.corner = max(apcc->corner, corner);
+	/*
+	 * The PLL feeds nothing yet: this is the only write in the handoff
+	 * that cannot disturb the running CPUs.
+	 */
+	ret = apcc_program_pll(apcc, APCC_MIN_RATE);
 	if (ret)
-		return ret;
-	apcc_finish(apcc, false);
+		goto restore;
+	/* The donor's CPU4 handoff: the alias1 mux to the PLL, then the
+	 * core branch that lets the CPU4-7 cluster leave its reset.
+	 */
+	ret = apcc_write_mux(apcc, APCC_CPU4_CLK,
+			     (APCC_SRC_PLL << 8) | APCC_CPU_DIV);
+	if (ret)
+		goto restore;
+	ret = apcc_write_cpu4_branch(apcc, APCC_RCG_ENABLE);
+	if (ret)
+		goto restore;
+	/*
+	 * Verify the donor's end state: CPU4 on the PLL at the boot rate and
+	 * its branch enabled, with the running CPU0 cluster and the CCI
+	 * exactly as the firmware left them.
+	 */
+	ret = apcc_read_state(apcc, &observed);
+	if (ret)
+		goto restore;
+	if (apcc_state_rate(apcc, &observed, APCC_CPU4_CLK) != APCC_MIN_RATE ||
+	    observed.cfg[APCC_CPU0_CLK] != boot.cfg[APCC_CPU0_CLK] ||
+	    observed.cfg[APCC_CCI_CLK] != boot.cfg[APCC_CCI_CLK] ||
+	    (observed.cpu4_cbcr & APCC_RCG_ENABLE) != APCC_RCG_ENABLE) {
+		ret = -EIO;
+		goto restore;
+	}
+	/* The rail must still cover every rate that is now running. */
+	corner = apcc_state_corner(apcc, &observed);
+	if (corner < 0) {
+		ret = corner;
+		goto restore;
+	}
+	ret = apcc_set_corner(apcc, max(corner, apcc->corner));
+	if (ret)
+		goto restore;
+	apcc->target_corner = apcc->corner;
 	return 0;
+restore:
+	apcc_restore(apcc, BIT(APCC_CPU4_CLK));
+	return ret;
 }
 
 static int apcc_msm8953_probe(struct platform_device *pdev)
@@ -870,14 +1018,21 @@ static int apcc_msm8953_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	apcc->dev = dev;
 	mutex_init(&apcc->lock);
+	/*
+	 * Attach the MX domain before anything that can fail. The platform
+	 * bus attaches the same domain to this device and, when the probe
+	 * fails, detaches it with power_off, which would drop the shared MX
+	 * rail from under its other users. The domain reference taken here
+	 * keeps the rail up for the lifetime of the driver.
+	 */
+	ret = apcc_pin_power(apcc);
+	if (ret)
+		return dev_err_probe(dev, ret, "CPU rail/MX acquisition failed\n");
 	ret = apcc_pin_inputs(dev, apcc->input_rates);
 	if (ret)
 		return dev_err_probe(dev, ret, "boot clock source acquisition failed\n");
 	if (apcc->input_rates[0] != APCC_XO_RATE)
 		return dev_err_probe(dev, -EINVAL, "unsupported XO rate\n");
-	ret = apcc_pin_power(apcc);
-	if (ret)
-		return dev_err_probe(dev, ret, "CPU rail/MX acquisition failed\n");
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "pte-efuse");
 	if (!res || resource_size(res) < sizeof(u32))
 		return dev_err_probe(dev, -EINVAL, "missing or short PTE EFUSE window\n");
