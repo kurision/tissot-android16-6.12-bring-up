@@ -2198,7 +2198,7 @@ static int _adreno_start(struct adreno_device *adreno_dev)
 	/* Put the GPU in a responsive state */
 	status = kgsl_pwrctrl_change_state(device, KGSL_STATE_AWARE);
 	if (status) {
-			 status);
+
 		goto error_pwr_off;
 	}
 
