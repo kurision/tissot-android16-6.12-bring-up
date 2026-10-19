@@ -64,17 +64,18 @@
 };
 
 /*
- * PM8953 S5/S6, the VDD_APC supply.
+ * PM8953 S5/S6, the VDD_APC supply, on USID 1, as the donor has it.
  *
- * USID 0, not the USID 1 the SoC level donor file uses: this board overrides
- * it, in oc-test/arch/arm64/boot/dts/vendor/qcom/mi8953/tissot/pmic.dtsi
- * ("qcom,pm8953@0"), and the run240 kernel log agrees, enumerating only
- * pmic@0 and pmic@2 on the SPMI bus. With the node on USID 1 the rail never
- * probed, so the CPR4 regulator had no vdd-supply and the APCS clock
- * controller had no vdd-cl-supply.
+ * This node was briefly moved to USID 0 on the strength of the port log
+ * enumerating only pmic@0 and pmic@2, which was absence of evidence: a PMIC
+ * with no child that logs never appears in that list. The stock donor
+ * kernel, the one that actually runs this rail, has the live tree nodes
+ * qcom,pm8953@0, qcom,pm8953@1, qcom,pmi8950@2 and qcom,pmi8950@3, with
+ * spm-regulator@2000 under qcom,pm8953@1. On USID 0 the port reads type
+ * 00/00 at 0x2000 and refuses the rail, which is what a PM8941 looks like.
  */
 &spmi_bus {
-	pmic@0 {
+	pmic@1 {
 		pm8953_apc_s5: spm-regulator@2000 {
 			compatible = "qcom,spm-regulator";
 			reg = <0x2000>;
