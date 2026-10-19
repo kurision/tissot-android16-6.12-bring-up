@@ -1299,7 +1299,8 @@ static_assert(RAMOOPS_QTRACE_OFFSET +
 	      RAMOOPS_QTRACE_SLOTS * RAMOOPS_WITNESS_LEN <= RAMOOPS_RESET_OFFSET);
 static_assert(RAMOOPS_RESET_OFFSET + RAMOOPS_RESET_SIZE <= SZ_64M);
 
-static struct file *ramoops_witness_file;
+/* The diagnostic writer keeps this file open for system lifetime. */
+static struct file *ramoops_witness_file __maybe_unused;
 static struct block_device *ramoops_witness_bdev;
 static void *ramoops_witness_buf;
 /* Serialises the lazy open and the shared ramoops_witness_buf. */

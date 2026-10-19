@@ -39,11 +39,7 @@
 #include <linux/dma-buf.h>
 #include <linux/iosys-map.h>
 #include <linux/random.h>
-#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
-extern int ramoops_witness_write(const void *data, size_t len);
-extern int ramoops_witness_read(void *data, size_t len);
-extern int ramoops_qtrace_write(u64 seq, const void *data, size_t len);
-#endif
+#include <linux/pstore_ram.h>
 
 #include <linux/smp.h>
 #include <linux/stacktrace.h>

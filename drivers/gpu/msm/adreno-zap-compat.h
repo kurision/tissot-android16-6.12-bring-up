@@ -31,6 +31,7 @@
 #include <linux/ktime.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/pstore_ram.h>
 #include <linux/soc/qcom/mdt_loader.h>
 
 #define ADRENO_ZAP_PAS_ID	13
@@ -93,8 +94,6 @@ struct adreno_zap_stage_rec {
 };
 
 static_assert(sizeof(struct adreno_zap_stage_rec) == 40);
-
-int ramoops_stage_write(unsigned int slot, const void *data, size_t len);
 
 static inline void adreno_zap_stage(struct device *dev,
 		enum adreno_zap_stage stage, int ret, phys_addr_t phys,
