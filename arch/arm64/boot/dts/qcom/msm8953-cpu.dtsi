@@ -107,6 +107,8 @@
 		clocks = <&xo_board>, <&gcc GPLL0_EARLY>, <&gcc GPLL2_EARLY>;
 		clock-names = "xo", "gpll0_early", "gpll2_early";
 		vdd-cl-supply = <&apc_vreg>;
+		power-domains = <&rpmpd MSM8953_VDDMX_AO>;
+		power-domain-names = "mx";
 
 		/*
 		 * Fused rate to corner plans. The provider reads the speed bin
@@ -631,10 +633,8 @@
 };
 
 /*
- * CPU cluster clocks. No operating-points-v2 and no cpu-supply yet: the CPU
- * power stack is wired but idle, and a policy that scaled only one of the two
- * cluster muxes would leave the other cluster at the wrong frequency. The
- * OPP table and CONFIG_CPUFREQ_DT come in a separate step.
+ * CPU cluster clocks. Both IDs resolve to one coupled domain. CPUFreq owns
+ * one shared OPP policy; APCC owns the corner-encoded supply, not OPP.
  */
 &CPU0 {
 	clocks = <&apcc APCC_CPU0_CLK>;
@@ -693,13 +693,13 @@
  * when the rate changes. Adding either would create a second owner of a rail
  * that is not microvolt based.
  *
- * All eight cores share one table, so cpufreq-dt builds one policy over all of
- * them and programs only CPU0's clock; the provider mirrors the rate onto the
- * sibling cluster.
+ * All eight cores share one policy. Either CPU clock ID controls the same
+ * transaction for both cluster muxes and CCI.
  */
 &{/} {
 	msm8953_cpu_opp: opp-table {
 		compatible = "operating-points-v2";
+		opp-shared;
 
 		opp-652800000 {
 			opp-hz = /bits/ 64 <652800000>;

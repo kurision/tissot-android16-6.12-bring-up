@@ -2106,51 +2106,14 @@ static void ramoops_diag_dump_prev(void)
 }
 
 /*
- * DEBUG run120 (tissot): what clock the CPUs really run at. The port has
- * no msm8953 CPU clock/cpufreq/CPR driver, so the bootloader's setting
- * stands. Layout from stock 4.19 clock-cpu-8953.c / msm8953.dtsi:975:
+ * DEBUG run120 (tissot): inspect the boot CPU clock registers. CPU clock
+ * handoff is owned by apcc-msm8953, not this diagnostic reader.
+ * Layout from stock 4.19 clock-cpu-8953.c / msm8953.dtsi:975:
  * one APCS HF PLL (rate = 19.2 MHz * L), and per-cluster RCG muxes
  * whose CFG (CMD_RCGR + 4) holds SRC_SEL[10:8] and a half-integer
  * divider DIV[4:0] (divide by (DIV + 1) / 2). Stock selects SRC 5
  * (PLL early) for both clusters and CCI. Reads only.
  */
-/*
- * DEBUG run121: run120 read c1 (CPU4-7) cfg=0 (source 0, likely XO
- * 19.2 MHz) while c0 runs GPLL0/1 = 800 MHz. Stock's early_initcall
- * reprograms this alias1 mux (clock-cpu-8953.c cpu_clock_pwr_init);
- * move c1 to the same GPLL0/1 c0 already uses: no new voltage need
- * (one APC rail for both clusters), no A53 PLL. RCG switch: CFG, then
- * CMD update bit, wait for it to clear; enable the core branch.
- */
-static void ramoops_cpuclk_c1_to_gpll0(void)
-{
-	void __iomem *rcg;
-	u32 cmd;
-	int i;
-
-	rcg = ioremap(0xb011000, SZ_4K);
-	if (!rcg) {
-		pr_info("DIAG cpuclk c1 switch: ioremap failed\n");
-		return;
-	}
-	writel_relaxed((4 << 8) | 1, rcg + 0x054);	/* SRC 4 (GPLL0), DIV 1 */
-	mb(); /* CFG must land before the update bit latches it */
-	writel_relaxed(readl_relaxed(rcg + 0x050) | BIT(0), rcg + 0x050);
-	mb(); /* update request posted before polling for completion */
-	for (i = 0; i < 1000; i++) {
-		cmd = readl_relaxed(rcg + 0x050);
-		if (!(cmd & BIT(0)))
-			break;
-		udelay(1);
-	}
-	writel_relaxed(readl_relaxed(rcg + 0x058) | BIT(0), rcg + 0x058);
-	mb(); /* branch enabled before the readback below */
-	pr_info("DIAG cpuclk c1 switch: cfg=%08x cmd=%08x update_%s cbcr=%08x\n",
-		readl_relaxed(rcg + 0x054), cmd,
-		(cmd & BIT(0)) ? "STUCK" : "done", readl_relaxed(rcg + 0x058));
-	iounmap(rcg);
-}
-
 static void ramoops_debug_cpuclk(void)
 {
 	static const struct {
@@ -2195,8 +2158,6 @@ static void ramoops_debug_cpuclk(void)
 			src == 5 ? pll_khz * 2 / (div + 1) : 0,
 			src == 5 ? "" : " (src not PLL: rate unknown)");
 	}
-
-	ramoops_cpuclk_c1_to_gpll0();
 }
 
 static int ramoops_probe(struct platform_device *pdev)
