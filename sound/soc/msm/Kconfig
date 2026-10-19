@@ -42,3 +42,30 @@ config WCD_DSP_GLINK
 	select WCD9XXX_CORE_HELPER
 	help
 	  Manager for the glink channel the WCD codecs use to reach the DSP.
+
+config SND_SOC_SDM660_CDC
+	tristate "SDM660/SDM450 CDC"
+	depends on SND_SOC
+	select SND_SOC_WCD_MBHC_ADC
+	select SND_SOC_ANALOG_CDC
+	select SND_SOC_DIGITAL_CDC_LEGACY
+	help
+	  The analog and digital CDC that this platform's own configuration
+	  selects. The machine driver includes its headers directly, so it
+	  is always needed alongside the soundcard.
+
+config SND_SOC_ANALOG_CDC
+	tristate
+
+config SND_SOC_DIGITAL_CDC_LEGACY
+	tristate
+
+config SND_SOC_MSM8952
+	tristate "MSM8952 (SDM450) soundcard"
+	depends on SND_SOC && COMMON_CLK
+	select SND_SOC_WCD9335
+	select SND_SOC_SDM660_CDC
+	select WCD9XXX_CODEC_CORE
+	help
+	  Soundcard for this SoC, which CAF calls SDM450. It wires the
+	  WCD9335 codec, the SDM660 CDC, the AFE and the mi2s links.

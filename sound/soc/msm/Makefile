@@ -22,3 +22,13 @@ obj-$(CONFIG_SND_SOC_WCD9335) += wcd9335.o
 obj-$(CONFIG_WCD9XXX_CODEC_CORE) += wcd9xxx.o
 obj-$(CONFIG_SND_SOC_WCD_MBHC) += wcdmbhc.o
 obj-$(CONFIG_WCD_DSP_GLINK) += wcddsp.o
+
+cdc-objs += msm-analog-cdc.o msm-digital-cdc-legacy.o \
+	    msm-digital-cdc-regmap.o msm-digital-cdc.o \
+	    msm-digital-cdc-legacy-regmap.o sdm660-cdc-irq.o
+
+obj-$(CONFIG_SND_SOC_SDM660_CDC) += cdc.o
+
+msm8952-objs += msm8952.o msm8952-dai-links.o msm8952-slimbus.o
+
+obj-$(CONFIG_SND_SOC_MSM8952) += msm8952.o
