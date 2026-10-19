@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-2.0
+
+config WCD9XXX_CORE_HELPER
+	tristate
+
+config WCD9XXX_CODEC_CORE
+	tristate "WCD9xxx codec core (v2 interface)"
+	depends on SND_SOC
+	select WCD9XXX_CORE_HELPER
+	help
+	  Core of the Qualcomm WCD9xxx codec family, second generation
+	  interface. Ported from CAF techpack/audio.
+
+config SND_SOC_WCD9335
+	tristate "WCD9335 codec"
+	depends on SND_SOC && SLIMBUS
+	select WCD9XXX_CODEC_CORE
+	help
+	  The WCD9335 codec, which is the one fitted to tissot.
+
+config SND_SOC_WCD_MBHC
+	tristate "WCD microphone bias and headset control"
+	depends on SND_SOC
+	select WCD9XXX_CODEC_CORE
+	select SND_SOC_WCD_MBHC_ADC
+	help
+	  Microphone bias and headset detection helpers for the WCD family.
+
+config SND_SOC_WCD_MBHC_LEGACY
+	tristate
+
+config SND_SOC_WCD_MBHC_ADC
+	tristate "WCD microphone bias ADC variant"
+	depends on SND_SOC
+	help
+	  Bias-voltage based headset detection, the variant the WCD9335 on
+	  this board uses.
+
+config WCD_DSP_GLINK
+	tristate "WCD DSP glink manager"
+	depends on SND_SOC
+	select WCD9XXX_CORE_HELPER
+	help
+	  Manager for the glink channel the WCD codecs use to reach the DSP.
