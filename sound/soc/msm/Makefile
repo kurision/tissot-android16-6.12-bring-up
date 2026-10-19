@@ -33,3 +33,7 @@ msm8952-objs += msm8952.o msm8952-dai-links.o msm8952-slimbus.o
 msm8952-objs += msm-pcm-afe-v2.o
 
 obj-$(CONFIG_SND_SOC_MSM8952) += msm8952.o
+
+afedrv-objs += q6afe.o
+
+obj-$(CONFIG_WCD9XXX_CODEC_CORE) += afedrv.o
