@@ -1,5 +1,21 @@
 # Failing components tracker (tissot 6.12 bringup)
 
+**After-run258 source repair:** approved mailbox/MMIO ownership, MX-AO PLL vote,
+safe APCC split-boot handoff and lifetime power-pin changes are implemented;
+pstore no longer writes CPU clocks. Host tests (349 MMIO fault positions),
+checkpatch and focused DT checks pass. **Unbuilt and not boot-tested**; CPUFreq
+and the lag remain unresolved hardware verdicts. The new MX dependency must be
+included in the next DTB. [Details and limits](HANDOFF-cpu-bringup-2026-10-19.md).
+
+**Run258 CPU update (2026-10-19):** fresh build/RAM boot captured; rooted stock
+restored. APCC `-EBUSY` at CPU4 RCG `0xb011050` repeats run257
+(`artifacts/snapshot60/run258-logdump.log:560-563`). APCS mailbox declares the
+overlapping 4 KiB resource; prior APM-only overlap review missed this window.
+CPUFreq policies remain absent. Homescreen is visible but severely laggy:
+~98% CPU busy over two live samples, 2.2–2.3 GiB RAM available, two SystemUI ANRs.
+CPU clock rates and lag root cause remain unverified; no kernel repair applied.
+See [full CPU run258 evidence and limits](HANDOFF-cpu-bringup-2026-10-19.md).
+
 **Fresh post-run234 live audit (2026-10-18):**
 [component inventory and evidence](findings/2026-10-18-live-component-audit.md).
 Eight CPUs are online and active; CPUFreq policies and an active CPUIdle driver
