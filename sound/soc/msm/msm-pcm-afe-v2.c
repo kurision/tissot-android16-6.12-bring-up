@@ -364,7 +364,7 @@ static int msm_afe_playback_prepare(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct pcm_afe_info *prtd = runtime->private_data;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *dai = rtd->cpu_dai;
+	struct snd_soc_dai *dai = snd_soc_rtd_to_cpu(rtd, 0);
 	int ret = 0;
 
 	pr_debug("%s: sample_rate=%d\n", __func__, runtime->rate);
@@ -386,7 +386,7 @@ static int msm_afe_capture_prepare(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct pcm_afe_info *prtd = runtime->private_data;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *dai = rtd->cpu_dai;
+	struct snd_soc_dai *dai = snd_soc_rtd_to_cpu(rtd, 0);
 	int ret = 0;
 
 	pr_debug("%s\n", __func__);
@@ -638,7 +638,7 @@ static int msm_afe_close(struct snd_pcm_substream *substream)
 		return -EINVAL;
 	}
 	rtd = substream->private_data;
-	dai = rtd->cpu_dai;
+	dai = snd_soc_rtd_to_cpu(rtd, 0);
 	runtime = substream->runtime;
 	prtd = runtime->private_data;
 
@@ -837,7 +837,6 @@ static snd_pcm_uframes_t msm_afe_pointer(struct snd_pcm_substream *substream)
 
 static const struct snd_pcm_ops msm_afe_ops = {
 	.open           = msm_afe_open,
-	.copy_user      = msm_afe_copy,
 	.hw_params	= msm_afe_hw_params,
 	.trigger	= msm_afe_trigger,
 	.close          = msm_afe_close,
@@ -866,8 +865,6 @@ static int msm_afe_afe_probe(struct snd_soc_component *component)
 
 static struct snd_soc_component_driver msm_soc_component = {
 	.name		= DRV_NAME,
-	.ops		= &msm_afe_ops,
-	.pcm_new	= msm_asoc_pcm_new,
 	.probe		= msm_afe_afe_probe,
 };
 
@@ -879,11 +876,10 @@ static int msm_afe_probe(struct platform_device *pdev)
 				   &msm_soc_component, NULL, 0);
 }
 
-static int msm_afe_remove(struct platform_device *pdev)
+static void msm_afe_remove(struct platform_device *pdev)
 {
 	pr_debug("%s\n", __func__);
 	snd_soc_unregister_component(&pdev->dev);
-	return 0;
 }
 static const struct of_device_id msm_pcm_afe_dt_match[] = {
 	{.compatible = "qcom,msm-pcm-afe"},
@@ -901,6 +897,9 @@ static struct platform_driver msm_afe_driver = {
 	.probe = msm_afe_probe,
 	.remove = msm_afe_remove,
 };
+
+int __init msm_pcm_afe_init(void);
+void msm_pcm_afe_exit(void);
 
 int __init msm_pcm_afe_init(void)
 {
