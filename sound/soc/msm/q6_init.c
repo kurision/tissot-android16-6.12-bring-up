@@ -20,7 +20,9 @@ static int __init audio_q6_init(void)
 	voice_init();
 	core_init();
 	msm_audio_ion_init();
-	audio_slimslave_init();
+	/* This board has no slimbus codec: the WCD is not fitted and the
+	 * audio is the analog CDC, so there is no slimbus slave to set up.
+	 */
 	avtimer_init();
 	msm_mdf_init();
 	voice_mhi_init();
@@ -33,7 +35,7 @@ static void __exit audio_q6_exit(void)
 	digital_cdc_rsc_mgr_exit();
 	msm_mdf_exit();
 	avtimer_exit();
-	audio_slimslave_exit();
+
 	msm_audio_ion_exit();
 	core_exit();
 	voice_exit();
