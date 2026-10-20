@@ -211,11 +211,22 @@
 
 		/*
 		 * Capacitive navigation keys, reported by the controller as
-		 * touches on the sensor row below the panel. Coordinates are
-		 * the stock CAF values from the donor focaltech_ts node.
+		 * touches on the sensor row below the panel, so the
+		 * coordinates are the controller's and not the panel's.
+		 *
+		 * The x positions are the stock ones: 500 is the home key
+		 * in the middle, 800 is back on the right, and 200 is the
+		 * recents on the left, which is where this phone puts it.
+		 *
+		 * The codes are not the donor's. The donor describes a
+		 * board with a FocalTech touch controller and gives the
+		 * recents key KEY_MENU, but this board has an EDT FT5406
+		 * and the framework here answers KEY_MENU with the
+		 * overflow menu. The recents is 187, which the kernel
+		 * calls KEY_F17 and the framework calls KEYCODE_APP_SWITCH.
 		 */
 		edt,keys = <500 2040 KEY_HOMEPAGE
-			    200 2040 KEY_MENU
+			    200 2040 KEY_F17
 			    800 2040 KEY_BACK>;
 	};
 };
