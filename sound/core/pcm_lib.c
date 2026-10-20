@@ -2574,7 +2574,7 @@ static void pcm_chmap_ctl_private_free(struct snd_kcontrol *kcontrol)
 	kfree(info);
 }
 
-/**
+/*
  * pcm volume control helpers
  */
 static int pcm_volume_ctl_info(struct snd_kcontrol *kcontrol,
@@ -2599,6 +2599,7 @@ static void pcm_volume_ctl_private_free(struct snd_kcontrol *kcontrol)
  * snd_pcm_add_volume_ctls - create volume control elements
  * @pcm: the assigned PCM instance
  * @stream: stream direction
+ * @volume: the volume elements
  * @max_length: the max length of the volume parameter of stream
  * @private_value: the value passed to each kcontrol's private_value field
  * @info_ret: store struct snd_pcm_volume instance if non-NULL
@@ -2607,7 +2608,7 @@ static void pcm_volume_ctl_private_free(struct snd_kcontrol *kcontrol)
  * Returns zero if succeed, or a negative error value.
  */
 int snd_pcm_add_volume_ctls(struct snd_pcm *pcm, int stream,
-			    const struct snd_pcm_volume_elem *volume,
+			     const struct snd_pcm_volume_elem *volume,
 			   int max_length,
 			   unsigned long private_value,
 			   struct snd_pcm_volume **info_ret)
