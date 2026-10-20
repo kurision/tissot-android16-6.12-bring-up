@@ -216,9 +216,35 @@ porting/artifacts/snapshot*/run*-*.txt
 # pulled sepolicy dumps and build outputs (vmlinux, System.map, Image.gz-dtb)
 # are reproducible from one boot and together run to several hundred MB.
 porting/artifacts/**/anr/
-porting/artifacts/**/*-anr*/
-porting/artifacts/sepolicy/
+porting/artifacts/**/*-anr*/porting/artifacts/sepolicy/
 porting/artifacts/**/vmlinux
 porting/artifacts/**/System.map
 porting/artifacts/**/*.tb
 __pycache__/
+
+# The port's own per-run evidence: the bulk of it is a boot image, a config
+# dump, a 69k-file source manifest or a multi-megabyte logdump, and none of
+# it is worth having in a changes list. The small records the port's
+# convention commits (the package report, the ramoops recovery report, the
+# build recipe, the summary) stay tracked; the rule below only covers the
+# bulky generated siblings, and the tracked files are unaffected.
+porting/artifacts/snapshot*/*-embedded.config
+porting/artifacts/snapshot*/*-prebuild.config
+porting/artifacts/snapshot*/*-source-verification.json
+porting/artifacts/snapshot*/*-build-verification.json
+porting/artifacts/snapshot*/*-usb-capture.out
+porting/artifacts/snapshot*/*-host-experiment.out
+porting/artifacts/snapshot*/*-adb-timeline.jsonl
+porting/artifacts/snapshot*/*-boot-window.start
+porting/artifacts/snapshot*/*-boot-window.end
+porting/artifacts/snapshot*/*-base.sha256
+porting/artifacts/snapshot*/*-config.diff
+porting/artifacts/snapshot*/*-zap-stages.json
+porting/artifacts/snapshot*/*-poll/
+porting/artifacts/snapshot*/*-earlyhang/
+porting/artifacts/snapshot*/run*-live/
+porting/artifacts/snapshot*/run*-preboot/
+porting/artifacts/snapshot*/run*-postboot/
+porting/artifacts/snapshot*/run*-user-capture/
+# Boot images that landed in the repository root.
+boot-run*.img
