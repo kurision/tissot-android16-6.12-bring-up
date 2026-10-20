@@ -3,7 +3,7 @@
 > **Current state: CURRENT-STATE.md.** The entries below are the
 > running log and are ordered newest first; the top entry is not
 > necessarily the current state. Build, package and flash:
-> [BUIL_TISSOT.md](../BUIL_TISSOT.md).
+> [BUILD_TISSOT.md](../BUILD_TISSOT.md).
 >
 > The per-run evidence this document cites (boot images, kernel directories,
 > init binaries, logdumps) is no longer in the repository; it is
@@ -227,7 +227,7 @@ three runs) and `artifacts/snapshot60/run196-live/display-analysis.md`
 
 ## Historical evidence — snapshot60 run188 (2026-10-17)
 
-[Build and capture instructions](../BUIL_TISSOT.md) ·
+[Build and capture instructions](../BUILD_TISSOT.md) ·
 [current handoff](HANDOFF.md) · [GPU investigation](TRACKER-kgsl-port.md).
 Evidence below is under `artifacts/snapshot60/`; older sections are historical
 and must not override this status.
@@ -549,8 +549,9 @@ thread/PID attribution; Android wall-clock jumps are preserved.
 
 ### Donor and upstream cross-checks
 
-The user-designated donor is **`/home/kurision/development/kernel/oc-test`** (inspected HEAD
-`687ee893ae5d`). This is a source reference, not a claim that its current
+The user-designated donor is the **CAF `oc-test` tree** (a local checkout
+outside this repository, inspected HEAD `687ee893ae5d`). This is a source
+reference, not a claim that its current
 HEAD is the exact stock boot artifact. Its `out-merge/.config` enables
 `CONFIG_QPNP_SMBCHARGER`, `CONFIG_QPNP_FG`, `CONFIG_MSM_ADSPRPC`,
 `CONFIG_FINGERPRINT_FPC1020` and `CONFIG_FINGERPRINT_GOODIX_GF3208`.

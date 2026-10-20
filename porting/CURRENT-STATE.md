@@ -5,7 +5,7 @@ document in `porting/` is either evidence for a claim made here or the
 historical log of how the port got here; the dated run reports are not
 rewritten, they are what happened.
 
-* The build, the packaging and the flash procedure: [BUIL_TISSOT.md](../BUIL_TISSOT.md),
+* The build, the packaging and the flash procedure: [BUILD_TISSOT.md](../BUILD_TISSOT.md),
   scripted as `porting/tools/build-kernel.sh`.
 * The evidence for the claims below: `porting/findings/`, and
   `porting/FAILING-COMPONENTS.md` for the per-component table.
@@ -43,12 +43,18 @@ The adb root feature is fine; the allowlist path is not.
 | GPU | Working, with one open fault | `/dev/kgsl-3d0` is driven with the stock ioctl ABI; the retirement stall below is open |
 | Touch | Working | the `edt-ft5x06` panel, the multi-touch slots |
 | Volume and power keys | Working | the PMIC's pwrkey and resin, and a gpio-keys node |
+| Capacitive navigation keys | Working | the touch controller's key row reports `KEY_MENU`, `KEY_BACK` and `KEY_HOMEPAGE`; the recents key is `KEY_APPSELECT` (580) |
 | Hall sensor | Working | `SW_LID` on the gpio-keys device |
 | Root | Working | KernelSU-Next's adb root, `uid=0` / `u:r:ksu:s0` |
 | Log capture | Working | the `logdump` partition, the USB console, the ramoops sampler |
+| The checkpoint reboot loop | Fixed | the wakeup statistics are relabelled `sysfs_wakeup`; the `system_suspend` denials are 0 and the boot no longer asks for a reboot |
 | Wi-Fi, cellular, cameras, Bluetooth | Failing | see `FAILING-COMPONENTS.md`; unchanged by this session's work |
 
 ## What is open, and what is known about it
+
+Section 3 below is closed: it is kept because the constraints it lists are
+the reason the fix works, and because the same failure would come back if
+the relabel were moved in front of the bootdevice guard again.
 
 ### 1. The GPU retirement stall — the display hang
 
@@ -90,9 +96,9 @@ stops advancing while a fence is still pending, it captures dmesg,
 The clock policy works. What is missing is anything that can throttle it.
 
 * `CONFIG_QCOM_TSENS` is not set **in the built configuration**. The
-  defconfig says `=y`, but the build never reads the defconfig: it takes
-  the configuration from the previous image's embedded configuration, so
-  that line is dead code.
+  defconfig says `=y`, but the build never reads the defconfig: the
+  configuration is `porting/tools/kernel.config`, and that file has it
+  off.
 * The CPU nodes have **no `#cooling-cells`**, so `&CPU0` is not a cooling
   device and the four CPU thermal zones in the device tree have nothing to
   throttle. The donor has `#cooling-cells = <2>` on all eight CPU nodes.
@@ -110,7 +116,7 @@ Fixing it is two changes: put `CONFIG_QCOM_TSENS=y` where it survives (the
 build script's forced symbols, not the defconfig) and add `#cooling-cells` to
 the eight CPU nodes, with the OPP `cooling-device` link.
 
-### 3. The early hang is a reboot that never finishes
+### 3. The early hang: fixed by the relabel
 
 `run278`'s logdump ends like this:
 
@@ -125,7 +131,7 @@ driver: `system_server` asked for a reboot, Android's init shut its services
 down, the kernel was told to terminate all tasks, and the reboot never
 reached the reset.
 
-The reason is in the same logdump: **460 SELinux denials** for the
+The reason was in the same logdump: **460 SELinux denials** for the
 `system_suspend` domain reading the wakeup statistics. The ROM's policy was
 written for the 4.19 CAF kernel, where the statistics lived under
 `/sys/devices/virtual/wakeup`; the 6.12 kernel puts them per device, so
@@ -154,6 +160,19 @@ Two constraints on doing it in the initramdisk, both learned the hard way:
   releases. The fix is a separate process that relabels in parallel with
   the guard, not a delay in front of it.
 
+**Where it stands: 47 of 47 wakeup nodes are `u:object_r:sysfs_wakeup:s0`**
+and the kgsl's power attributes are `sysfs_gpu:s0`. The `system_suspend`
+denials went 367 → 6 → 0, no "Checkpoint commit failed" is logged, and
+`run289` stayed up for more than 160 s with no reboot request. The
+initramfs forks the relabel as a sibling process and waits for the guard
+on a pipe, so the guard is never delayed.
+
+**Where it stands on the phone: `run294` has been up since 12:08 with no
+reboot request.** The device reports the navigation keys
+(`KEY_BACK`, `KEY_HOMEPAGE`, `KEY_APPSELECT` and `BTN_TOUCH` from the
+`generic ft5x06 (3b)` input device), `/dev/ashmem` is there, and the
+adbd shell is `uid=0` in `u:r:ksu:s0`.
+
 ### 4. The audio: the drivers are in, the device tree is not
 
 Merged from the `ack-fix` worktree on 2026-10-20: CAF's AFE driver, the
@@ -171,7 +190,7 @@ properties, the CDC pinctrl states and the external amplifier's GPIO. The
 audio symbols are enabled in the build so that a boot shows whether the
 drivers probe.
 
-### 5. The capacitive navigation keys: fixed in the tree, not in the flashed kernel
+### 5. The capacitive navigation keys: fixed in the tree, and now in the flashed kernel
 
 The volume and power keys work. The three capacitive navigation keys — home,
 back and recent — do not, and the reason is not a missing driver.
@@ -180,14 +199,17 @@ The repository has both halves of the fix: the `edt,keys` property in
 `arch/arm64/boot/dts/qcom/msm8953-xiaomi-tissot.dts` and the
 `edt-ft5x06` change that reports the keys the controller reports on its
 sensor row below the panel. **Neither was in the flashed kernel.** The
-kernel is built from a staged source tree, and that tree was a day older
+kernel was built from a staged source tree, and that tree was a day older
 than the commits. The same staleness kept the CAF fastrpc ioctl ABI out of
 the kernel, which is why the `adsprpcd` daemon crash-looped with `failed to
 send del client cmd`.
 
-The build script now refreshes the staged tree and verifies it against the
-repository before every build, and prints what it staged. `run289` carries
-both fixes.
+**The staged tree is gone.** The kernel is compiled from this repository
+(`make -C . O=out`), so a commit is in the next kernel by construction and
+the whole class of "the tree was older than the commits" failures is
+closed. The `run289` image carries both fixes: its device tree has
+`edt,keys`, and the device reports `KEY_MENU`, `KEY_BACK` and
+`KEY_HOMEPAGE` from the touch controller.
 
 ## The repository
 
@@ -198,14 +220,26 @@ both fixes.
   `../ack-kgsl-artifacts`, with a README there listing each one and its
   checksum. The stock boot backup is the only copy of the phone's original
   boot partition.
-* The build is scripted: `porting/tools/build-kernel.sh`.
-* The staged source tree is `../ack-staged-run239`; the output directory is
-  `out/` in the repository, reused, and emptied for a clean rebuild.
+* The build is scripted: `porting/tools/build-kernel.sh`. It builds the
+  repository itself, uses `porting/tools/kernel.config` as the
+  configuration, and writes to `out/` in the repository, reused, and
+  emptied for a clean rebuild.
+* The image on the phone is **run294** (flashed at 12:07, booted at 12:08
+  on 2026-10-20). Its kernel carries the navigation keys and the CAF
+  `GETINFO` ioctl, but it was built before the ZRAM fix, so
+  `CONFIG_ZRAM` is a module in it and `/sys/block/zram0` does not exist on
+  the device. The ROM's `init.rc` chowns and chmods
+  `/sys/block/zram0/idle` and `/sys/block/zram0/writeback` at boot
+  (`system/etc/init/hw/init.rc:1208-1211`), and its `mmd_setup` service
+  sets zram up, so both fail on the running kernel. The next build has
+  `CONFIG_ZRAM=y`, which is what the ROM needs: the port has no module
+  autoload, so a modular zram means the device is never there.
 
 ## The order of the remaining work
 
-1. Build and flash `run289`; check the navigation keys and that the
-   `adsprpcd` crash loop has stopped.
+1. Rebuild with `CONFIG_ZRAM=y`, flash it to `boot_b`, and check on the
+   device: the navigation keys, no checkpoint reboot, no `adsprpcd`
+   crash loop, and `/sys/block/zram0` present.
 2. Write the sound card's device tree from the donor's `audio.dtsi` and
    make sound work.
 3. Catch a GPU stall with the watcher and read the ME_INIT spin.
