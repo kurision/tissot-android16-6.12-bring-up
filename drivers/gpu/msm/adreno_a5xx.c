@@ -2069,6 +2069,7 @@ static void __iomem *diag_gpu_cb_base(struct kgsl_device *device)
 }
 
 
+#if 0 /* Legacy success-path SMMU sampling. Fault dumps remain enabled. */
 static void diag_gpu_smmu_state(struct adreno_device *adreno_dev,
 		struct adreno_ringbuffer *rb)
 {
@@ -2086,6 +2087,7 @@ static void diag_gpu_smmu_state(struct adreno_device *adreno_dev,
 
 
 }
+#endif
 
 /*
  * a5xx_dump_smmu_state() - DIAG: sample the gfx3d_user context bank at a
@@ -2174,6 +2176,7 @@ static int a5xx_send_me_init(struct adreno_device *adreno_dev,
 	unsigned int *cmds;
 	int ret;
 
+#if 0 /* Legacy ME_INIT logging and success-path register sampling. */
 	/*
 	 * Diagnostic-only snapshot at ME_INIT submit: clock/power state
 	 * sampled here (not on the slumber/teardown unwind) separates a
@@ -2199,6 +2202,7 @@ static int a5xx_send_me_init(struct adreno_device *adreno_dev,
 
 		diag_gpu_smmu_state(adreno_dev, rb);
 	}
+#endif
 
 	cmds = adreno_ringbuffer_allocspace(rb, 9);
 	if (IS_ERR(cmds))

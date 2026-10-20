@@ -68,7 +68,9 @@ static void _process_event_group(struct kgsl_device *device,
 {
 	struct kgsl_event *event, *tmp;
 	unsigned int timestamp;
+#if 0 /* Counter used only by the legacy heartbeat below. */
 	unsigned int pending = 0;
+#endif
 	struct kgsl_context *context;
 
 	if (group == NULL)
@@ -102,8 +104,10 @@ static void _process_event_group(struct kgsl_device *device,
 	group->processed = timestamp;
 
 out:
+#if 0 /* Do not walk the pending list solely for bring-up logging. */
 	list_for_each_entry(event, &group->events, node)
 		pending++;
+#endif
 
 	spin_unlock(&group->lock);
 
@@ -115,6 +119,7 @@ out:
 	 * stop after the first 64 events, so the event group looked dead
 	 * after the first few seconds.
 	 */
+#if 0 /* Legacy event-group heartbeat. */
 	{
 		static unsigned int calls;
 
@@ -127,6 +132,7 @@ out:
 				calls);
 		}
 	}
+#endif
 
 	kgsl_context_put(context);
 }

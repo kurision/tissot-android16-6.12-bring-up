@@ -3057,6 +3057,7 @@ int kgsl_pwrctrl_change_state(struct kgsl_device *device, int state)
 	 * the repeats are invisible; print every transition, sampled, so
 	 * the oscillation is visible with its states.
 	 */
+#if 0 /* Legacy power-transition heartbeat. */
 	{
 		static unsigned int calls;
 
@@ -3068,6 +3069,7 @@ int kgsl_pwrctrl_change_state(struct kgsl_device *device, int state)
 				device->state, state, calls);
 		}
 	}
+#endif
 
 	trace = ADRENO_DEVICE(device)->zap_loaded &&
 		adreno_is_a5xx(ADRENO_DEVICE(device));

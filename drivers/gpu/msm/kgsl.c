@@ -1865,12 +1865,14 @@ static inline bool _check_context_is_sparse(struct kgsl_context *context,
  */
 static void kgsl_diag_submit(struct kgsl_device *device, const char *what)
 {
+#if 0 /* Legacy submission heartbeat. */
 	static atomic_t submits = ATOMIC_INIT(0);
 	int n = atomic_inc_return(&submits);
 
 	if (n <= 50 || !(n % 64))
 		dev_info(device->dev, "DIAG submit %s n=%d t_ns=%llu\n",
 			 what, n, ktime_get_ns());
+#endif
 }
 
 long kgsl_ioctl_rb_issueibcmds(struct kgsl_device_private *dev_priv,

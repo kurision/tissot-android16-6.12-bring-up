@@ -99,6 +99,7 @@ static inline void adreno_zap_stage(struct device *dev,
 		enum adreno_zap_stage stage, int ret, phys_addr_t phys,
 		ssize_t size)
 {
+#if 0 /* Legacy GPU bring-up stage records. */
 	static unsigned long recorded;
 	struct adreno_zap_stage_rec rec = {
 		.magic = cpu_to_le64(ADRENO_ZAP_STAGE_MAGIC),
@@ -115,6 +116,7 @@ static inline void adreno_zap_stage(struct device *dev,
 		return;
 
 	ramoops_stage_write(stage, &rec, sizeof(rec));
+#endif
 }
 
 static inline void *adreno_zap_subsystem_get(struct device *dev,

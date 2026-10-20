@@ -54,6 +54,7 @@ static void kgsl_timeline_diag_signal(struct kgsl_timeline *timeline,
 				      u64 seqno, u64 value, unsigned int pending,
 				      unsigned int signalled, bool stale)
 {
+#if 0 /* Legacy timeline bring-up logging. */
 	unsigned int n;
 
 	/*
@@ -76,6 +77,7 @@ static void kgsl_timeline_diag_signal(struct kgsl_timeline *timeline,
 		timeline->id, timeline->name, seqno, value, pending, signalled,
 		stale, timeline->diag.calls, timeline->diag.stale,
 		timeline->diag.signalled);
+#endif
 }
 
 /*
@@ -91,6 +93,7 @@ static void kgsl_timeline_diag_fence(struct kgsl_timeline *timeline,
 				     u64 seqno, u64 value, bool added,
 				     unsigned int queued)
 {
+#if 0 /* Legacy fence bring-up logging. */
 	static unsigned int calls;
 
 	unsigned int n = calls;
@@ -107,6 +110,7 @@ static void kgsl_timeline_diag_fence(struct kgsl_timeline *timeline,
 
 	pr_info("DIAG timeline_fence id=%d name=%s seqno=%llu value=%llu added=%u queued=%u calls=%u\n",
 		timeline->id, timeline->name, seqno, value, added, queued, calls);
+#endif
 }
 
 struct dma_fence *kgsl_timelines_to_fence_array(struct kgsl_device *device,

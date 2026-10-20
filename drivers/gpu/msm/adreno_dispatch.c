@@ -2898,7 +2898,9 @@ static void _dispatcher_update_timers(struct adreno_device *adreno_dev)
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 	struct adreno_dispatcher *dispatcher = &adreno_dev->dispatcher;
 	bool preempt, empty = true;
+#if 0 /* Counter used only by the legacy heartbeat below. */
 	unsigned int inflight;
+#endif
 
 	/* Kick the idle timer */
 	mutex_lock(&device->mutex);
@@ -2928,6 +2930,7 @@ static void _dispatcher_update_timers(struct adreno_device *adreno_dev)
 	 * logdump shows which of the three conditions stopped the
 	 * re-arm. Sampled: the console is a 1 MiB ring.
 	 */
+#if 0 /* Legacy dispatcher heartbeat; timer updates above remain active. */
 	inflight = dispatcher->inflight;
 	{
 		static unsigned int calls;
@@ -2941,6 +2944,7 @@ static void _dispatcher_update_timers(struct adreno_device *adreno_dev)
 				calls);
 		}
 	}
+#endif
 }
 
 /* Take down the dispatcher and release any power states */

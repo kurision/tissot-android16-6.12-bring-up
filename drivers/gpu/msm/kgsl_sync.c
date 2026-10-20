@@ -124,6 +124,7 @@ static void kgsl_sync_fence_event_cb(struct kgsl_device *device,
 	 * first KGSL_SYNC_DIAG_FIRST events and then every
 	 * KGSL_SYNC_DIAG_EVERYth, for the life of the boot.
 	 */
+#if 0 /* Legacy event callback heartbeat. */
 	{
 		static unsigned int calls;
 
@@ -135,6 +136,7 @@ static void kgsl_sync_fence_event_cb(struct kgsl_device *device,
 				ev->timestamp, result, calls);
 		}
 	}
+#endif
 
 	kgsl_sync_timeline_signal(ev->context->ktimeline, ev->timestamp);
 	kgsl_context_put(ev->context);
@@ -402,8 +404,10 @@ static void kgsl_sync_timeline_signal(struct kgsl_sync_timeline *ktimeline,
 {
 	unsigned long flags;
 	struct kgsl_sync_fence *kfence, *next;
+#if 0 /* Counters used only by the legacy heartbeat below. */
 	unsigned int pending = 0, signalled = 0;
 	unsigned int last = 0;
+#endif
 
 	if (!kref_get_unless_zero(&ktimeline->kref))
 		return;
@@ -414,17 +418,24 @@ static void kgsl_sync_timeline_signal(struct kgsl_sync_timeline *ktimeline,
 
 	list_for_each_entry_safe(kfence, next, &ktimeline->child_list_head,
 				child_list) {
+#if 0
 		pending++;
+#endif
 		if (dma_fence_is_signaled_locked(&kfence->fence)) {
 			list_del_init(&kfence->child_list);
 			dma_fence_put(&kfence->fence);
+#if 0
 			signalled++;
+#endif
 		}
 	}
+#if 0
 	last = ktimeline->last_timestamp;
+#endif
 
 	spin_unlock_irqrestore(&ktimeline->lock, flags);
 
+#if 0 /* Legacy timeline heartbeat; fence signalling above is unchanged. */
 	{
 		unsigned int n = ktimeline->diag.calls;
 
@@ -435,6 +446,7 @@ static void kgsl_sync_timeline_signal(struct kgsl_sync_timeline *ktimeline,
 				signalled, ktimeline->diag.calls);
 		}
 	}
+#endif
 
 	kgsl_sync_timeline_put(ktimeline);
 }
@@ -950,4 +962,3 @@ static const struct dma_fence_ops kgsl_syncsource_fence_ops = {
 
 	.fence_value_str = kgsl_syncsource_fence_value_str,
 };
-
