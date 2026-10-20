@@ -42,8 +42,22 @@
 		qcom,msm-mbhc-gnd-swh = <1>;
 
 		/* The speaker amplifier's enable, and its pinctrl states. */
-		qcom,msm-spk-ext-pa = <&tlmm 141 GPIO_ACTIVE_LOW>;
+		qcom,msm-spk-ext-pa = <&tlmm 141 0>;
 		qcom,cdc-ext-pa-gpios = <&cdc_ext_pa_gpios>;
+
+		/*
+		 * The CDC's pins. The machine driver muxes them itself, so
+		 * they have to be named here; the states themselves are in
+		 * the pinctrl nodes below.
+		 */
+		qcom,cdc-us-euro-gpios = <&tlmm 63 0>;
+		qcom,cdc-us-eu-gpios = <&cdc_us_euro_sw>;
+		qcom,cdc-comp-gpios = <&cdc_comp_gpios>;
+		qcom,pri-mi2s-gpios = <&cdc_pri_mi2s_gpios>;
+		qcom,quin-mi2s-gpios = <&cdc_quin_mi2s_gpios>;
+
+		/* The headset microphone bias is on an external capacitor. */
+		qcom,msm-micbias1-ext-cap;
 
 		/*
 		 * The codecs of the primary MI2S links. The machine driver
