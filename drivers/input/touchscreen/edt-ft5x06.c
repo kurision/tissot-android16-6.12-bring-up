@@ -1411,6 +1411,12 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 		tsdata->key_x[i] = keys[i * 3];
 		tsdata->key_y[i] = keys[i * 3 + 1];
 		tsdata->key_code[i] = keys[i * 3 + 2];
+		/*
+		 * The input core drops an event for a code the device has
+		 * not declared, so the capacitive keys have to be declared
+		 * as capabilities, not only reported.
+		 */
+		input_set_capability(input, EV_KEY, tsdata->key_code[i]);
 	}
 	if (tsdata->num_keys)
 		dev_info(&client->dev, "%d capacitive key(s) configured\n",

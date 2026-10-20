@@ -1728,7 +1728,8 @@ static void adsprpc_compat_child(int log)
 	chmod("/dev/adsprpc-smd", 0664);
 	chown("/dev/adsprpc-smd", 1000, 1000);
 	n = setxattr("/dev/adsprpc-smd", "security.selinux",
-		     "u:object_r:qdsp_device:s0", 28, 0);
+		     "u:object_r:qdsp_device:s0",
+		     sizeof("u:object_r:qdsp_device:s0") - 1, 0);
 	snprintf(message, sizeof(message),
 		 "DIAG: adsprpc compat: alias %u:%u label ret=%d errno=%d\n",
 		 maj, min, (int)n, n ? errno : 0);
@@ -2033,6 +2034,35 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	char message[192];
 	const char *step = "validate protected fstab";
 
+	/*
+	 * Relabel the nodes the ROM's policy expects to be labelled, in a
+	 * process of their own, and now, before this process joins the
+	 * ROM's mount namespace.
+	 *
+	 * Two things make this the only place it can happen from. After
+	 * the setns below, /sys is the ROM's, and the ROM has not mounted
+	 * it yet, so the walk finds nothing - that is why an earlier
+	 * version of this code, which ran at the end of the guard
+	 * install, reported that it could not open its directory and
+	 * changed no labels at all. And the relabel must not delay the
+	 * guard: the guard has to install the read-only fstab and the
+	 * vendor contexts before the ROM's init opens its SELinux
+	 * policy, and that window is about 1.35 seconds wide. A relabel
+	 * in front of the guard loses that race, the guard fails, and the
+	 * ROM's init waits for a boot device that nobody releases.
+	 *
+	 * So: a sibling process, in the initramdisk's own namespace, with
+	 * the kernel's sysfs, doing the work while this process gets on
+	 * with the guard.
+	 */
+	if (fork() == 0) {
+		for (n = 0; n < 8; n++) {
+			relabel_sysfs_for_rom_policy(log);
+			sleep(2);
+		}
+		_exit(0);
+	}
+
 	if (validate_guard_fstab(fstab))
 		goto failed;
 	for (;;) {
@@ -2100,17 +2130,6 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	harvest_modem_firmware(log);
 	adsprpc_compat_fork(log);
 	guard_debuggable(proc, log);
-	/*
-	 * The devices that own the wakeup statistics probe at their own pace,
-	 * so relabel them over a few passes rather than once: the suspend
-	 * service reads them when it takes its snapshot, and a node that is
-	 * still on the generic sysfs type is a denial that fails the
-	 * checkpoint and takes the phone down with it.
-	 */
-	for (n = 0; n < 8; n++) {
-		relabel_sysfs_for_rom_policy(log);
-		sleep(2);
-	}
 	_exit(0);
 failed:
 	snprintf(message, sizeof message,
