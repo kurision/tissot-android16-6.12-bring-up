@@ -46,7 +46,7 @@ struct wcd_spi_ac_buf_data {
  */
 struct wcd_spi_ac_write_cmd {
 	__u32 cmd_type;
-	__u8 payload[0];
+	__u8 payload[];
 } __packed;
 
 #endif /* end of __UAPI_WCD_SPI_AC_PARAMS_H__ */

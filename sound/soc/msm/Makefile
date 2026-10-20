@@ -58,3 +58,23 @@ obj-$(CONFIG_SND_SOC_MSM8952) += msmplatform.o
 afedrv-objs += q6afe.o
 
 obj-$(CONFIG_WCD9XXX_CODEC_CORE) += afedrv.o
+
+#
+# CAF 4.19's DSP library. The machine driver and the PCM platforms above
+# are CAF 4.19's, and they reach the DSP through it: the ASM's cpu
+# buffer model for the data, the ASM's volume and calibration, the
+# voice service and the ADM. This kernel carries CAF's later AVD stack
+# instead, which is a different model and not a rename of this one, so
+# the library comes from the donor as well and the port is CAF 4.19
+# consistent from the machine down to the DSP.
+#
+# The tree's own sound/soc/qcom/qdsp6 stack has to be off: it defines
+# the same names (q6asm_cmd, q6asm_read, q6core_is_adsp_ready, ...) and
+# nothing in this port uses it.
+dsplib-objs += q6asm.o q6core.o q6adm.o q6voice.o q6audio-v2.o \
+	       q6common.o adsp_err.o rtac.o sp_params.o avtimer.o \
+	       audio_cal_utils.o audio_calibration.o msm_audio_ion.o \
+	       digital-cdc-rsc-mgr.o msm-dts-srs-tm-config.o \
+	       msm-audio-event-notify.o q6afecal-hwdep.o q6_init.o apr.o
+
+obj-$(CONFIG_SND_SOC_MSM8952) += dsplib.o

@@ -69,3 +69,26 @@ config SND_SOC_MSM8952
 	help
 	  Soundcard for this SoC, which CAF calls SDM450. It wires the
 	  WCD9335 codec, the SDM660 CDC, the AFE and the mi2s links.
+
+#
+# CAF's headers choose between the real implementation and a stub with
+# these symbols. The port builds the real ones, so they have to be on:
+# without them the header's stub and the source's definition are both
+# in the same translation unit.
+config DIGITAL_CDC_RSC_MGR
+	bool "CAF digital CDC resource manager"
+
+config DTS_SRS_TM
+	bool "CAF SRS time machine parameter support"
+
+config AFE_HWDEP
+	bool "CAF AFE hardware calibration hwdep"
+
+config SND_SOC_MSM_QDSP6V2_INTF
+	bool "CAF audio event notification interface"
+
+config XT_LOGGING
+	bool "CAF AFE XT logging"
+
+config MSM_MDF
+	bool "CAF audio MDF topology support"

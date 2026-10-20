@@ -288,7 +288,7 @@ struct cpe_lsm_event_detect_v2 {
 	struct cmi_hdr	hdr;
 	u8 detection_status;
 	u8 size;
-	u8 payload[0];
+	u8 payload[];
 } __packed;
 
 struct cpe_lsm_psize_res {

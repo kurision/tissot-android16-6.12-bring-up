@@ -2226,7 +2226,7 @@ struct afe_port_cmd_event_cfg {
 	 * Each event has the structure of
 	 * afe_port_cmd_mod_evt_cfg_payload.
 	 */
-	uint8_t payload[0];
+	uint8_t payload[];
 };
 
 /** Event registration for a module. */
@@ -11701,7 +11701,11 @@ struct avs_svc_api_info {
 
 struct avcs_fwk_ver_info {
 	struct avcs_get_fwk_version avcs_fwk_version;
-	struct avs_svc_api_info services[0];
+	/* A variable length tail: the number of services follows the
+	 * framework version. A zero length array cannot be indexed,
+	 * which this kernel refuses to compile.
+	 */
+	struct avs_svc_api_info services[];
 } __packed;
 
 /* LSM Specific */
