@@ -1220,48 +1220,18 @@ static int filter_flags_health_check_rc(const char *text, size_t used,
 }
 
 /*
- * Vendor services that crash-loop on this port.  qrtr-ns is a real fix:
- * 6.12's qrtr_port_assign() requires CAP_NET_ADMIN for the name-service
- * port, while the ROM grants only NET_BIND_SERVICE.  The camera stack is
- * deliberately disabled: camera bring-up is not part of this pass.
- * dataqti waits for the rmnet/MHI node that only exists once the modem
- * data path is up, so keep it stopped instead of retrying it every second.
+ * Vendor services that crash-loop on this port.  The camera stack is
+ * deliberately stopped: camera bring-up is not part of this pass.  dataqti
+ * waits for the rmnet/MHI node that only exists once the modem data path is
+ * up, so keep it stopped instead of retrying it every second.
  *
- * These definitions live in flags_health_check.rc, which init imports from
- * /system/etc/init before /vendor/etc/init.  The system-side `override`
- * definitions are therefore the ones init keeps; the later vendor
- * definitions for the same names are duplicates and are ignored.  The
- * property actions catch a vendor HAL that starts one of the disabled
- * services explicitly.
+ * Service definitions for a vendor service cannot be overridden from
+ * /system: init rejects an override that crosses the treble boundary
+ * (service_parser.cpp compares the file's subcontext).  Only actions are
+ * installed from this system-side file; the qrtr-ns service override is
+ * appended to a vendor rc file instead (see guard_vendor_qrtr).
  */
 static const char crashloop_rc[] =
-	"\n"
-	"# ack: 6.12 QRTR needs CAP_NET_ADMIN for the userspace name service.\n"
-	"service vendor.qrtr-ns /vendor/bin/qrtr-ns -f\n"
-	"    class core\n"
-	"    user vendor_qrtr\n"
-	"    group vendor_qrtr\n"
-	"    capabilities NET_BIND_SERVICE NET_ADMIN\n"
-	"    override\n"
-	"\n"
-	"# ack: camera stack is out of scope for this bring-up.\n"
-	"service vendor.per_mgr /vendor/bin/pm-service\n"
-	"    class core\n"
-	"    user system\n"
-	"    group system\n"
-	"    capabilities NET_BIND_SERVICE\n"
-	"    ioprio rt 4\n"
-	"    task_profiles ServiceCapacityLow\n"
-	"    disabled\n"
-	"    override\n"
-	"\n"
-	"service qcamerasvr /system/vendor/bin/mm-qcamera-daemon\n"
-	"    class main\n"
-	"    user camera\n"
-	"    group camera system inet input graphics\n"
-	"    task_profiles ServiceCapacityLow\n"
-	"    disabled\n"
-	"    override\n"
 	"\n"
 	"# ack: data DPM waits on the missing rmnet/MHI node.\n"
 	"on property:init.svc.vendor.dataqti=running\n"
@@ -1269,7 +1239,7 @@ static const char crashloop_rc[] =
 	"on property:init.svc.vendor.dataqti=restarting\n"
 	"    stop vendor.dataqti\n"
 	"\n"
-	"# ack: catch an explicit start from a vendor HAL too.\n"
+	"# ack: camera stack is out of scope for this bring-up.\n"
 	"on property:init.svc.vendor.per_mgr=running\n"
 	"    stop vendor.per_mgr\n"
 	"on property:init.svc.vendor.per_proxy=running\n"
@@ -1348,6 +1318,78 @@ done:
 		close(fd);
 	snprintf(message, sizeof(message),
 		 "DIAG: flags_health_check rc override errno=%d\n", error);
+	say(log, message);
+}
+
+/*
+ * The qrtr-ns override must be parsed from a vendor file: init rejects an
+ * override of a vendor service from /system as a treble-boundary crossing.
+ * qcrild.rc is in /vendor/etc/init, so it is parsed after the hardware file
+ * that defines the service and in the vendor subcontext.  Append the
+ * override there without touching the rest of the file.
+ */
+static const char qrtr_vendor_rc[] =
+	"\n"
+	"# ack: 6.12 QRTR needs CAP_NET_ADMIN for the userspace name service.\n"
+	"service vendor.qrtr-ns /vendor/bin/qrtr-ns -f\n"
+	"    class core\n"
+	"    user vendor_qrtr\n"
+	"    group vendor_qrtr\n"
+	"    capabilities NET_BIND_SERVICE NET_ADMIN\n"
+	"    override\n";
+
+static void guard_vendor_qrtr(int proc, int log)
+{
+	static const char target[] = "/vendor/etc/init/qcrild.rc";
+	static char text[32 * 1024];
+	char message[160];
+	size_t used = 0;
+	int in = -1, fd = -1, error = 0;
+
+	in = open(target, O_RDONLY | O_CLOEXEC);
+	if (in < 0)
+		goto failed;
+	for (;;) {
+		ssize_t n;
+
+		if (used == sizeof(text)) {
+			error = E2BIG;
+			goto done;
+		}
+		n = read(in, text + used, sizeof(text) - used);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n < 0)
+			goto failed;
+		if (!n)
+			break;
+		used += (size_t)n;
+	}
+	if (used + sizeof(qrtr_vendor_rc) - 1 > sizeof(text)) {
+		error = E2BIG;
+		goto done;
+	}
+	memcpy(text + used, qrtr_vendor_rc, sizeof(qrtr_vendor_rc) - 1);
+	used += sizeof(qrtr_vendor_rc) - 1;
+	fd = memfd_create("ack-qrtr-vendor-rc", MFD_CLOEXEC);
+	if (fd < 0)
+		goto failed;
+	if (write_all(fd, text, used)) {
+		error = errno;
+		goto done;
+	}
+	if (guard_bind_config(proc, fd, "/dev/block/ack-qrtr-vendor.rc", target))
+		error = errno;
+	goto done;
+failed:
+	error = errno;
+done:
+	if (in >= 0)
+		close(in);
+	if (fd >= 0)
+		close(fd);
+	snprintf(message, sizeof(message),
+		 "DIAG: vendor qrtr override errno=%d\n", error);
 	say(log, message);
 }
 #ifdef ANDROID_DISPLAY_GATE
@@ -2412,6 +2454,7 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	 * cannot take effect even if it succeeds.
 	 */
 	guard_flags_health_check(proc, log);
+	guard_vendor_qrtr(proc, log);
 #ifdef ANDROID_EARLY_LOGCAT
 	guard_early_logcat(proc, log);
 #endif

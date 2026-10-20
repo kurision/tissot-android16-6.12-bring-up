@@ -309,6 +309,15 @@ cat "$BOOT/Image.gz" "$BOOT/dts/qcom/msm8953-xiaomi-tissot.dtb" > "$BOOT/Image.g
 # the kernel, but packing the whole tree keeps the early load working. The
 # directory is optional: without it the image still boots, with WLAN stuck
 # at the old -2 load error.
+#
+# The UART console is dropped from the command line. The command line comes
+# from the base image, so every image inherits "earlycon console=ttyMSM0,115200"
+# from it. The early console is what killed the failed boots: the port's
+# UART clock state is not what the bootloader left, and the first write from
+# msm_serial_probe()'s own printk faults synchronously
+# (porting/findings/2026-10-21-boot-reset-loop-analysis.md). The tokens are
+# only dropped when the base actually carries them, so a base without them
+# still packages.
 fw_args=()
 if [ -d "$FW_DIR" ]; then
 	test -f "$FW_DIR/wcnss.mdt" || {
@@ -318,6 +327,26 @@ else
 	echo "warning: no WCNSS firmware in $FW_DIR; WLAN will not load" >&2
 fi
 sha256sum "$BASE_IMAGE" > "$SNAP/$RUN-base.sha256"
+# The command line is inherited from the base image, so it carries whatever
+# console the base was built with. Drop the UART console: see the comment
+# above. --drop-cmdline dies on a token that is not there, so the tokens are
+# filtered against the base's own command line first.
+mapfile -t drop_cmdline < <(python3 - "$BASE_IMAGE" <<'PY'
+import sys
+
+CMDLINE_OFF, CMDLINE_LEN = 64, 512
+with open(sys.argv[1], 'rb') as image:
+    head = image.read(CMDLINE_OFF + CMDLINE_LEN)
+present = set(head[CMDLINE_OFF:].split(b'\0', 1)[0].decode().split())
+for token in ('earlycon', 'console=ttyMSM0,115200'):
+    if token in present:
+        print(token)
+PY
+)
+drop_args=()
+for token in "${drop_cmdline[@]}"; do
+	drop_args+=(--drop-cmdline "$token")
+done
 # ACK_EXTRA_CMDLINE is appended to the command line of the image. It is
 # for fault-isolation boots: "console=tty0" puts the kernel log on the
 # panel, and "initcall_debug" says which initcall was running when the
@@ -331,7 +360,7 @@ fi
 python3 -B porting/logging/package-diag-boot.py --base-image "$BASE_IMAGE" \
  --kernel-dir "$SNAP/kdir-$RUN" --stage-kernel "$BOOT" --init "$SNAP/init-$RUN" \
  --keep-stock-console --policy-append "$REPO/porting/policy/port-genfs-kgsl.cil" \
- "${fw_args[@]}" "${cmdline_args[@]}" \
+ "${fw_args[@]}" "${drop_args[@]}" "${cmdline_args[@]}" \
  --out "$SNAP/boot-$RUN.img" --report "$SNAP/package-$RUN.json"
 scripts/extract-ikconfig "$SNAP/kdir-$RUN/Image.gz" > "$SNAP/$RUN-embedded.config"
 
@@ -353,6 +382,12 @@ config=(s/f'{run}-embedded.config').read_text()
 for key in ['RUST_IS_AVAILABLE','RUST','ASHMEM','CPUFREQ_DT','QCOM_CLK_APCC_MSM8953',
 	    'QCOM_RPMPD','PSTORE_RAM','KSU','ZRAM']:
     assert f'CONFIG_{key}=y\n' in config, key
+# The UART console must not be in the shipped command line: the early
+# console faults the port's first kernel writes. See the packaging section.
+cmdline_tokens=new['cmdline'].split()
+assert 'earlycon' not in cmdline_tokens, 'the UART early console is still in the command line'
+assert 'console=ttyMSM0,115200' not in cmdline_tokens, \
+    'the UART console is still in the command line'
 print('The diagnostic symbols and the shipped config are as expected.')
 print(json.dumps(new,indent=2))
 for m in re.finditer(rb'Linux version [^\0\n]+',gzip.decompress((s/f'kdir-{run}/Image.gz').read_bytes())):
