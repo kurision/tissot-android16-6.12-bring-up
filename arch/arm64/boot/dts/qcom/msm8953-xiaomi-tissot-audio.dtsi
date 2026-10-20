@@ -45,6 +45,15 @@
 		qcom,msm-spk-ext-pa = <&tlmm 141 GPIO_ACTIVE_LOW>;
 		qcom,cdc-ext-pa-gpios = <&cdc_ext_pa_gpios>;
 
+		/*
+		 * The codecs of the primary MI2S links. The machine driver
+		 * looks the names up in this list and takes the phandle at
+		 * that index, and this kernel's ASoC matches a link's codec
+		 * by its device node.
+		 */
+		asoc-codec-names = "msm-dig-codec", "analog-codec";
+		asoc-codec = <&msm_digital_codec>, <&pmic_analog_codec>;
+
 		qcom,audio-routing =
 			"RX_BIAS", "MCLK",
 			"SPK_RX_BIAS", "MCLK",
@@ -414,6 +423,16 @@
 					"cdc-vdda-cp";
 
 		qcom,cdc-on-demand-supplies = "cdc-vdd-mic-bias";
+
+		/*
+		 * The digital CDC. It is the first codec of the primary
+		 * MI2S links, the analog one the second, and the machine
+		 * driver finds both by their phandle here.
+		 */
+		msm_digital_codec: msm-dig-codec {
+			compatible = "qcom,msm-digital-codec";
+			reg = <0xc0f0000 0x0>;
+		};
 	};
 };
 
