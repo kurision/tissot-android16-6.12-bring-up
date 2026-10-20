@@ -16,7 +16,7 @@
  * has its own budget.
  */
 #define KGSL_SYNC_DIAG_FIRST	64
-#define KGSL_SYNC_DIAG_EVERY	256
+#define KGSL_SYNC_DIAG_EVERY	64
 
 static void kgsl_sync_timeline_signal(struct kgsl_sync_timeline *timeline,
 	unsigned int timestamp);

@@ -120,7 +120,7 @@ out:
 
 		unsigned int n = calls;
 
-		if (n < 64 || !(n % 256)) {
+		if (n < 64 || !(n % 64)) {
 			calls = n + 1;
 			pr_info("DIAG event_group ts=%u processed=%u pending=%u flush=%d calls=%u\n",
 				timestamp, group->processed, pending, flush,

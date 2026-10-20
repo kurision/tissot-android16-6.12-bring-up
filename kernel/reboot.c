@@ -97,11 +97,17 @@ EXPORT_SYMBOL_GPL(emergency_restart);
 void kernel_restart_prepare(char *cmd)
 {
 	/* run225: compact durable note; the notifier below persists the tail. */
+	pr_emerg("DIAG: kernel_restart_prepare enter cmd=%.64s\n",
+		 cmd ? cmd : "(null)");
 	ramoops_reset_note("kernel_restart_prepare");
+	pr_emerg("DIAG: kernel_restart_prepare notifiers\n");
 	blocking_notifier_call_chain(&reboot_notifier_list, SYS_RESTART, cmd);
+	pr_emerg("DIAG: kernel_restart_prepare notifiers done\n");
 	system_state = SYSTEM_RESTART;
 	usermodehelper_disable();
+	pr_emerg("DIAG: kernel_restart_prepare umh disabled\n");
 	device_shutdown();
+	pr_emerg("DIAG: kernel_restart_prepare devices down\n");
 }
 
 /**

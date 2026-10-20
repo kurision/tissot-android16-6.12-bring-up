@@ -3047,6 +3047,28 @@ int kgsl_pwrctrl_change_state(struct kgsl_device *device, int state)
 	if (device->state == state)
 		return status;
 	kgsl_pwrctrl_request_state(device, state);
+
+	/*
+	 * run271: the stalling boot restarted the GPU's ringbuffer seven
+	 * times a second - each restart sends an ME_INIT - while the healthy
+	 * boot did it about three times a minute. A ringbuffer restart is
+	 * what a power transition does, so the GPU was power-cycling. The
+	 * ZAP stage records only capture the first visit of each stage, so
+	 * the repeats are invisible; print every transition, sampled, so
+	 * the oscillation is visible with its states.
+	 */
+	{
+		static unsigned int calls;
+
+		unsigned int n = calls;
+
+		if (n < 64 || !(n % 64)) {
+			calls = n + 1;
+			pr_info("DIAG gpu_state from=%u to=%u calls=%u\n",
+				device->state, state, calls);
+		}
+	}
+
 	trace = ADRENO_DEVICE(device)->zap_loaded &&
 		adreno_is_a5xx(ADRENO_DEVICE(device));
 

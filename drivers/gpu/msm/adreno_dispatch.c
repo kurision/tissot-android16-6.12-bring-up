@@ -2934,7 +2934,7 @@ static void _dispatcher_update_timers(struct adreno_device *adreno_dev)
 
 		unsigned int n = calls;
 
-		if (n < 64 || !(n % 256)) {
+		if (n < 64 || !(n % 64)) {
 			calls = n + 1;
 			pr_info("DIAG dispatcher_timers inflight=%u preempt=%d empty=%d rearmed=%d calls=%u\n",
 				inflight, preempt, empty, !preempt && !empty,
