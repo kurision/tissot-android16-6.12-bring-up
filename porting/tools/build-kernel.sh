@@ -167,9 +167,13 @@ echo "  $BASE_IMAGE"
 
 # --- the run's outputs ------------------------------------------------------
 mkdir -p "$SNAP" "$OUT_DIR"
-test ! -e "$SNAP/boot-$RUN.img"
-test ! -e "$SNAP/kdir-$RUN"
-test ! -e "$SNAP/package-$RUN.json"
+for path in "$SNAP/boot-$RUN.img" "$SNAP/kdir-$RUN" "$SNAP/package-$RUN.json"; do
+	if [ -e "$path" ]; then
+		echo "error: $path already exists" >&2
+		echo "error: choose a new run name, or move that run's outputs aside" >&2
+		exit 1
+	fi
+done
 trap 'rc=$?; printf "status=%s\n" "$rc" > "$SNAP/$RUN-build.status"' EXIT
 
 make_args=(make -C "$REPO" "O=$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 "CC=$CLANG"
