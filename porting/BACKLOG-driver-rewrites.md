@@ -3,7 +3,7 @@
 > **Current state: CURRENT-STATE.md.** The entries below are the
 > running log and are ordered newest first; the top entry is not
 > necessarily the current state. Build, package and flash:
-> [BUIL_TISSOT.md](../BUIL_TISSOT.md).
+> [BUILD_TISSOT.md](../BUILD_TISSOT.md).
 >
 > The per-run evidence this document cites (boot images, kernel directories,
 > init binaries, logdumps) is no longer in the repository; it is
