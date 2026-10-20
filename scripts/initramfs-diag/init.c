@@ -1227,10 +1227,12 @@ static int filter_flags_health_check_rc(const char *text, size_t used,
  * dataqti waits for the rmnet/MHI node that only exists once the modem
  * data path is up, so keep it stopped instead of retrying it every second.
  *
- * These definitions live in flags_health_check.rc, which is parsed after
- * the vendor init files, so the `override` services replace the vendor
- * definitions before class_start.  The property actions catch a vendor HAL
- * that starts one of the disabled services explicitly.
+ * These definitions live in flags_health_check.rc, which init imports from
+ * /system/etc/init before /vendor/etc/init.  The system-side `override`
+ * definitions are therefore the ones init keeps; the later vendor
+ * definitions for the same names are duplicates and are ignored.  The
+ * property actions catch a vendor HAL that starts one of the disabled
+ * services explicitly.
  */
 static const char crashloop_rc[] =
 	"\n"
@@ -2401,6 +2403,15 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	step = "install read-only USB controller property";
 	if (guard_usb_controller(proc, log))
 		goto failed;
+	/*
+	 * flags_health_check.rc lives in /system/etc/init and is parsed at
+	 * the start of second-stage init, before logd.rc and long before the
+	 * vendor files.  Install this overlay in the pre-policy window, in
+	 * the same pass as the early-logcat overlay.  At the end of the
+	 * sequence below the ROM has already read the file, so the bind
+	 * cannot take effect even if it succeeds.
+	 */
+	guard_flags_health_check(proc, log);
 #ifdef ANDROID_EARLY_LOGCAT
 	guard_early_logcat(proc, log);
 #endif
@@ -2432,7 +2443,6 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	harvest_modem_firmware(log);
 	adsprpc_compat_fork(log);
 	guard_debuggable(proc, log);
-	guard_flags_health_check(proc, log);
 	/*
 	 * The guard's window is closed: the fstab and the vendor
 	 * contexts are in place, so the relabel can walk the device tree

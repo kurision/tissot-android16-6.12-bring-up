@@ -27,17 +27,19 @@ feature puts the adb shell in the `u:r:ksu:s0` domain as uid 0, which is
 what makes the kgsl debugfs readable — and the kgsl debugfs is where the
 GPU's retired count is.
 
-**Do not use the manager's grant-root flow until the fix is in an image.** The
-path that crashed is `SET_APP_PROFILE`, not `KSU_IOCTL_SET_SEPOLICY`. It calls
+**The grant-root fix is in run302.** The path that crashed is
+`SET_APP_PROFILE`, not `KSU_IOCTL_SET_SEPOLICY`. It calls
 `ksu_mark_running_process_locked()`, which walks every thread under
 `tracepoint_reg_lock` with IRQs disabled and used to print one `tp_marker:`
 line per thread. On this phone (4,211 threads) that was ~5,000 synchronous
 printk lines; the watchdog declared a 25 s soft lockup at
 `do_set_app_profile` and panicked the kernel
 (`porting/findings/ksu-grant-root-softlockup-20261020.md`). The local fix
-removes the per-thread logging and keeps one summary line. It is **not yet
-verified on device**: rebuild, flash, grant root to an app, and check for the
-summary line and no soft lockup. The adb root feature is unaffected.
+removes the per-thread logging and keeps one summary line. run302 boots with
+no soft lockup; the grant path itself has **not been exercised** on the new
+image: grant root to an app other than FKM and check for one
+`tp_marker: refreshed running processes` line and no soft lockup. The adb
+root feature is unaffected.
 
 ## What works
 
@@ -53,7 +55,7 @@ summary line and no soft lockup. The adb root feature is unaffected.
 | Hall sensor | Working | `SW_LID` on the gpio-keys device |
 | Root | Working | KernelSU-Next's adb root, `uid=0` / `u:r:ksu:s0` |
 | Log capture | Working | the `logdump` partition, the USB console, the ramoops sampler |
-| The checkpoint reboot loop | Fix committed, not in an image yet | the wakeup statistics are relabelled `sysfs_wakeup` by the initramdisk's relabel, which had no `/sys` to walk and so never labelled anything; the fix mounts one |
+| The checkpoint reboot loop | In run302, not verified | the wakeup statistics relabel fix is in `init-run302`; the previous boot still reports `sys.boot.reason=reboot,checkpoint_commit_failed` and the early relabel diagnostics show `labels=0 skipped=1`, so the result is not closed |
 | The `adsprpcd` CAF ioctl layer | In the kernel, one command missing | the port decodes CAF's ioctl numbering; on the phone the daemon now fails on exactly one command, `GETINFO`, whose handler is committed but not in the flashed image |
 | Wi-Fi, cellular, cameras, Bluetooth | Failing | see `FAILING-COMPONENTS.md`; unchanged by this session's work |
 
@@ -262,12 +264,17 @@ The measurement, the disassembly of the shipped library and the errno
 argument are in
 [findings/2026-10-20-fastrpc-getinfo-measured.md](findings/2026-10-20-fastrpc-getinfo-measured.md).
 
-### 7. The vendor crash loops: qrtr-ns is fixed, camera is parked
+### 7. The vendor crash loops: the overlay is in the image but run302 installed it too late
 
 The health-check removal stops the `flags_health_check` exec reaction,
-not the services that trigger it.  The current boot still had
+not the services that trigger it.  The current boot has
 `sys.init.updatable_crashing=1` and init restarting `vendor.qrtr-ns`,
 `vendor.per_mgr`, `vendor.per_proxy`, `qcamerasvr` and `vendor.dataqti`.
+The overlay is in the run302 init binary, but it did not install: the
+ROM's action is still at `flags_health_check.rc:10/11` and ran 217 times
+in six minutes; qrtr-ns still lacks `NET_ADMIN`; the camera stack is still
+restarting; `vendor.dataqti` is still running with the `QTI_SDM_INFO`
+flood.
 
 `vendor.qrtr-ns` is a real fix: 6.12's `qrtr_port_assign()` requires
 `CAP_NET_ADMIN` for the userspace name-service port
@@ -281,7 +288,17 @@ QRTR NS keeps the control port.
 peripheral-manager stack, out of scope for this pass, and are disabled
 rather than left crash-looping.  `vendor.dataqti` waits for the
 rmnet/MHI node that only appears once the modem data path is up; it is
-stopped until then.  The evidence and the verification plan are in
+stopped until then.
+
+**Why run302 missed it:** `flags_health_check.rc` is in
+`/system/etc/init`, which init parses before the vendor files and before
+the late guard steps.  The health-check bind was the last pre-policy
+step, after the firmware and debuggable passes; it could not land.  The
+call is moved next to the early-logcat overlay in
+`scripts/initramfs-diag/init.c`.  The evidence, the AOSP import-order
+check and the post-fix checks are in
+[findings/run302-overlay-not-installed-20261020.md](findings/run302-overlay-not-installed-20261020.md);
+the design rationale and the pre-fix evidence remain in
 [findings/qrtr-ns-and-crash-loops-20261020.md](findings/qrtr-ns-and-crash-loops-20261020.md).
 
 ## The repository
@@ -297,23 +314,28 @@ stopped until then.  The evidence and the verification plan are in
   repository itself, uses `porting/tools/kernel.config` as the
   configuration, and writes to `out/` in the repository, reused, and
   emptied for a clean rebuild.
-* The image on the phone is **run294** (flashed at 12:07, booted at 12:08
-  on 2026-10-20). Its kernel carries the navigation keys and the CAF
-  `GETINFO` ioctl, but it was built before the ZRAM fix, so
-  `CONFIG_ZRAM` is a module in it and `/sys/block/zram0` does not exist on
+* The image on the phone is **run302** (built and booted at 16:20 on
+  2026-10-20). Its kernel is `6.12.93-4k-gda553ac9776d`; it carries the
+  navigation keys, the CAF `GETINFO` ioctl and `CONFIG_ZRAM=y`.  The
+  crash-loop overlay is in its init binary but did not install (section 7).
+  The run302 verification is in
+  [findings/run302-overlay-not-installed-20261020.md](findings/run302-overlay-not-installed-20261020.md).
+  The earlier run294 image was built before the ZRAM fix, so
+  `CONFIG_ZRAM` was a module there and `/sys/block/zram0` did not exist on
   the device. The ROM's `init.rc` chowns and chmods
   `/sys/block/zram0/idle` and `/sys/block/zram0/writeback` at boot
   (`system/etc/init/hw/init.rc:1208-1211`), and its `mmd_setup` service
-  sets zram up, so both fail on the running kernel. The next build has
-  `CONFIG_ZRAM=y`, which is what the ROM needs: the port has no module
-  autoload, so a modular zram means the device is never there.
+  sets zram up; that is why the port needs `CONFIG_ZRAM=y` and no module
+  autoload.
 
 ## The order of the remaining work
 
-1. Rebuild with the relabel fix and `CONFIG_ZRAM=y`, flash it to
-   `boot_b`, and check on the device: the wakeup nodes labelled
-   `sysfs_wakeup`, the `system_suspend` denials at 0, `/sys/block/zram0`
-   present, and the navigation keys.
+1. Rebuild with the health-check overlay moved next to the early-logcat
+   overlay, flash it to `boot_b`, and check the run302 list: `errno=0`
+   for the override, no `UPDATABLE_CRASHING` exec, qrtr-ns running, and
+   the camera/dataqti services stopped.  The run302 boot already has
+   `CONFIG_ZRAM=y` and the relabel fix; check the wakeup labels,
+   `/sys/block/zram0` and the navigation keys on that boot.
 2. Read the next boot's `adsprpcd` result: with `GETINFO` and ioctl 17
    both answered, the library should stop asking, and whatever it asks
    for next will be named in the kernel log.
