@@ -218,15 +218,18 @@
 		 * in the middle, 800 is back on the right, and 200 is the
 		 * recents on the left, which is where this phone puts it.
 		 *
-		 * The codes are not the donor's. The donor describes a
-		 * board with a FocalTech touch controller and gives the
-		 * recents key KEY_MENU, but this board has an EDT FT5406
-		 * and the framework here answers KEY_MENU with the
-		 * overflow menu. The recents is 187, which the kernel
-		 * calls KEY_F17 and the framework calls KEYCODE_APP_SWITCH.
+		 * The codes are the ones this ROM's own key layout names.
+		 * The framework translates the kernel's key code through
+		 * /system/usr/keylayout/Generic.kl, and that file maps
+		 * 172 to HOME, 158 to BACK and 580 to APP_SWITCH. The
+		 * donor's focaltech_ts node describes a board with a
+		 * Focaltech touch controller and gives the recents key
+		 * KEY_MENU, which that layout maps to MENU - the overflow
+		 * menu, not the recents. 580 is KEY_APPSELECT in the
+		 * kernel.
 		 */
 		edt,keys = <500 2040 KEY_HOMEPAGE
-			    200 2040 KEY_F17
+			    200 2040 KEY_APPSELECT
 			    800 2040 KEY_BACK>;
 	};
 };
