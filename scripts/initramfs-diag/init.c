@@ -2038,38 +2038,55 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	time_t deadline = monotonic_seconds() + 60;
 	int ns = -1, root = -1;
 	int n;
+	int ready[2] = { -1, -1 };
 	struct stat st;
 	char message[192];
 	const char *step = "validate protected fstab";
 
 	/*
 	 * Relabel the nodes the ROM's policy expects to be labelled, in a
-	 * process of their own, and now, before this process joins the
-	 * ROM's mount namespace.
+	 * process of their own, in the initramdisk's own mount namespace.
 	 *
-	 * Two things make this the only place it can happen from. After
-	 * the setns below, /sys is the ROM's, and the ROM has not mounted
-	 * it yet, so the walk finds nothing - that is why an earlier
-	 * version of this code, which ran at the end of the guard
-	 * install, reported that it could not open its directory and
-	 * changed no labels at all. And the relabel must not delay the
-	 * guard: the guard has to install the read-only fstab and the
-	 * vendor contexts before the ROM's init opens its SELinux
-	 * policy, and that window is about 1.35 seconds wide. A relabel
-	 * in front of the guard loses that race, the guard fails, and the
-	 * ROM's init waits for a boot device that nobody releases.
+	 * The namespace is the reason it is a separate process. After the
+	 * setns below, /sys is the ROM's, and the ROM has not mounted it
+	 * yet, so the walk finds nothing - that is why an earlier version
+	 * of this code, which ran at the end of the guard install,
+	 * reported that it could not open its directory and changed no
+	 * labels at all.
 	 *
-	 * So: a sibling process, in the initramdisk's own namespace, with
-	 * the kernel's sysfs, doing the work while this process gets on
-	 * with the guard.
+	 * The timing is the reason it waits. The guard has to install the
+	 * read-only fstab and the vendor contexts before the ROM's init
+	 * opens its SELinux policy, and that window is about 1.35 seconds
+	 * wide. The relabel walks the whole device tree, which is enough
+	 * CPU to push the guard's own work past the end of that window,
+	 * and a guard that misses it fails, and the ROM's init then waits
+	 * for a boot device that nobody releases: the phone comes up on a
+	 * dim lit screen with no adb and no USB.
+	 *
+	 * So the child waits for this process to say the guard is done,
+	 * and only then walks. It has all the time it needs: the suspend
+	 * service reads the statistics at around two minutes.
 	 */
+	if (pipe(ready) < 0)
+		goto failed;
 	if (fork() == 0) {
-		for (n = 0; n < 8; n++) {
+		char c;
+
+		close(ready[1]);
+		/* Wait for the guard to be finished with its window. */
+		if (read(ready[0], &c, 1) <= 0) {
+			/* The guard failed; there is nothing to relabel. */
+			_exit(0);
+		}
+		close(ready[0]);
+		for (n = 0; n < 4; n++) {
 			relabel_sysfs_for_rom_policy(log);
 			sleep(2);
 		}
 		_exit(0);
 	}
+	close(ready[0]);
+	ready[0] = -1;
 
 	if (validate_guard_fstab(fstab))
 		goto failed;
@@ -2138,6 +2155,20 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	harvest_modem_firmware(log);
 	adsprpc_compat_fork(log);
 	guard_debuggable(proc, log);
+	/*
+	 * The guard's window is closed: the fstab and the vendor
+	 * contexts are in place, so the relabel can walk the device tree
+	 * now without taking CPU from the work that had to happen
+	 * before the ROM's init opened its policy.
+	 */
+	if (ready[1] >= 0) {
+		char c = 0;
+
+		if (write(ready[1], &c, 1) != 1)
+			say(log, "DIAG: relabel child was not woken\n");
+		close(ready[1]);
+		ready[1] = -1;
+	}
 	_exit(0);
 failed:
 	snprintf(message, sizeof message,
