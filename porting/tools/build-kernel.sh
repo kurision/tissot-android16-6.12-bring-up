@@ -204,30 +204,28 @@ cp "$OUT_DIR/.config" "$SNAP/$RUN-prebuild.config"
 # is the only place they can be turned on.
 #   CONFIG_KSU: KernelSU-Next is built in, and the manager only talks to
 #   a driver that reports the released version.
-#   The audio stack is not built here. It is CAF 4.19's machine driver
-#   and PCM platforms, and they need CAF's DSP library, which this
-#   kernel does not carry, so with them in the kernel does not link. The
-#   work continues on the ack-audio branch; the gap and the two ways
-#   forward are in
-#   porting/findings/2026-10-20-audio-dsp-library-gap.md.
 #   CONFIG_SLIMBUS and CONFIG_SLIM_QCOM_CTRL: the codec is a slimbus
 #   slave, and the tree's slimbus subsystem is off by default.
 #   CONFIG_ZRAM: the ROM's own init.rc already does
 #   "chown root system /sys/block/zram0/idle" and the same for
 #   writeback, so the ROM expects a zram device to be there and sizes
 #   it itself.
-# The CAF audio stack is not built here: it needs CAF's DSP library,
-# which this kernel does not carry, and with it in the kernel does not
-# link. It is built on the ack-audio branch.
+# The CAF audio stack is built on this branch: CAF 4.19's machine
+# driver, its PCM platforms and its DSP library. It is out of the main
+# branch's configuration, because it needs the DSP library, which the
+# main branch does not carry. The gap and the two ways forward are in
+# porting/findings/2026-10-20-audio-dsp-library-gap.md.
 for sym in KSU SLIMBUS SLIM_QCOM_CTRL ZRAM ZRAM_BACKEND_LZ4 ZRAM_BACKEND_ZSTD; do
  grep -q "^CONFIG_$sym=" "$OUT_DIR/.config" && sed -i "s/^CONFIG_$sym=.*/CONFIG_$sym=y/" "$OUT_DIR/.config" || \
 	echo "CONFIG_$sym=y" >> "$OUT_DIR/.config"
 done
-# The upstream WCD9335 and its microphone bias helper have to be off: the
-# port's own versions of both are built, they register the same DAIs, and
+# The upstream WCD9335 codec and its microphone bias helper have to be off:
+# the port has its own versions of both, they register the same DAIs, and
 # they define the same symbols. They are turned off here, and not only
 # checked, so that a configuration which still carries them cannot produce
-# a kernel with two codecs in it.
+# a kernel with two codecs in it. The port's own microphone bias helper is
+# built: the analog CDC uses it. The port's WCD9335 codec is not built:
+# this board has no such codec.
 for sym in SND_SOC_WCD9335 SND_SOC_WCD_MBHC; do
  sed -i "/^CONFIG_$sym=/d" "$OUT_DIR/.config"
  echo "# CONFIG_$sym is not set" >> "$OUT_DIR/.config"
