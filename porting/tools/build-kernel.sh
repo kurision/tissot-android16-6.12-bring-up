@@ -193,24 +193,22 @@ cp "$OUT_DIR/.config" "$SNAP/$RUN-prebuild.config"
 # is the only place they can be turned on.
 #   CONFIG_KSU: KernelSU-Next is built in, and the manager only talks to
 #   a driver that reports the released version.
-#   The SND_SOC_* symbols: the audio port - the AFE, the WCD9335 codec,
-#   the SDM660 CDC, the microphone bias and headset control, and the
-#   machine driver. They are enabled so the boot shows whether they
-#   probe; the sound card's device tree is not written yet, so they will
-#   not produce sound. The codec and the microphone bias symbols are the
-#   port's own (SND_SOC_MSM_*), not the upstream ones of the same name:
-#   the tree already carries upstream's WCD9335 and its microphone bias
-#   helper, and the port's machine driver wants the CAF ones, which
-#   register their DAIs as tasha_*.
+#   The audio stack is not built here. It is CAF 4.19's machine driver
+#   and PCM platforms, and they need CAF's DSP library, which this
+#   kernel does not carry, so with them in the kernel does not link. The
+#   work continues on the ack-audio branch; the gap and the two ways
+#   forward are in
+#   porting/findings/2026-10-20-audio-dsp-library-gap.md.
 #   CONFIG_SLIMBUS and CONFIG_SLIM_QCOM_CTRL: the codec is a slimbus
 #   slave, and the tree's slimbus subsystem is off by default.
 #   CONFIG_ZRAM: the ROM's own init.rc already does
 #   "chown root system /sys/block/zram0/idle" and the same for
 #   writeback, so the ROM expects a zram device to be there and sizes
 #   it itself.
-for sym in KSU SND_SOC_MSM8952 SND_SOC_MSM_WCD9335 SND_SOC_MSM_WCD_MBHC \
-	   SND_SOC_WCD_MBHC_ADC WCD9XXX_CODEC_CORE SND_SOC_SDM660_CDC \
-	   SLIMBUS SLIM_QCOM_CTRL ZRAM ZRAM_BACKEND_LZ4 ZRAM_BACKEND_ZSTD; do
+# The CAF audio stack is not built here: it needs CAF's DSP library,
+# which this kernel does not carry, and with it in the kernel does not
+# link. It is built on the ack-audio branch.
+for sym in KSU SLIMBUS SLIM_QCOM_CTRL ZRAM ZRAM_BACKEND_LZ4 ZRAM_BACKEND_ZSTD; do
  grep -q "^CONFIG_$sym=" "$OUT_DIR/.config" && sed -i "s/^CONFIG_$sym=.*/CONFIG_$sym=y/" "$OUT_DIR/.config" || \
 	echo "CONFIG_$sym=y" >> "$OUT_DIR/.config"
 done
@@ -225,15 +223,14 @@ for sym in SND_SOC_WCD9335 SND_SOC_WCD_MBHC; do
 done
 "${make_args[@]}" olddefconfig
 scripts/diffconfig "$SNAP/$RUN-prebuild.config" "$OUT_DIR/.config" | tee "$SNAP/$RUN-config.diff"
-for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SND_SOC_MSM8952 \
-	   SND_SOC_MSM_WCD9335 SND_SOC_MSM_WCD_MBHC WCD9XXX_CODEC_CORE \
-	   SND_SOC_SDM660_CDC SLIMBUS ZRAM; do
+for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SLIMBUS ZRAM; do
  grep -qx "CONFIG_$sym=y" "$OUT_DIR/.config" || { echo "CONFIG_$sym is not set" >&2; exit 1; }
 done
 for key in RUST_IS_AVAILABLE RUST ASHMEM SHMEM STAGING IKCONFIG IKCONFIG_PROC \
 	    PSTORE_RAM QCOM_IOMMU ARM_SMMU QCOM_SCM ANDROID_BINDER_IPC \
 	    USB_CONFIGFS USB_CONFIGFS_F_FS COMPAT CPUFREQ_DT \
-	    QCOM_CLK_APCC_MSM8953 QCOM_APCS_IPC QCOM_RPMPD PM_GENERIC_DOMAINS_OF; do
+	    QCOM_CLK_APCC_MSM8953 QCOM_APCS_IPC QCOM_RPMPD QCOM_TSENS \
+	    PM_GENERIC_DOMAINS_OF; do
  rg -qx "CONFIG_${key}=y" "$OUT_DIR/.config" || { echo "CONFIG_$key is not set" >&2; exit 1; }
 done
 # The upstream WCD9335 and its microphone bias helper must stay off: the
@@ -305,7 +302,7 @@ for name in ['ramoops_witness_write','ramoops_stage_write','ramoops_reset_note',
     assert name in symbols, name
 config=(s/f'{run}-embedded.config').read_text()
 for key in ['RUST_IS_AVAILABLE','RUST','ASHMEM','CPUFREQ_DT','QCOM_CLK_APCC_MSM8953',
-	    'QCOM_RPMPD','PSTORE_RAM','KSU','SND_SOC_MSM8952','SND_SOC_MSM_WCD9335','ZRAM']:
+	    'QCOM_RPMPD','PSTORE_RAM','KSU','ZRAM']:
     assert f'CONFIG_{key}=y\n' in config, key
 print('The diagnostic symbols and the shipped config are as expected.')
 print(json.dumps(new,indent=2))
