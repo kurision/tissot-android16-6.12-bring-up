@@ -1,5 +1,15 @@
 # Failing components tracker (tissot 6.12 bringup)
 
+> **Current state: CURRENT-STATE.md.** The entries below are the
+> running log and are ordered newest first; the top entry is not
+> necessarily the current state. Build, package and flash:
+> [BUIL_TISSOT.md](../BUIL_TISSOT.md).
+>
+> The per-run evidence this document cites (boot images, kernel directories,
+> init binaries, logdumps) is no longer in the repository; it is
+> git-ignored and disposable, and the boot images are in
+> ../ack-kgsl-artifacts.
+
 **After-run258 source repair:** approved mailbox/MMIO ownership, MX-AO PLL vote,
 safe APCC split-boot handoff and lifetime power-pin changes are implemented;
 pstore no longer writes CPU clocks. Host tests (349 MMIO fault positions),

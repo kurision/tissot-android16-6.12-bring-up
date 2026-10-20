@@ -1,5 +1,15 @@
 # Driver-rewrite backlog (display parked 2026-10-09)
 
+> **Current state: CURRENT-STATE.md.** The entries below are the
+> running log and are ordered newest first; the top entry is not
+> necessarily the current state. Build, package and flash:
+> [BUIL_TISSOT.md](../BUIL_TISSOT.md).
+>
+> The per-run evidence this document cites (boot images, kernel directories,
+> init binaries, logdumps) is no longer in the repository; it is
+> git-ignored and disposable, and the boot images are in
+> ../ack-kgsl-artifacts.
+
 Things that cannot be fixed without a driver rewrite or a userspace project.
 Kernel-side small fixes continue under the snapshot runs; this list only
 collects the big ones with their unblock plans.

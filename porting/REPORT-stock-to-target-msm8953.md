@@ -1,5 +1,9 @@
 # Stock (4.19 CAF) → Target (ACK android16-6.12) adaptation report — MSM8953 / Xiaomi Mi A1 (tissot)
 
+> **Historical record - 2026-10-14.** This is what
+> the evidence showed at the time and has not been rewritten. The
+> current state is [CURRENT-STATE.md](CURRENT-STATE.md).
+
 **Author:** Muse Spark 1.3 (Freeflow) — active model `freeflow/muse-spark-1.3-contributor-free`
 **Date:** 2026-10-14 (UTC, revised per review)
 **Target tree:** current repo (`android-6.12-port-work-slop`, ACK `android16-6.12`)

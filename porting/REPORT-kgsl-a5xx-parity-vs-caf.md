@@ -1,5 +1,9 @@
 # kgsl a5xx bring-up: port vs. CAF reference, function-level parity diff
 
+> **Historical record - 2026-10-18.** This is what
+> the evidence showed at the time and has not been rewritten. The
+> current state is [CURRENT-STATE.md](CURRENT-STATE.md).
+
 Last update: 2026-10-18, after run224. Results 1 and 2 are a source-vs-source
 diff (no build, no boot cycle). Result 3 was **rewritten** from run224 evidence:
 its original text read the end of the ACM capture as the end of the boot.

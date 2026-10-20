@@ -1,5 +1,15 @@
 # Reference: tissot boot testing + kernel-log evidence channels
 
+> **Current state: CURRENT-STATE.md.** The entries below are the
+> running log and are ordered newest first; the top entry is not
+> necessarily the current state. Build, package and flash:
+> [BUIL_TISSOT.md](../BUIL_TISSOT.md).
+>
+> The per-run evidence this document cites (boot images, kernel directories,
+> init binaries, logdumps) is no longer in the repository; it is
+> git-ignored and disposable, and the boot images are in
+> ../ack-kgsl-artifacts.
+
 Status as of 2026-10-10 (run2/run3/run4 of snapshot60). Written after the
 kgsl port's first two failed diag boots produced **zero** kernel logs while
 the identical flow on the last known-good kernel worked. Every claim below

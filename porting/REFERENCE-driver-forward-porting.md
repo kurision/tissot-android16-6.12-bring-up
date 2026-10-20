@@ -1,5 +1,10 @@
 # Driver forward-porting: 4.19 → 6.12
 
+> **Current state: CURRENT-STATE.md.** The entries below are the
+> running log and are ordered newest first; the top entry is not
+> necessarily the current state. Build, package and flash:
+> [BUIL_TISSOT.md](../BUIL_TISSOT.md).
+
 Research recorded 2026-10-18. This is a workflow reference, not a new device
 diagnosis or authorization to edit code, build a kernel or boot the phone.
 
