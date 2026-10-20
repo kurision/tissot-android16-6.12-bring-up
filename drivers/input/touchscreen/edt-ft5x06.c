@@ -1392,8 +1392,20 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	 * to the panel size. The property is a list of <x y code> triplets in
 	 * controller coordinates; without it no key is reported.
 	 */
-	num_keys = device_property_read_u32_array(&client->dev, "edt,keys",
-						  keys, ARRAY_SIZE(keys));
+	/*
+	 * The property is a list of <x y code> triplets whose length is
+	 * not known in advance, so the count is asked for first: the array
+	 * read needs the element count to match the property's length
+	 * exactly, and the buffer here is larger than the list.
+	 */
+	num_keys = device_property_count_u32(&client->dev, "edt,keys");
+	if (num_keys > 0 && num_keys <= (int)ARRAY_SIZE(keys)) {
+		if (device_property_read_u32_array(&client->dev, "edt,keys",
+						   keys, num_keys) < 0)
+			num_keys = 0;
+	} else {
+		num_keys = 0;
+	}
 	if (num_keys < 0) {
 		num_keys = 0;
 	} else if (num_keys % 3) {

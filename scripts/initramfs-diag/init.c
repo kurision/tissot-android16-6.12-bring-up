@@ -1648,7 +1648,15 @@ static int relabel_wakeups(const char *root, unsigned int depth)
 	struct dirent *entry;
 	int ret = 0;
 
-	if (depth > 4)
+	/*
+	 * The depth matters: the remoteproc's statistics are two levels
+	 * down, but the PMIC's are seven - soc@0/200f000.spmi/spmi-0/0-02/
+	 * 200f000.spmi:pmic@2:qcom,fg/wakeup/wakeupNN - and the suspend
+	 * service reads those too. A walk that stops at four leaves the
+	 * PMIC's on the generic sysfs type, the checkpoint commit fails,
+	 * and the phone reboots itself.
+	 */
+	if (depth > 9)
 		return 0;
 	dir = opendir(root);
 	if (!dir)
