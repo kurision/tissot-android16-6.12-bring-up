@@ -1590,18 +1590,31 @@ static void harvest_modem_firmware(int log)
 #define DIAG_KGSL_SYSFS \
 	"/sys/devices/platform/soc@0/1c00000.gpu/kgsl/kgsl-3d0"
 
-/* Relabel every regular file below one directory. */
+/*
+ * Relabel every regular file below one directory.
+ *
+ * The number of labels set is returned. A directory that cannot be opened
+ * is normal in a live sysfs - devices come and go - and is counted as
+ * skipped; a file whose label could not be set is a failure, and the
+ * first errno is kept.
+ */
+static int relabel_failures;
+static int relabel_skipped;
+static int relabel_first_error;
+
 static int relabel_dir(const char *path, const char *label, unsigned int depth)
 {
 	DIR *dir;
 	struct dirent *entry;
-	int ret = 0;
+	int set = 0;
 
 	if (depth > 4)
 		return 0;
 	dir = opendir(path);
-	if (!dir)
-		return -1;
+	if (!dir) {
+		relabel_skipped++;
+		return 0;
+	}
 	while ((entry = readdir(dir))) {
 		char child[1024];
 		struct stat st;
@@ -1615,11 +1628,16 @@ static int relabel_dir(const char *path, const char *label, unsigned int depth)
 		if (lstat(child, &st) || !S_ISREG(st.st_mode))
 			continue;
 		if (setxattr(child, "security.selinux", label, strlen(label),
-			     0))
-			ret = -1;
+			     0)) {
+			relabel_failures++;
+			if (!relabel_first_error)
+				relabel_first_error = errno;
+		} else {
+			set++;
+		}
 	}
 	closedir(dir);
-	return ret;
+	return set;
 }
 
 /* A wakeupN directory: the 6.12 per-device wakeup statistics. */
@@ -1646,7 +1664,7 @@ static int relabel_wakeups(const char *root, unsigned int depth)
 {
 	DIR *dir;
 	struct dirent *entry;
-	int ret = 0;
+	int set = 0;
 
 	/*
 	 * The depth matters: the remoteproc's statistics are two levels
@@ -1659,8 +1677,10 @@ static int relabel_wakeups(const char *root, unsigned int depth)
 	if (depth > 9)
 		return 0;
 	dir = opendir(root);
-	if (!dir)
-		return -1;
+	if (!dir) {
+		relabel_skipped++;
+		return 0;
+	}
 	while ((entry = readdir(dir))) {
 		char child[1024];
 		struct stat st;
@@ -1674,12 +1694,12 @@ static int relabel_wakeups(const char *root, unsigned int depth)
 		if (lstat(child, &st) || !S_ISDIR(st.st_mode))
 			continue;
 		if (is_wakeup_dir(entry->d_name))
-			ret |= relabel_dir(child, DIAG_WAKEUP_LABEL, 0);
+			set += relabel_dir(child, DIAG_WAKEUP_LABEL, 0);
 		else
-			ret |= relabel_wakeups(child, depth + 1);
+			set += relabel_wakeups(child, depth + 1);
 	}
 	closedir(dir);
-	return ret;
+	return set;
 }
 
 static void relabel_sysfs_for_rom_policy(int log)
@@ -1687,15 +1707,34 @@ static void relabel_sysfs_for_rom_policy(int log)
 	char message[192];
 	int n;
 
+	relabel_failures = 0;
+	relabel_skipped = 0;
+	relabel_first_error = 0;
+
 	n = relabel_wakeups("/sys/devices/platform", 0);
 	snprintf(message, sizeof message,
-		 "DIAG: wakeup stats relabelled ret=%d\n", n);
+		 "DIAG: wakeup stats relabelled labels=%d failures=%d skipped=%d%s\n",
+		 n, relabel_failures, relabel_skipped,
+		 relabel_failures ? " (see the errno below)" : "");
 	say(log, message);
+	if (relabel_failures)
+		snprintf(message, sizeof message,
+			 "DIAG: relabel errno=%d\n", relabel_first_error),
+		say(log, message);
+
+	relabel_failures = 0;
+	relabel_skipped = 0;
+	relabel_first_error = 0;
 
 	n = relabel_dir(DIAG_KGSL_SYSFS, DIAG_GPU_LABEL, 0);
 	snprintf(message, sizeof message,
-		 "DIAG: kgsl sysfs relabelled ret=%d\n", n);
+		 "DIAG: kgsl sysfs relabelled labels=%d failures=%d skipped=%d\n",
+		 n, relabel_failures, relabel_skipped);
 	say(log, message);
+	if (relabel_failures)
+		snprintf(message, sizeof message,
+			 "DIAG: kgsl relabel errno=%d\n", relabel_first_error),
+		say(log, message);
 }
 
 /*
@@ -2079,7 +2118,25 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 			_exit(0);
 		}
 		close(ready[0]);
-		for (n = 0; n < 4; n++) {
+		/*
+		 * The initramdisk's own mount namespace has no /sys: the
+		 * kernel mounts nothing there, and the ROM mounts its own
+		 * in the ROM's own namespace, which this process is not
+		 * in. So the walk has to mount the kernel's sysfs for
+		 * itself. Without this the walk found nothing and changed
+		 * no labels at all, and the only sign of it was a "ret=-1"
+		 * in the log.
+		 */
+		mkdir("/sys", 0755);
+		if (mount("sysfs", "/sys", "sysfs", 0, NULL))
+			say(log, "DIAG: relabel could not mount sysfs\n");
+		/*
+		 * The label of a node can only be set once the policy is
+		 * loaded, and the ROM's init loads it a few seconds after
+		 * it starts. So the walk is repeated: the early attempts
+		 * do nothing, and a later one lands.
+		 */
+		for (n = 0; n < 30; n++) {
 			relabel_sysfs_for_rom_policy(log);
 			sleep(2);
 		}
