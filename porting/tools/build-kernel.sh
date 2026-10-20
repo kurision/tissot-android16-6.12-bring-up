@@ -48,6 +48,8 @@
 #
 #   ACK_TISSOT_BASE_IMAGE  the base boot image (also the second argument)
 #   ACK_SNAPSHOT_DIR       where the per-run evidence goes
+#   ACK_EXTRA_CMDLINE      text appended to the image's command line
+#                          (e.g. "console=tty0 initcall_debug")
 #   ACK_WCNSS_FIRMWARE_DIR the staged wcnss.* + WCNSS_qcom_wlan_nv.bin
 #                          tree (default: porting/artifacts/firmware-wcnss;
 #                          populate it with pull-wcnss-firmware.sh)
@@ -316,10 +318,20 @@ else
 	echo "warning: no WCNSS firmware in $FW_DIR; WLAN will not load" >&2
 fi
 sha256sum "$BASE_IMAGE" > "$SNAP/$RUN-base.sha256"
+# ACK_EXTRA_CMDLINE is appended to the command line of the image. It is
+# for fault-isolation boots: "console=tty0" puts the kernel log on the
+# panel, and "initcall_debug" says which initcall was running when the
+# boot stopped. The command line has room for about fifty more
+# characters; the packager refuses an image whose command line does not
+# fit.
+cmdline_args=()
+if [ -n "${ACK_EXTRA_CMDLINE:-}" ]; then
+	cmdline_args=(--append-cmdline "$ACK_EXTRA_CMDLINE")
+fi
 python3 -B porting/logging/package-diag-boot.py --base-image "$BASE_IMAGE" \
  --kernel-dir "$SNAP/kdir-$RUN" --stage-kernel "$BOOT" --init "$SNAP/init-$RUN" \
  --keep-stock-console --policy-append "$REPO/porting/policy/port-genfs-kgsl.cil" \
- "${fw_args[@]}" \
+ "${fw_args[@]}" "${cmdline_args[@]}" \
  --out "$SNAP/boot-$RUN.img" --report "$SNAP/package-$RUN.json"
 scripts/extract-ikconfig "$SNAP/kdir-$RUN/Image.gz" > "$SNAP/$RUN-embedded.config"
 
