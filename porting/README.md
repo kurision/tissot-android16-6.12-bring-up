@@ -302,7 +302,8 @@ pull on for the reset.
 
 ## Current ACK 6.12 port (2026-10-17)
 
-- [BUIL_TISSOT.md](../BUIL_TISSOT.md): build, package, RAM boot and capture instructions.
+- [BUILD_TISSOT.md](../BUILD_TISSOT.md): build, package, RAM boot and capture instructions.
+- [CURRENT-STATE.md](CURRENT-STATE.md): what the port does today, and what is still open.
 - [HANDOFF.md](HANDOFF.md): current run187 verdict, artifact provenance and next investigation.
 - [FAILING-COMPONENTS.md](FAILING-COMPONENTS.md): current failures and historical evidence.
 - [TRACKER-kgsl-port.md](TRACKER-kgsl-port.md) and
@@ -311,6 +312,8 @@ pull on for the reset.
   read before a boot cycle.
 - [REFERENCE-driver-forward-porting.md](REFERENCE-driver-forward-porting.md):
   4.19 → 6.12 API conversion research, semantic review and focused static checks.
+- [policy/ADAPTING-A-ROM-TO-A-NEWER-KERNEL.md](policy/ADAPTING-A-ROM-TO-A-NEWER-KERNEL.md):
+  how a ROM developer adapts a ROM's SELinux policy to a newer kernel.
 
 Run234 completes the GPU port: `/dev/kgsl-3d0` is up with the stock ioctl ABI,
 the vendor EGL reports `Adreno (TM) 506, OpenGL ES 3.2`, adb works on the port
@@ -371,11 +374,11 @@ evidence, which is generated and git-ignored.
 
 ## Building the port kernel
 
-The full procedure is `BUIL_TISSOT.md` at the repository root, and it is
+The full procedure is `BUILD_TISSOT.md` at the repository root, and it is
 scripted:
 
 ```sh
-cd /home/kurision/development/kernel/ack-kgsl
+cd /path/to/ack-kgsl
 bash porting/tools/build-kernel.sh runNNN     # an unused run number
 ```
 
@@ -386,26 +389,27 @@ forcing the phone off and flashing the previous image from fastboot.
 Five things about the build are not what a kernel tree normally does, and
 each one has bitten this port:
 
-**The configuration comes from the previous image, not from the defconfig.**
-`arch/arm64/configs/defconfig` is dead code here. The build extracts the
-configuration from an archived image (`scripts/extract-ikconfig` reads the
-kernel straight out of a boot image) and runs `make rustavailable` before
-`olddefconfig`. A resync with the wrong toolchain turns Rust and ashmem off
-while the C kernel still builds, and the framework then loses
-`/dev/ashmem`. The symbols the port needs on top of the archived
-configuration — KernelSU-Next and the audio port — are forced explicitly,
-because the configuration is not the port's to edit.
+**The configuration is a file in the repository, not the defconfig.**
+`arch/arm64/configs/defconfig` is dead code here. The build copies
+`porting/tools/kernel.config` into `out/.config` and runs `make
+rustavailable` before `olddefconfig`. A resync with the wrong toolchain
+turns Rust and ashmem off while the C kernel still builds, and the
+framework then loses `/dev/ashmem`. The symbols the port needs on top of
+it — KernelSU-Next, the audio port, slimbus and zram — are forced
+explicitly, because the configuration is not the builder's to edit.
 
-**The kernel is built from a staged source tree, not from the repository.**
-`../ack-staged-run239` is refreshed from the repository before every build
-and then verified against it, file by file. The staged tree is what the
-compiler reads, so a stale one silently produces a kernel that does not
-contain the repository's fixes. That is exactly how the capacitive
-navigation keys came to be missing from a flashed image while the volume
-keys worked: the keys were committed to the repository, and the staged tree
-was a day older than the commits. The same staleness kept the CAF fastrpc
-ioctl ABI out of the kernel, which is why the `adsprpcd` daemon crash-looped
-with `failed to send del client cmd`.
+**The kernel is built from the repository itself.** There is no staged
+tree: `make -C . O=out` compiles what is committed. There used to be one,
+and it was refreshed from the repository before every build and then
+verified against it, file by file, because the staged tree was what the
+compiler read. A stale staged tree silently produced a kernel that did not
+contain the repository's fixes — exactly how the capacitive navigation
+keys came to be missing from a flashed image while the volume keys worked:
+the keys were committed to the repository and the staged tree was a day
+older than the commits. The same staleness kept the CAF fastrpc ioctl ABI
+out of the kernel, which is why the `adsprpcd` daemon crash-looped with
+`failed to send del client cmd`. Building the repository removes the
+whole class of failure.
 
 **The /init is not Android's.** The boot image carries a diagnostic ramdisk
 whose init is `scripts/initramfs-diag/init.c`, rebuilt from source on every
