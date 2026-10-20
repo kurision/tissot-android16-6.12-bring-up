@@ -1167,6 +1167,124 @@ done:
 }
 #endif
 
+/*
+ * Remove the ROM's `on property:sys.init.updatable_crashing=1` action from an
+ * rc buffer. Returns 0 and the filtered length, -ENODATA when the action is
+ * absent, or -E2BIG when the output does not fit.
+ */
+static int filter_flags_health_check_rc(const char *text, size_t used,
+					char *out, size_t out_size,
+					size_t *out_len)
+{
+	static const char trigger[] =
+		"on property:sys.init.updatable_crashing=1";
+	size_t offset = 0, written = 0, tlen = sizeof(trigger) - 1;
+	int skipping = 0, removed = 0;
+
+	while (offset < used) {
+		const char *line = text + offset;
+		const char *end = memchr(line, '\n', used - offset);
+		size_t len = end ? (size_t)(end - line) + 1 : used - offset;
+		int top = 0;
+
+		offset += len;
+		if (len && line[0] != ' ' && line[0] != '\t') {
+			top = (len >= 3 && !memcmp(line, "on ", 3)) ||
+			      (len >= 8 && !memcmp(line, "service ", 8)) ||
+			      (len >= 7 && !memcmp(line, "import ", 7));
+		}
+		if (!skipping && len >= tlen &&
+		    !memcmp(line, trigger, tlen) &&
+		    (len == tlen || line[tlen] == '\n' ||
+		     line[tlen] == '\r' || line[tlen] == ' ' ||
+		     line[tlen] == '\t')) {
+			skipping = 1;
+			removed++;
+			continue;
+		}
+		if (skipping) {
+			if (top)
+				skipping = 0;
+			else
+				continue;
+		}
+		if (written + len > out_size)
+			return -E2BIG;
+		memcpy(out + written, line, len);
+		written += len;
+	}
+	if (!removed)
+		return -ENODATA;
+	*out_len = written;
+	return 0;
+}
+
+/*
+ * The ROM's flags_health_check.rc runs flags_health_check
+ * UPDATABLE_CRASHING every time sys.init.updatable_crashing flips to 1.
+ * Several vendor services crash-loop on this port for bring-up reasons
+ * unrelated to the boot flag, so that action becomes a continuous exec loop.
+ * Keep the BOOT_FAILURE check and the boot-count reset; drop only the
+ * crashing action, in a read-only bind overlay installed before policy load.
+ */
+static void guard_flags_health_check(int proc, int log)
+{
+	static const char target[] = "/system/etc/init/flags_health_check.rc";
+	static char text[32 * 1024];
+	static char filtered[32 * 1024];
+	char message[160];
+	size_t used = 0, filtered_len = 0;
+	int in = -1, fd = -1, error = 0, ret;
+
+	in = open(target, O_RDONLY | O_CLOEXEC);
+	if (in < 0)
+		goto failed;
+	for (;;) {
+		ssize_t n;
+
+		if (used == sizeof(text)) {
+			error = E2BIG;
+			goto done;
+		}
+		n = read(in, text + used, sizeof(text) - used);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n < 0)
+			goto failed;
+		if (!n)
+			break;
+		used += (size_t)n;
+	}
+	ret = filter_flags_health_check_rc(text, used, filtered,
+					  sizeof(filtered), &filtered_len);
+	if (ret) {
+		error = -ret;
+		goto done;
+	}
+	fd = memfd_create("ack-flags-health-check-rc", MFD_CLOEXEC);
+	if (fd < 0)
+		goto failed;
+	if (write_all(fd, filtered, filtered_len)) {
+		error = errno;
+		goto done;
+	}
+	if (guard_bind_config(proc, fd,
+			      "/dev/block/ack-flags-health-check.rc", target)) {
+		error = errno;
+		goto done;
+	}
+	goto done;
+failed:
+	error = errno;
+done:
+	if (in >= 0)
+		close(in);
+	if (fd >= 0)
+		close(fd);
+	snprintf(message, sizeof(message),
+		 "DIAG: flags_health_check rc override errno=%d\n", error);
+	say(log, message);
+}
 #ifdef ANDROID_DISPLAY_GATE
 /*
  * Display-gate probe (run110, reinstated for run125): stub the display stack
@@ -2251,6 +2369,7 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	harvest_modem_firmware(log);
 	adsprpc_compat_fork(log);
 	guard_debuggable(proc, log);
+	guard_flags_health_check(proc, log);
 	/*
 	 * The guard's window is closed: the fstab and the vendor
 	 * contexts are in place, so the relabel can walk the device tree
@@ -2287,7 +2406,21 @@ static int guard_selftest(void)
 		"/dev/block/bootdevice/by-name/userdata /data f2fs defaults\n",
 		"/dev/block/bootdevice/by-name/userdata /data f2fs defaults wait extra\n",
 	};
+	static const char health_rc[] =
+		"on load_persist_props_action\n"
+		"    exec - system system -- /system/bin/flags_health_check BOOT_FAILURE\n"
+		"\n"
+		"on property:sys.boot_completed=1\n"
+		"    setprop persist.device_config.attempted_boot_count 0\n"
+		"\n"
+		"on property:sys.init.updatable_crashing=1\n"
+		"    exec - system system -- /system/bin/flags_health_check UPDATABLE_CRASHING\n"
+		"\n"
+		"on property:sys.boot_completed=1\n"
+		"    setprop after.trigger 1\n";
 	char temporary[] = "/tmp/ack-fstab-check-XXXXXX";
+	char filtered[sizeof(health_rc)];
+	size_t filtered_len = 0;
 	int fd = mkstemp(temporary);
 	size_t i;
 
@@ -2304,6 +2437,21 @@ static int guard_selftest(void)
 		assert(validate_guard_fstab(fd) < 0);
 	}
 	close(fd);
+	assert(!filter_flags_health_check_rc(health_rc, sizeof(health_rc) - 1,
+					     filtered, sizeof(filtered),
+					     &filtered_len));
+	assert(!memmem(filtered, filtered_len, "UPDATABLE_CRASHING",
+		       sizeof("UPDATABLE_CRASHING") - 1));
+	assert(memmem(filtered, filtered_len, "BOOT_FAILURE",
+		      sizeof("BOOT_FAILURE") - 1));
+	assert(memmem(filtered, filtered_len, "attempted_boot_count 0",
+		      sizeof("attempted_boot_count 0") - 1));
+	assert(memmem(filtered, filtered_len, "after.trigger",
+		      sizeof("after.trigger") - 1));
+	assert(filter_flags_health_check_rc("on x\n", 5, filtered,
+					    sizeof(filtered), &filtered_len) ==
+	       -ENODATA);
+	puts("Guard flags_health_check filter checks PASS");
 	puts("Guard fstab safety checks PASS");
 	return 0;
 }
