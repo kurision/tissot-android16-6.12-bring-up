@@ -1,0 +1,36 @@
+;; ---------------
+;; kgsl power attributes on 6.12: label the new path with the type the ROM
+;; already grants.
+;;
+;; The vendor policy labels the GPU attributes with literal CAF 4.19 paths
+;; under
+;;
+;;   /devices/platform/soc/<addr>.qcom,kgsl-3d0/...
+;;
+;; and grants hal_power_default write access to sysfs_kgsl.  This kernel
+;; creates them at
+;;
+;;   /devices/platform/soc@0/1c00000.gpu/kgsl/kgsl-3d0/...
+;;
+;; so no genfscon matches, the attributes land on the generic sysfs type,
+;; and the Power HAL's writes to max_pwrlevel, min_pwrlevel, idle_timer,
+;; force_clk_on and force_rail_on are denied.
+;;
+;; The live labels after the runtime relabel in the initramdisk are
+;; sysfs_kgsl for every regular file in that directory, and the vendor
+;; policy's own (genfscon sysfs "/class/kgsl" ... sysfs_kgsl) shows the
+;; intended type for the family.  This fragment moves that label into the
+;; policy, so it is applied atomically when the ROM compiles and loads the
+;; policy instead of by a worker polling for the policy to appear.
+;;
+;; A literal path is a prefix match here: security/selinux/ss/services.c
+;; compares with strncmp() unless POLICYDB_CAP_GENFS_SECLABEL_WILDCARD is
+;; set, and this policy does not set it
+;; (/sys/fs/selinux/policy_capabilities/genfs_seclabel_wildcard is 0).
+;; Do not add a '*' to the path: with the capability clear the kernel
+;; treats it as a literal character and the rule matches nothing.
+;;
+;; The runtime worker in scripts/initramfs-diag/init.c still checks the
+;; directory's label and relabels the files only if this fragment did not
+;; land, so an image packaged without it keeps working.
+(genfscon sysfs "/devices/platform/soc@0/1c00000.gpu/kgsl/kgsl-3d0" (u object_r sysfs_kgsl ((s0) (s0))))

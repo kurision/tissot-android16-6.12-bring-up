@@ -1570,6 +1570,9 @@ static void harvest_modem_firmware(int log)
  *    failed", and the reboot does not finish: the phone is left with a lit
  *    screen, no adb and no way back. run278's logdump ends with the
  *    kernel's "sysrq: Terminate All Tasks" and nothing after it.
+ *    These stay a runtime walk: the devices sit at different depths (the
+ *    PMIC's at seven levels), there is no single path to name, and the
+ *    policy's genfscon wildcard capability is off.
  *
  *  - The kgsl's power attributes (max_pwrlevel, min_pwrlevel, idle_timer,
  *    force_clk_on, force_rail_on) are on the generic sysfs type too. The
@@ -1578,6 +1581,14 @@ static void harvest_modem_firmware(int log)
  *    kernel's soc@0/1c00000.gpu path. sysfs_gpu is a different type and
  *    does not grant the power HAL the writes it needs. The service runs
  *    as root, so the existing root-owned 0644 attributes need no chmod.
+ *
+ *    This one is a fixed path, so it is labelled by the genfscon in
+ *    porting/policy/port-genfs-kgsl.cil, which build-kernel.sh appends to
+ *    the ramdisk CIL and the ROM's policy compiler applies at policy load.
+ *    The worker below still checks the directory's label - it never
+ *    changes a directory, so that label tells which mechanism ran - and
+ *    walks the files only as a fallback for an image packaged without the
+ *    fragment.
  *
  * Relabelling is a file attribute, not a policy change: the ROM's policy
  * is untouched and its existing rules for sysfs_wakeup and sysfs_kgsl
@@ -1703,9 +1714,30 @@ static int relabel_wakeups(const char *root, unsigned int depth)
 	return set;
 }
 
+/*
+ * Read a node's current SELinux label.
+ *
+ * The policy fragment names the kgsl directory itself, and this worker
+ * only ever sets labels on regular files, never on a directory. A
+ * matching label on the directory is therefore proof that the genfscon
+ * landed, and the file walk is unnecessary.
+ */
+static int read_selinux_label(const char *path, char *buf, size_t size)
+{
+	ssize_t n;
+
+	if (size < 2)
+		return -1;
+	n = getxattr(path, "security.selinux", buf, size - 1);
+	if (n < 0)
+		return -1;
+	buf[n] = '\0';
+	return 0;
+}
+
 static void relabel_sysfs_for_rom_policy(int log)
 {
-	char message[192];
+	char message[192], label[64];
 	int n;
 
 	relabel_failures = 0;
@@ -1727,15 +1759,21 @@ static void relabel_sysfs_for_rom_policy(int log)
 	relabel_skipped = 0;
 	relabel_first_error = 0;
 
-	n = relabel_dir(DIAG_KGSL_SYSFS, DIAG_GPU_LABEL, 0);
-	snprintf(message, sizeof message,
-		 "DIAG: kgsl sysfs relabelled labels=%d failures=%d skipped=%d\n",
-		 n, relabel_failures, relabel_skipped);
-	say(log, message);
-	if (relabel_failures)
+	if (!read_selinux_label(DIAG_KGSL_SYSFS, label, sizeof label) &&
+	    !strcmp(label, DIAG_GPU_LABEL)) {
+		say(log, "DIAG: kgsl sysfs labelled by policy\n");
+	} else {
+		n = relabel_dir(DIAG_KGSL_SYSFS, DIAG_GPU_LABEL, 0);
 		snprintf(message, sizeof message,
-			 "DIAG: kgsl relabel errno=%d\n", relabel_first_error),
+			 "DIAG: kgsl sysfs relabelled labels=%d failures=%d skipped=%d\n",
+			 n, relabel_failures, relabel_skipped);
 		say(log, message);
+		if (relabel_failures)
+			snprintf(message, sizeof message,
+				 "DIAG: kgsl relabel errno=%d\n",
+				 relabel_first_error),
+			say(log, message);
+	}
 }
 
 /*

@@ -33,7 +33,9 @@
 #   4. Rebuilds the ramdisk's /init from scripts/initramfs-diag/init.c, so
 #      an image never carries a stale init binary.
 #   5. Packages: the base image's ramdisk and command line, this kernel,
-#      this init.
+#      this init, and the port's SELinux genfs fragment
+#      (porting/policy/port-genfs-kgsl.cil), which the base ramdisk's CIL
+#      is compiled with at boot.
 #
 # The output directory is out/ in this repository and it is reused. A
 # clean rebuild means emptying it, not making a new one:
@@ -267,16 +269,20 @@ cat "$BOOT/Image.gz" "$BOOT/dts/qcom/msm8953-xiaomi-tissot.dtb" > "$BOOT/Image.g
 sha256sum "$BASE_IMAGE" > "$SNAP/$RUN-base.sha256"
 python3 -B porting/logging/package-diag-boot.py --base-image "$BASE_IMAGE" \
  --kernel-dir "$SNAP/kdir-$RUN" --stage-kernel "$BOOT" --init "$SNAP/init-$RUN" \
- --keep-stock-console --out "$SNAP/boot-$RUN.img" --report "$SNAP/package-$RUN.json"
+ --keep-stock-console --policy-append "$REPO/porting/policy/port-genfs-kgsl.cil" \
+ --out "$SNAP/boot-$RUN.img" --report "$SNAP/package-$RUN.json"
 scripts/extract-ikconfig "$SNAP/kdir-$RUN/Image.gz" > "$SNAP/$RUN-embedded.config"
 
 # --- check the result -------------------------------------------------------
 LLVM_NM=${LLVM_NM:-$(command -v llvm-nm || ls /usr/lib/llvm-*/bin/llvm-nm 2>/dev/null | head -1)}
 SNAP="$SNAP" LLVM_NM="$LLVM_NM" RUN="$RUN" python3 - <<'PY'
-import os, pathlib, json, gzip, re, subprocess
+import hashlib, os, pathlib, json, gzip, re, subprocess
 s=pathlib.Path(os.environ['SNAP'])
 run=os.environ['RUN']
 new=json.loads((s/f'package-{run}.json').read_text())
+fragment=pathlib.Path('porting/policy/port-genfs-kgsl.cil').read_bytes()
+assert new['policy_append_sha256'] == hashlib.sha256(fragment).hexdigest(), \
+    'the kgsl genfs fragment was not appended to the ramdisk policy'
 symbols=subprocess.check_output([os.environ['LLVM_NM'],'-a','out/vmlinux'],text=True)
 for name in ['ramoops_witness_write','ramoops_stage_write','ramoops_reset_note',
 	     'kgsl_timeline_signal','snd_pcm_add_volume_ctls','snd_soc_info_multi_ext']:
