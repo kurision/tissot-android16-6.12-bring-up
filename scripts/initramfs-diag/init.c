@@ -1551,6 +1551,145 @@ static void harvest_modem_firmware(int log)
 		harvest_modem_child(log);
 	}
 }
+
+/*
+ * run281: relabel the sysfs node families that the 6.12 kernel adds where
+ * the ROM's policy expects the 4.19 layout.
+ *
+ * The ROM is Android 17 EvoX and its policy was written for the 4.19 CAF
+ * kernel. Two families do not line up:
+ *
+ *  - The per-device wakeup statistics,
+ *    /sys/devices/platform/soc@0/<device>/wakeup/wakeupN/, are new in
+ *    6.12. The policy has a type for them - sysfs_wakeup - and it lets
+ *    system_suspend read that type, but the rule was written for the 4.19
+ *    path /sys/devices/virtual/wakeup, which this kernel does not have.
+ *    The new nodes therefore land on the generic sysfs type, the suspend
+ *    service is denied reading them, its checkpoint commit fails,
+ *    system_server asks for a reboot with the reason "Checkpoint commit
+ *    failed", and the reboot does not finish: the phone is left with a lit
+ *    screen, no adb and no way back. run278's logdump ends with the
+ *    kernel's "sysrq: Terminate All Tasks" and nothing after it.
+ *
+ *  - The kgsl's power attributes (max_pwrlevel, min_pwrlevel, idle_timer,
+ *    force_clk_on, force_rail_on) are on the generic sysfs type too. The
+ *    policy's own genfscon for the kgsl's snapshot directory shows the type
+ *    the ROM expects for the GPU - sysfs_gpu - and labelling the kgsl's
+ *    sysfs files with it also lets the adb shell read the GPU state
+ *    without root.
+ *
+ * Relabelling is a file attribute, not a policy change: the ROM's policy
+ * is untouched and its existing rules for sysfs_wakeup and sysfs_gpu
+ * apply from then on. That matters, because the alternative - patching
+ * the policy at runtime - deadlocks this kernel: the kernel-side live
+ * policy rewrite that KernelSU-Next uses for it (the SET_SEPOLICY
+ * supercall) froze the phone on the first attempt.
+ */
+#define DIAG_WAKEUP_LABEL	"u:object_r:sysfs_wakeup:s0"
+#define DIAG_GPU_LABEL		"u:object_r:sysfs_gpu:s0"
+#define DIAG_KGSL_SYSFS \
+	"/sys/devices/platform/soc@0/1c00000.gpu/kgsl/kgsl-3d0"
+
+/* Relabel every regular file below one directory. */
+static int relabel_dir(const char *path, const char *label, unsigned int depth)
+{
+	DIR *dir;
+	struct dirent *entry;
+	int ret = 0;
+
+	if (depth > 4)
+		return 0;
+	dir = opendir(path);
+	if (!dir)
+		return -1;
+	while ((entry = readdir(dir))) {
+		char child[1024];
+		struct stat st;
+
+		if (!strcmp(entry->d_name, ".") ||
+		    !strcmp(entry->d_name, ".."))
+			continue;
+		if (snprintf(child, sizeof child, "%s/%s", path,
+			     entry->d_name) >= (int)sizeof child)
+			continue;
+		if (lstat(child, &st) || !S_ISREG(st.st_mode))
+			continue;
+		if (setxattr(child, "security.selinux", label, strlen(label),
+			     0))
+			ret = -1;
+	}
+	closedir(dir);
+	return ret;
+}
+
+/* A wakeupN directory: the 6.12 per-device wakeup statistics. */
+static int is_wakeup_dir(const char *name)
+{
+	size_t i;
+
+	if (strncmp(name, "wakeup", 6))
+		return 0;
+	for (i = 6; name[i]; i++) {
+		if (!isdigit((unsigned char)name[i]))
+			return 0;
+	}
+	return i > 6;
+}
+
+/*
+ * Walk the platform devices for the per-device wakeup directories. The
+ * devices are at different depths (the remoteproc is directly under
+ * soc@0, the PMIC is under spmi-0/0-02/...), so this is a bounded walk
+ * rather than a fixed path.
+ */
+static int relabel_wakeups(const char *root, unsigned int depth)
+{
+	DIR *dir;
+	struct dirent *entry;
+	int ret = 0;
+
+	if (depth > 4)
+		return 0;
+	dir = opendir(root);
+	if (!dir)
+		return -1;
+	while ((entry = readdir(dir))) {
+		char child[1024];
+		struct stat st;
+
+		if (!strcmp(entry->d_name, ".") ||
+		    !strcmp(entry->d_name, ".."))
+			continue;
+		if (snprintf(child, sizeof child, "%s/%s", root,
+			     entry->d_name) >= (int)sizeof child)
+			continue;
+		if (lstat(child, &st) || !S_ISDIR(st.st_mode))
+			continue;
+		if (is_wakeup_dir(entry->d_name))
+			ret |= relabel_dir(child, DIAG_WAKEUP_LABEL, 0);
+		else
+			ret |= relabel_wakeups(child, depth + 1);
+	}
+	closedir(dir);
+	return ret;
+}
+
+static void relabel_sysfs_for_rom_policy(int log)
+{
+	char message[192];
+	int n;
+
+	n = relabel_wakeups("/sys/devices/platform", 0);
+	snprintf(message, sizeof message,
+		 "DIAG: wakeup stats relabelled ret=%d\n", n);
+	say(log, message);
+
+	n = relabel_dir(DIAG_KGSL_SYSFS, DIAG_GPU_LABEL, 0);
+	snprintf(message, sizeof message,
+		 "DIAG: kgsl sysfs relabelled ret=%d\n", n);
+	say(log, message);
+}
+
 /*
  * Downstream adsprpcd opens /dev/adsprpc-smd, but upstream FastRPC
  * registers /dev/fastrpc-adsp (misc). Same device, different name:
@@ -1889,6 +2028,7 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 {
 	time_t deadline = monotonic_seconds() + 60;
 	int ns = -1, root = -1;
+	int n;
 	struct stat st;
 	char message[192];
 	const char *step = "validate protected fstab";
@@ -1960,6 +2100,17 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	harvest_modem_firmware(log);
 	adsprpc_compat_fork(log);
 	guard_debuggable(proc, log);
+	/*
+	 * The devices that own the wakeup statistics probe at their own pace,
+	 * so relabel them over a few passes rather than once: the suspend
+	 * service reads them when it takes its snapshot, and a node that is
+	 * still on the generic sysfs type is a denial that fails the
+	 * checkpoint and takes the phone down with it.
+	 */
+	for (n = 0; n < 8; n++) {
+		relabel_sysfs_for_rom_policy(log);
+		sleep(2);
+	}
 	_exit(0);
 failed:
 	snprintf(message, sizeof message,
