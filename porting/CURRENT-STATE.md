@@ -46,7 +46,7 @@ root feature is unaffected.
 | Area | State | Evidence |
 |---|---|---|
 | Kernel boots, Android comes up | Working | every run from 234 on |
-| CPU clock policy | Working | one shared `schedutil` policy over CPUs 0-7, 652.8-2016 MHz, the APCC handoff completes, no failed transitions |
+| CPU clock policy | Working | one shared `schedutil` policy over CPUs 0-7, 480-2784 MHz, the APCC handoff completes, no failed transitions |
 | Display | Working | the panel is driven; the homescreen renders |
 | GPU | Working, with one open fault | `/dev/kgsl-3d0` is driven with the stock ioctl ABI; the retirement stall below is open |
 | Touch | Working | the `edt-ft5x06` panel, the multi-touch slots |
@@ -57,7 +57,8 @@ root feature is unaffected.
 | Log capture | Working | the `logdump` partition, the USB console, the ramoops sampler |
 | The checkpoint reboot loop | In run302, not verified | the wakeup statistics relabel fix is in `init-run302`; the previous boot still reports `sys.boot.reason=reboot,checkpoint_commit_failed` and the early relabel diagnostics show `labels=0 skipped=1`, so the result is not closed |
 | The `adsprpcd` CAF ioctl layer | In the kernel, one command missing | the port decodes CAF's ioctl numbering; on the phone the daemon now fails on exactly one command, `GETINFO`, whose handler is committed but not in the flashed image |
-| Wi-Fi, cellular, cameras, Bluetooth | Failing | see `FAILING-COMPONENTS.md`; unchanged by this session's work |
+| Wi-Fi | Working on run304, persistent fix not yet booted | the NV blob was staged at `/data/vendor/wifi/firmware` and the interface associated; `CONFIG_EXTRA_FIRMWARE` in `7c1515865` makes that a kernel built-in for the next run |
+| Cellular, cameras, Bluetooth | Failing | see `FAILING-COMPONENTS.md`; unchanged by this session's work |
 
 ## What is open, and what is known about it
 
@@ -319,12 +320,12 @@ the design rationale and the pre-fix evidence remain in
   repository itself, uses `porting/tools/kernel.config` as the
   configuration, and writes to `out/` in the repository, reused, and
   emptied for a clean rebuild.
-* The image on the phone is **run302** (built and booted at 16:20 on
-  2026-10-20). Its kernel is `6.12.93-4k-gda553ac9776d`; it carries the
-  navigation keys, the CAF `GETINFO` ioctl and `CONFIG_ZRAM=y`.  The
-  crash-loop overlay is in its init binary but did not install (section 7).
-  The run302 verification is in
-  [findings/run302-overlay-not-installed-20261020.md](findings/run302-overlay-not-installed-20261020.md).
+* The image on the phone is **run304** (built and booted at 19:55 on
+  2026-10-20). Its kernel is `6.12.93-4k-gc6104317ff23-dirty`; it carries
+  the navigation keys, the CAF `GETINFO` ioctl, `CONFIG_ZRAM=y`, the
+  TSENS zones and the 480-2784 MHz CPU / 725 MHz GPU overclock.  Wi-Fi is
+  working on this boot through the runtime `/data` staging described in
+  section 9; the built-in NV fix is not in this image.
   The earlier run294 image was built before the ZRAM fix, so
   `CONFIG_ZRAM` was a module there and `/sys/block/zram0` did not exist on
   the device. The ROM's `init.rc` chowns and chmods
@@ -399,14 +400,103 @@ unique cpio records, 11 WCNSS firmware files. `run304` has since booted;
 `run304-build.status` files still say `status=1` because they record the
 original failed packaging attempt; the images were repackaged separately.
 
+### 9. Wi-Fi: the NV blob is loaded after switch_root
+
+`wlan0` exists on run304 with a valid serial-derived MAC, but every
+attempt to bring it up ends before association.  `wcn36xx` is bound and
+`remoteproc1` runs `wcnss.mdt`; the failure is the NV upload:
+
+```
+wcn36xx: ERROR Failed to load nv file wlan/prima/WCNSS_qcom_wlan_nv.bin: -2
+wcn36xx: ERROR Failed to push NV to chip
+loading /vendor/firmware/wlan/prima/WCNSS_qcom_wlan_nv.bin failed with error -13
+Direct firmware load for wlan/prima/WCNSS_qcom_wlan_nv.bin failed with error -2
+```
+
+The request happens when the interface is opened, long after
+`switch_root`, so the copy that packaging puts in the ramdisk at
+`lib/firmware` is no longer mounted.  The vendor tree has a symlink at
+`/vendor/firmware/wlan/prima/WCNSS_qcom_wlan_nv.bin`, but it points at
+`/mnt/vendor/persist`, and `request_firmware()` does the read with kernel
+credentials (`prepare_kernel_cred(&init_task)`), not the caller's.  The
+policy denies the kernel domain search on `mnt_vendor_file`:
+
+```
+avc: denied { search } for comm="ip" name="vendor" dev="tmpfs"
+  scontext=u:r:kernel:s0 tcontext=u:object_r:mnt_vendor_file:s0
+```
+
+The path was verified on run304 by copying the blob to
+`/data/vendor/wifi/firmware/wlan/prima/` and adding that directory to
+`firmware_class.path`.  The load was confirmed with SELinux permissive;
+after returning to enforcing with the firmware already loaded, `wlan0`
+associated to the 5 GHz "Private" AP and received `192.168.1.85`
+(`cmd wifi status`, `ip addr show wlan0`).  That proves the file and the
+path, but not a clean enforcing load, and the runtime directory does not
+survive a reboot.
+
+Commit `7c1515865` embeds only
+`wlan/prima/WCNSS_qcom_wlan_nv.bin` with `CONFIG_EXTRA_FIRMWARE`.  The
+firmware loader checks built-in firmware before any filesystem path in
+`_request_firmware_prepare()`, which removes both the switch_root timing
+and the SELinux denial from the NV load.  `wcnss.mdt` and its segments
+are still packaged into the ramdisk because the remoteproc requests them
+before `/vendor` is mounted.  The next clean boot has to confirm this.
+
+### 10. The CPU stays at 2784 MHz because `system_server` is busy
+
+The governor is not holding the maximum.  The policy is one shared
+`schedutil` over CPUs 0-7, `scaling_min_freq` is 480000,
+`scaling_max_freq` is 2784000, and a sample during the investigation
+showed individual CPUs at 1804/2304/2784 MHz while the load moved.  There
+is real work on the device:
+
+* `system_server` reached 87% of one CPU in `top`; `dumpsys cpuinfo`
+  attributed 47% to it over the sample.
+* `dumpsys media.audio_policy` reports `AudioPolicyManager: 0x0`,
+  `listAudioPorts n=24458` and `setMinVolumeIndexForGroup n=1115`.
+  `AS.AudioService` logs `Failed to init min/max for volume group -1 for
+  stream 11` about every two seconds.
+* `/proc/asound/cards` reports no soundcards, `/sys/bus/apr` does not
+  exist and `/sys/bus/slimbus/devices` is empty, while `adsp.mdt` is
+  running and the audio HAL and `audioserver` are alive.  This is the
+  audio-stack gap in section 4: the policy manager cannot be created, so
+  the framework keeps retrying port and volume discovery.
+
+**Stopping `audioserver` alone** (leaving `vendor.audio-hal` running)
+dropped `system_server` from 87% to 9.6%, idle from 616% to 716%, and
+load average from 5.1 to 2.52; the max-frequency share in
+`time_in_state` fell from 71% of wall time over 30 s to about 25% over
+8 s.  Starting `audioserver` again restored the loop.  So the audio retry
+is the dominant CPU consumer, not the governor, and the single shared
+`schedutil` policy then takes every CPU to 2784 MHz because one policy
+sees the busy core.  This is a real framework cost of the missing audio
+stack, not something to fix by editing OPPs or governor tunables.
+
+The other reports are real but secondary.  `libperfmgr` cannot write
+`/sys/class/devfreq/soc:qcom,cpu-cpu-ddr-bw/min_freq` (no DDR bandwidth
+devfreq device) or
+`/proc/sys/dev/xiaomi_msm8953_touchscreen/enable_dt2w` (the mainline
+touch driver has no such node); those are DDR/DT2W gaps, not CPU
+frequency.  `vendor.qti.data.factory` is missing and is restarted as a
+lazy HAL, `vendor.qrtr-ns` exits and the kernel logs `failed to send del
+client cmd`, and DevCheck's reads of `cur_freq` are denied and produce
+AVC lines.  Those should be cleaned up, but they do not explain the
+audio-driven `system_server` load.
+
+Consequently, do not tune `schedutil` or the OPP table to make the idle
+frequency fall.  The actionable item is the audio link (section 4), or a
+deliberate no-audio configuration that stops the framework retry.
+
 ## The order of the remaining work
 
-1. Rebuild with the health-check overlay moved next to the early-logcat
-   overlay, flash it to `boot_b`, and check the run302 list: `errno=0`
-   for the override, no `UPDATABLE_CRASHING` exec, qrtr-ns running, and
-   the camera/dataqti services stopped.  The run302 boot already has
-   `CONFIG_ZRAM=y` and the relabel fix; check the wakeup labels,
-   `/sys/block/zram0` and the navigation keys on that boot.
+1. Build **run305** with `7c1515865`, which embeds the WLAN NV blob, and
+   boot it from a clean enforcing start.  Check that `wlan0` comes up
+   without the `-13`/`-2` NV errors and that it associates.  The same
+   build should keep the run302 health-check overlay list (`errno=0` for
+   the override, no `UPDATABLE_CRASHING` exec, qrtr-ns running, camera
+   and dataqti stopped), the wakeup labels, `/sys/block/zram0` and the
+   navigation keys.
 2. Read the next boot's `adsprpcd` result: with `GETINFO` and ioctl 17
    both answered, the library should stop asking, and whatever it asks
    for next will be named in the kernel log.
