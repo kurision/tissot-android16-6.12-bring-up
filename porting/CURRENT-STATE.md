@@ -100,30 +100,35 @@ stops advancing while a fence is still pending, it captures dmesg,
 `/proc/interrupts`, `/proc/softirqs` and the kgsl state into
 `/data/local/tmp/kgsl-stall/`.
 
-### 2. The CPU has no thermal protection
+### 2. The CPU thermal path is enabled and boot-verified
 
-The clock policy works. What is missing is anything that can throttle it.
+The clock policy works. The pieces that can throttle it are live on the
+phone; only the sustained passive-trip behaviour remains to be exercised.
 
-* `CONFIG_QCOM_TSENS` is not set **in the built configuration**. The
-  defconfig says `=y`, but the build never reads the defconfig: the
-  configuration is `porting/tools/kernel.config`, and that file has it
-  off.
-* The CPU nodes have **no `#cooling-cells`**, so `&CPU0` is not a cooling
-  device and the four CPU thermal zones in the device tree have nothing to
-  throttle. The donor has `#cooling-cells = <2>` on all eight CPU nodes.
+* `CONFIG_QCOM_TSENS=y` is now in `porting/tools/kernel.config`, which is
+  the configuration the build copies to `out/.config`; the defconfig is
+  not read. `porting/tools/build-kernel.sh` also checks the symbol after
+  `olddefconfig`. `drivers/thermal/qcom/` compiles with it on.
+* The CPU nodes already carry `#cooling-cells = <2>`, and `msm8953.dtsi`
+  defines `cpu0-thermal` through `cpu7-thermal` plus `gpu-thermal` with
+  cooling maps. The earlier note that the CPU nodes had no cooling cells
+  was stale.
+* The `msm8953` TSENS node uses `qcom,msm8953-tsens` with the generic
+  `qcom,tsens-v2` fallback and `#qcom,sensors = <16>`. The v2 generic ops
+  have no software calibration callback, so no separate `tsens-8953.c`
+  is required.
+* The phone now runs `run304` with `CONFIG_QCOM_TSENS=y` and reports the
+  eight CPU zones plus `gpu-thermal`, `pm8953-thermal`, `battery` and
+  `bms`, all with sane temperatures. This verifies the TSENS probe and the
+  thermal-zone wiring. The CPU passive trip has now been exercised; see
+  section 8. The critical trip and the GPU trip are still untested.
 
-On the running phone there are three thermal zones — `pm8953-thermal`,
-`battery`, `bms` — and **no CPU zones at all**. The policy therefore sits at
-the top OPP (1.958-2.016 GHz) and the phone dies of heat: run261 at about
-326 s, run265 at about 581 s.
-
-The CPU burn is not the governor. The load is uninterruptible sleep — the
-fence waiters — and the binder storm is PowerManagerService raising SIGBUS
-on itself. The frequency is a symptom.
-
-Fixing it is two changes: put `CONFIG_QCOM_TSENS=y` where it survives (the
-build script's forced symbols, not the defconfig) and add `#cooling-cells` to
-the eight CPU nodes, with the OPP `cooling-device` link.
+The historical failure remains the reason this is first: with no CPU
+zones, the policy sat at the top OPP (1.958-2.016 GHz) and the phone died
+of heat, run261 at about 326 s and run265 at about 581 s. The CPU burn is
+not the governor. The load is uninterruptible sleep — the fence waiters
+— and the binder storm is PowerManagerService raising SIGBUS on itself.
+The frequency is a symptom.
 
 ### 3. The early hang: fixed by the relabel
 
@@ -194,22 +199,22 @@ were learned the hard way, and both are kept:
 shell is `uid=0` in `u:r:ksu:s0`, and `adsprpcd` is running with
 `/dev/adsprpc-smd` open and without its restart loop.
 
-### 4. The audio: the drivers are in, the device tree is not
+### 4. The audio: the drivers and DT are in, the link is missing legacy symbols
 
 Merged from the `ack-fix` worktree on 2026-10-20: CAF's AFE driver, the
 SDM450 soundcard and the machine driver, the SDM660 CDC, the WCD9xxx codec
 and the microphone bias and headset control, the CAF ALSA volume API, and
 the CAF fastrpc ioctl ABI. The whole `sound/` tree compiles clean with
-`W=1`.
+`W=1`, and `867dfaaac` added the donor's sound card node, routing,
+microphone bias and amplifier GPIOs in
+`msm8953-xiaomi-tissot-audio.dtsi`.
 
-**There is still no sound**, because the port's device tree has no sound
-card node and no audio pinctrl: the machine driver has nothing to bind to.
-The donor has the template —
-`oc-test/arch/arm64/boot/dts/vendor/qcom/mi8953/tissot/audio.dtsi`, the
-`int_codec: sound` node with the audio routing, the microphone bias
-properties, the CDC pinctrl states and the external amplifier's GPIO. The
-audio symbols are enabled in the build so that a boot shows whether the
-drivers probe.
+**There is still no sound image.** The current `build-kernel.sh` leaves the
+CAF audio stack out of the build. Enabling it leaves the full kernel
+unlinked on undefined `slim_*`, `msm_cdc_*`, `wcd_dsp_mgr_*`,
+`audio_ref_clk_*`, `wcdcal_get_fw_cal` and `apr_get_subsys_state` symbols
+referenced from `sound/soc/msm/`. The per-object compile is clean; the
+missing legacy SLIMBUS/APR/WCD shims are the blocker, not the device tree.
 
 ### 5. The capacitive navigation keys: fixed in the tree, and now in the flashed kernel
 
@@ -328,6 +333,72 @@ the design rationale and the pre-fix evidence remain in
   sets zram up; that is why the port needs `CONFIG_ZRAM=y` and no module
   autoload.
 
+### 8. The CPU/GPU overclock is live on hardware; sustained-load checks remain
+
+The donor's 19-corner 480-2784 MHz CPU table and 725 MHz GPU step are in
+`msm8953-xiaomi-tissot-oc.dtsi`, included at the end of the board DTS.
+
+* `apcc-msm8953.c` accepts 480-2784 MHz. The board overlay replaces all four
+  `qcom,speed*-bin-v0-{cl,cci}` plans with the donor's 19-corner tables.
+* The shared CPU OPP table gains the 12 missing grid points, so it has the
+  same 19 rates. `apc_vreg` uses the donor's 19-corner CPR ceilings, floors,
+  corner map and misc-fuse margins; `cpr4-apss-regulator.c` already
+  extrapolates corners 12-19 above Turbo.
+* The GPU gains the 725 MHz Turbo+ power level and the 100 MHz underclock.
+  The board's legacy `qcom,gpu-pwrlevels` is replaced with the donor's ten
+  levels; initial level is 320 MHz and the CA target is 400 MHz.
+* The generic thermal zones stay at 80 C CPU passive, 100 C CPU critical,
+  and 70 C GPU passive / 90 C GPU critical. The donor's 88 C
+  `deca-cpu-max-step` trip belongs to the CAF thermal driver and is not
+  ported.
+
+**Verified in the tree:** `drivers/clk/qcom/apcc-msm8953.o` compiles with
+`W=1`, the board DTB builds, the new DTS file is checkpatch-clean, and
+`CHECK_DTBS=y` returns 0 (the vendor GPU/battery/ion nodes still have no
+schema and produce the pre-existing warnings). The built DTB contains the
+19 OPPs, 19-corner CPR tables, 725 MHz GPU level and 480-2784 MHz APCC
+plans.
+
+**Verified on hardware (2026-10-20):** the `run304` image booted to Android
+(`sys.boot_completed=1`) and is running
+`6.12.93-4k-gc6104317ff23-dirty #18`, built 19:55 +0545. Both CPU clusters
+expose and run the 19 OPPs from 480 to 2784 MHz; `apcc_cpu0` reads
+2784 MHz, `apcc_cci` 1113.6 MHz, and `apc_corner` is 19. The CPR driver
+reports speed-bin fuse 2, 19 corners, closed-loop enabled, aging succeeded,
+and 1.14 V at the top corner. The GPU exposes 100-725 MHz, has a 725 MHz
+maximum, and its clock statistics show time spent at 725 MHz. The eight CPU
+zones report 80 C passive / 100 C critical; the GPU zone reports 70 C
+passive / 90 C critical. Sampled temperatures were 45-55 C CPU and 41-46 C
+GPU (an earlier sample reached 74 C CPU / 52.8 C GPU); both cooling devices
+were at state 0. No critical trip, panic or pstore record was present.
+
+**CPU thermal trip test (2026-10-20):** eight busy loops on the device.
+The CPU zones crossed the 80 C passive trip; at the 91.6 C peak the CPU
+cooling device moved to state 4 and `scaling_max_freq` fell from 2784 to
+2304 MHz. The test script's 90 C abort threshold stopped the load at that
+point, and the peak stayed below the 100 C critical trip. After the load
+stopped, the cooling device returned to state 0, `scaling_max_freq`
+returned to 2784 MHz, and the hottest zone fell to 67.4 C within 10 s
+(44-49 C at the final check). The GPU reached 65.2 C during the CPU test
+but stayed below its 70 C passive trip. No panic or pstore record was
+present. Log: `porting/artifacts/snapshot60/run304-thermal-stress.log`.
+
+**Still unverified:** the GPU passive trip and both critical trips. There
+was no GPU workload tool on the device, and the CPU test stopped before
+the 100 C critical trip. The boot dmesg ring had already rolled over, so
+this is live-sysfs evidence, not a full boot log.
+
+**Build and package:** `run304` links successfully with the current
+no-audio configuration. Its first package attempt failed because
+`package-diag-boot.py` added duplicate `lib` and `lib/firmware` directory
+records over the base ramdisk. The packager now reuses existing parent
+directories and refuses conflicting firmware files. `boot-run303.img` and
+`boot-run304.img` were generated after the fix: 45,799,424 bytes each, 696
+unique cpio records, 11 WCNSS firmware files. `run304` has since booted;
+`run303` carries the same kernel payload. The `run303-build.status` and
+`run304-build.status` files still say `status=1` because they record the
+original failed packaging attempt; the images were repackaged separately.
+
 ## The order of the remaining work
 
 1. Rebuild with the health-check overlay moved next to the early-logcat
@@ -339,8 +410,15 @@ the design rationale and the pre-fix evidence remain in
 2. Read the next boot's `adsprpcd` result: with `GETINFO` and ioctl 17
    both answered, the library should stop asking, and whatever it asks
    for next will be named in the kernel log.
-3. Write the sound card's device tree from the donor's `audio.dtsi` and
-   make sound work.
+3. Finish the CAF audio link: the device tree is in, but enabling the
+   stack still needs the legacy SLIMBUS/APR/WCD shims; then make sound
+   work.
 4. Catch a GPU stall with the watcher and read the ME_INIT spin.
-5. Add the CPU thermal path: TSENS in the built configuration, and
-   `#cooling-cells` on the CPU nodes.
+5. The CPU passive trip is verified (section 8): it throttled and
+   recovered. The GPU passive trip and both critical trips are still
+   unexercised; a GPU workload is needed before claiming the GPU path, and
+   the critical trips need a deliberate safety plan.
+6. The overclock is live on hardware: `cpufreq` exposes 480-2784 MHz and is
+   running at 2784, APCC and CPR corner 19 are active, and KGSL exposes and
+   has used the 725 MHz level. CPU sustained-load thermal behaviour is now
+   verified; GPU sustained-load validation remains.
