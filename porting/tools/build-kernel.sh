@@ -135,9 +135,13 @@ cp "$OUT_DIR/.config" "$SNAP/$RUN-prebuild.config"
 #   wants the CAF ones, which register their DAIs as tasha_*.
 #   CONFIG_SLIMBUS and CONFIG_SLIM_QCOM_CTRL: the codec is a slimbus
 #   slave, and the tree's slimbus subsystem is off by default.
+#   CONFIG_ZRAM: the ROM's own init.rc already does
+#   "chown root system /sys/block/zram0/idle" and the same for
+#   writeback, so the ROM expects a zram device to be there and sizes
+#   it itself.
 for sym in KSU SND_SOC_MSM8952 SND_SOC_MSM_WCD9335 SND_SOC_MSM_WCD_MBHC \
            SND_SOC_WCD_MBHC_ADC WCD9XXX_CODEC_CORE SND_SOC_SDM660_CDC \
-           SLIMBUS SLIM_QCOM_CTRL; do
+           SLIMBUS SLIM_QCOM_CTRL ZRAM ZRAM_BACKEND_LZ4 ZRAM_BACKEND_ZSTD; do
  grep -q "^CONFIG_$sym=" "$OUT_DIR/.config" && sed -i "s/^CONFIG_$sym=.*/CONFIG_$sym=y/" "$OUT_DIR/.config" || \
 	echo "CONFIG_$sym=y" >> "$OUT_DIR/.config"
 done
@@ -145,7 +149,7 @@ done
 scripts/diffconfig "$SNAP/$RUN-prebuild.config" "$OUT_DIR/.config" | tee "$SNAP/$RUN-config.diff"
 for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SND_SOC_MSM8952 \
            SND_SOC_MSM_WCD9335 SND_SOC_MSM_WCD_MBHC WCD9XXX_CODEC_CORE \
-           SND_SOC_SDM660_CDC SLIMBUS; do
+           SND_SOC_SDM660_CDC SLIMBUS ZRAM; do
  grep -qx "CONFIG_$sym=y" "$OUT_DIR/.config" || { echo "CONFIG_$sym is not set" >&2; exit 1; }
 done
 # The upstream WCD9335 and its microphone bias helper must stay off: the
@@ -197,7 +201,8 @@ for name in ['ramoops_witness_write','ramoops_stage_write','ramoops_reset_note',
     assert name in symbols, name
 config=(s/f'{run}-embedded.config').read_text()
 for key in ['RUST_IS_AVAILABLE','RUST','ASHMEM','CPUFREQ_DT','QCOM_CLK_APCC_MSM8953',
-            'QCOM_RPMPD','PSTORE_RAM','KSU','SND_SOC_MSM8952','SND_SOC_MSM_WCD9335','SLIMBUS']:
+            'QCOM_RPMPD','PSTORE_RAM','KSU','SND_SOC_MSM8952','SND_SOC_MSM_WCD9335',
+            'SLIMBUS','ZRAM']:
     assert f'CONFIG_{key}=y\n' in config, key
 print('The source, the diagnostic symbols and the shipped config are as expected.')
 print(json.dumps(new,indent=2))

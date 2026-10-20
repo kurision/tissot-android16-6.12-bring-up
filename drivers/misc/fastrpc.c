@@ -2538,6 +2538,55 @@ static int fastrpc_caf_init_attrs(struct fastrpc_user *fl, char __user *argp)
 				init_attrs.attrs, init_attrs.siglen);
 }
 
+/*
+ * CAF's GETINFO: the vendor daemon passes the channel id and expects to
+ * be told whether the session's SMMU is on. The session is created here
+ * if it does not exist yet, which is what the daemon is asking for when
+ * it attaches to a channel.
+ *
+ * The channel ids are CAF's: 0 is the apps domain and 2 the sensors,
+ * which are the same numbers this driver uses for its process domains.
+ *
+ * The vendor adsprpcd sends this as its ioctl number 8, which is why it
+ * has to be answered: without it the daemon cannot attach, it retries,
+ * and the retry loop is what burns the CPU.
+ */
+static int fastrpc_caf_getinfo(struct fastrpc_user *fl, char __user *argp)
+{
+	uint32_t info;
+	int pd;
+	int err;
+
+	if (copy_from_user(&info, argp, sizeof(info)))
+		return -EFAULT;
+
+	switch (info) {
+	case 0:
+		pd = ROOT_PD;
+		break;
+	case 2:
+		pd = SENSORS_PD;
+		break;
+	default:
+		return -ENOTCONN;
+	}
+
+	/* Attach only if this session has not been attached yet. */
+	if (fl->pd != pd)
+		err = fastrpc_init_attach(fl, pd);
+	else
+		err = 0;
+	if (err)
+		return err;
+
+	/* The sessions this driver creates are mapped through the SMMU. */
+	info = 1;
+	if (copy_to_user(argp, &info, sizeof(info)))
+		return -EFAULT;
+
+	return 0;
+}
+
 static int fastrpc_caf_get_dsp_info(struct fastrpc_user *fl, char __user *argp)
 {
 	struct caf_ioctl_dsp_capabilities caf;
@@ -2591,10 +2640,12 @@ static int fastrpc_caf_ioctl(struct fastrpc_user *fl, unsigned int cmd,
 	case CAF_IOCTL_GET_DSP_INFO:
 		*matched = true;
 		return fastrpc_caf_get_dsp_info(fl, argp);
+	case CAF_IOCTL_GETINFO:
+		*matched = true;
+		return fastrpc_caf_getinfo(fl, argp);
 	case CAF_IOCTL_INVOKE_FD:
 	case CAF_IOCTL_SETMODE:
 	case CAF_IOCTL_INVOKE_ATTRS:
-	case CAF_IOCTL_GETINFO:
 	case CAF_IOCTL_GETPERF:
 	case CAF_IOCTL_INVOKE_CRC:
 	case CAF_IOCTL_MUNMAP_FD:
