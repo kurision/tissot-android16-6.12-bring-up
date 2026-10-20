@@ -31,7 +31,7 @@ CPIO_FIELDS = 13
 CPIO_HDR = 6 + 8 * CPIO_FIELDS
 FILESIZE_FIELD = 6
 NAMESIZE_FIELD = 11
-S_IFMT, S_IFREG = 0o170000, 0o100000
+S_IFMT, S_IFREG, S_IFDIR = 0o170000, 0o100000, 0o040000
 
 
 def die(msg):
@@ -177,26 +177,46 @@ def customize_ramdisk(cpio, init, fw_entries, debuggable, policy_append):
     if fw_entries:
         template = list(new[hits[0]]["fields"])
         ino = max(int(r["fields"][0], 16) for r in new) + 1
+        existing = {r["name"]: r for r in new}
         parents = set()
         for arcname, _ in fw_entries:
             parts = arcname.split("/")[:-1]
             for i in range(1, len(parts) + 1):
                 parents.add("/".join(parts[:i]))
         for name in sorted(parents):
+            old = existing.get(name)
+            if old is not None:
+                if int(old["fields"][1], 16) & S_IFMT != S_IFDIR:
+                    die(f"firmware parent {name!r} exists in the base "
+                        "ramdisk but is not a directory")
+                continue
             fields = list(template)
             fields[0] = fmt % ino
             fields[1] = fmt % 0o40755
             fields[FILESIZE_FIELD] = fmt % 0
             fields[NAMESIZE_FIELD] = fmt % (len(name) + 1)
-            added.append({"fields": fields, "name": name, "data": b""})
+            rec = {"fields": fields, "name": name, "data": b""}
+            added.append(rec)
+            existing[name] = rec
             ino += 1
         for arcname, blob in sorted(fw_entries):
+            old = existing.get(arcname)
+            if old is not None:
+                if old["data"] == blob:
+                    # The base already carries this exact file.  Keep its
+                    # record rather than adding a second one with the same
+                    # name; cpio consumers do not agree on which one wins.
+                    continue
+                die(f"firmware file {arcname!r} already exists in the base "
+                    "ramdisk with different contents")
             fields = list(template)
             fields[0] = fmt % ino
             fields[1] = fmt % 0o100644
             fields[FILESIZE_FIELD] = fmt % len(blob)
             fields[NAMESIZE_FIELD] = fmt % (len(arcname) + 1)
-            added.append({"fields": fields, "name": arcname, "data": blob})
+            rec = {"fields": fields, "name": arcname, "data": blob}
+            added.append(rec)
+            existing[arcname] = rec
             ino += 1
         trailer = [i for i, r in enumerate(new) if r["name"] == "TRAILER!!!"]
         if len(trailer) != 1:

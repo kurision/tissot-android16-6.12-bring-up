@@ -71,6 +71,13 @@ RUN=${1:-run-$(date -u +%Y%m%dT%H%M%SZ)}
 SNAP=${ACK_SNAPSHOT_DIR:-$REPO/porting/artifacts/snapshot60}
 OUT_DIR="$REPO/out"
 CONFIG="$REPO/porting/tools/kernel.config"
+# The WCNSS tree carries both the remoteproc firmware and the WLAN NV blob.
+# wcnss.mdt is requested before the vendor partition is mounted and is
+# packaged into the ramdisk; the NV blob is requested when wlan0 is brought
+# up, long after switch_root, so it is built into the kernel instead. See
+# the built-in firmware block in "the configuration" below.
+FW_DIR=${ACK_WCNSS_FIRMWARE_DIR:-$REPO/porting/artifacts/firmware-wcnss}
+NV_FIRMWARE="$FW_DIR/wlan/prima/WCNSS_qcom_wlan_nv.bin"
 
 # --- the base image ---------------------------------------------------------
 # A real, SHA-verified image. Not redistributable, so it is not in the
@@ -167,9 +174,13 @@ echo "  $BASE_IMAGE"
 
 # --- the run's outputs ------------------------------------------------------
 mkdir -p "$SNAP" "$OUT_DIR"
-test ! -e "$SNAP/boot-$RUN.img"
-test ! -e "$SNAP/kdir-$RUN"
-test ! -e "$SNAP/package-$RUN.json"
+for path in "$SNAP/boot-$RUN.img" "$SNAP/kdir-$RUN" "$SNAP/package-$RUN.json"; do
+	if [ -e "$path" ]; then
+		echo "error: $path already exists" >&2
+		echo "error: choose a new run name, or move that run's outputs aside" >&2
+		exit 1
+	fi
+done
 trap 'rc=$?; printf "status=%s\n" "$rc" > "$SNAP/$RUN-build.status"' EXIT
 
 make_args=(make -C "$REPO" "O=$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 "CC=$CLANG"
@@ -193,24 +204,22 @@ cp "$OUT_DIR/.config" "$SNAP/$RUN-prebuild.config"
 # is the only place they can be turned on.
 #   CONFIG_KSU: KernelSU-Next is built in, and the manager only talks to
 #   a driver that reports the released version.
-#   The SND_SOC_* symbols: the audio port - the AFE, the WCD9335 codec,
-#   the SDM660 CDC, the microphone bias and headset control, and the
-#   machine driver. They are enabled so the boot shows whether they
-#   probe; the sound card's device tree is not written yet, so they will
-#   not produce sound. The codec and the microphone bias symbols are the
-#   port's own (SND_SOC_MSM_*), not the upstream ones of the same name:
-#   the tree already carries upstream's WCD9335 and its microphone bias
-#   helper, and the port's machine driver wants the CAF ones, which
-#   register their DAIs as tasha_*.
+#   The audio stack is not built here. It is CAF 4.19's machine driver
+#   and PCM platforms, and they need CAF's DSP library, which this
+#   kernel does not carry, so with them in the kernel does not link. The
+#   work continues on the ack-audio branch; the gap and the two ways
+#   forward are in
+#   porting/findings/2026-10-20-audio-dsp-library-gap.md.
 #   CONFIG_SLIMBUS and CONFIG_SLIM_QCOM_CTRL: the codec is a slimbus
 #   slave, and the tree's slimbus subsystem is off by default.
 #   CONFIG_ZRAM: the ROM's own init.rc already does
 #   "chown root system /sys/block/zram0/idle" and the same for
 #   writeback, so the ROM expects a zram device to be there and sizes
 #   it itself.
-for sym in KSU SND_SOC_MSM8952 SND_SOC_MSM_WCD9335 SND_SOC_MSM_WCD_MBHC \
-	   SND_SOC_WCD_MBHC_ADC WCD9XXX_CODEC_CORE SND_SOC_SDM660_CDC \
-	   SLIMBUS SLIM_QCOM_CTRL ZRAM ZRAM_BACKEND_LZ4 ZRAM_BACKEND_ZSTD; do
+# The CAF audio stack is not built here: it needs CAF's DSP library,
+# which this kernel does not carry, and with it in the kernel does not
+# link. It is built on the ack-audio branch.
+for sym in KSU SLIMBUS SLIM_QCOM_CTRL ZRAM ZRAM_BACKEND_LZ4 ZRAM_BACKEND_ZSTD; do
  grep -q "^CONFIG_$sym=" "$OUT_DIR/.config" && sed -i "s/^CONFIG_$sym=.*/CONFIG_$sym=y/" "$OUT_DIR/.config" || \
 	echo "CONFIG_$sym=y" >> "$OUT_DIR/.config"
 done
@@ -223,17 +232,43 @@ for sym in SND_SOC_WCD9335 SND_SOC_WCD_MBHC; do
  sed -i "/^CONFIG_$sym=/d" "$OUT_DIR/.config"
  echo "# CONFIG_$sym is not set" >> "$OUT_DIR/.config"
 done
+# The WLAN NV blob has to be available after switch_root. The vendor tree
+# points /vendor/firmware/wlan/prima/WCNSS_qcom_wlan_nv.bin at
+# /mnt/vendor/persist, but the firmware loader runs a read with kernel
+# credentials (request_firmware() overrides current->cred), and the
+# Android policy denies the kernel domain search on mnt_vendor_file. The
+# ramdisk copy is gone by then, so the direct filesystem load fails with
+# -EACCES and the interface never comes up.
+#
+# Built-in firmware is checked before any filesystem path in
+# _request_firmware_prepare(), so embedding this one blob removes both the
+# switch_root timing and the SELinux path from the WLAN bring-up. Only the
+# NV blob is embedded: wcnss.mdt is still needed before the vendor
+# partition is mounted, and it is packaged into the ramdisk below.
+if [ -f "$NV_FIRMWARE" ]; then
+	scripts/config --file "$OUT_DIR/.config" \
+		--set-str EXTRA_FIRMWARE "wlan/prima/WCNSS_qcom_wlan_nv.bin" \
+		--set-str EXTRA_FIRMWARE_DIR "$(realpath "$FW_DIR")"
+else
+	scripts/config --file "$OUT_DIR/.config" --set-str EXTRA_FIRMWARE ""
+	echo "warning: no NV blob at $NV_FIRMWARE; WLAN will not come up" >&2
+fi
 "${make_args[@]}" olddefconfig
 scripts/diffconfig "$SNAP/$RUN-prebuild.config" "$OUT_DIR/.config" | tee "$SNAP/$RUN-config.diff"
-for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SND_SOC_MSM8952 \
-	   SND_SOC_MSM_WCD9335 SND_SOC_MSM_WCD_MBHC WCD9XXX_CODEC_CORE \
-	   SND_SOC_SDM660_CDC SLIMBUS ZRAM; do
+for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SLIMBUS ZRAM; do
  grep -qx "CONFIG_$sym=y" "$OUT_DIR/.config" || { echo "CONFIG_$sym is not set" >&2; exit 1; }
 done
+if [ -f "$NV_FIRMWARE" ]; then
+ grep -qx 'CONFIG_EXTRA_FIRMWARE="wlan/prima/WCNSS_qcom_wlan_nv.bin"' "$OUT_DIR/.config" || {
+  echo "CONFIG_EXTRA_FIRMWARE was not accepted" >&2; exit 1; }
+ grep -qx "CONFIG_EXTRA_FIRMWARE_DIR=\"$(realpath "$FW_DIR")\"" "$OUT_DIR/.config" || {
+  echo "CONFIG_EXTRA_FIRMWARE_DIR was not accepted" >&2; exit 1; }
+fi
 for key in RUST_IS_AVAILABLE RUST ASHMEM SHMEM STAGING IKCONFIG IKCONFIG_PROC \
 	    PSTORE_RAM QCOM_IOMMU ARM_SMMU QCOM_SCM ANDROID_BINDER_IPC \
 	    USB_CONFIGFS USB_CONFIGFS_F_FS COMPAT CPUFREQ_DT \
-	    QCOM_CLK_APCC_MSM8953 QCOM_APCS_IPC QCOM_RPMPD PM_GENERIC_DOMAINS_OF; do
+	    QCOM_CLK_APCC_MSM8953 QCOM_APCS_IPC QCOM_RPMPD QCOM_TSENS \
+	    PM_GENERIC_DOMAINS_OF; do
  rg -qx "CONFIG_${key}=y" "$OUT_DIR/.config" || { echo "CONFIG_$key is not set" >&2; exit 1; }
 done
 # The upstream WCD9335 and its microphone bias helper must stay off: the
@@ -270,9 +305,10 @@ cat "$BOOT/Image.gz" "$BOOT/dts/qcom/msm8953-xiaomi-tissot.dtb" > "$BOOT/Image.g
 
 # --- the packaging ----------------------------------------------------------
 # WCNSS firmware is requested by the remoteproc before the vendor partition
-# is mounted, so it has to come from the ramdisk.  The directory is optional:
-# without it the image still boots, with WLAN stuck at the old -2 load error.
-FW_DIR=${ACK_WCNSS_FIRMWARE_DIR:-$REPO/porting/artifacts/firmware-wcnss}
+# is mounted, so it has to come from the ramdisk. The NV blob is built into
+# the kernel, but packing the whole tree keeps the early load working. The
+# directory is optional: without it the image still boots, with WLAN stuck
+# at the old -2 load error.
 fw_args=()
 if [ -d "$FW_DIR" ]; then
 	test -f "$FW_DIR/wcnss.mdt" || {
@@ -305,7 +341,7 @@ for name in ['ramoops_witness_write','ramoops_stage_write','ramoops_reset_note',
     assert name in symbols, name
 config=(s/f'{run}-embedded.config').read_text()
 for key in ['RUST_IS_AVAILABLE','RUST','ASHMEM','CPUFREQ_DT','QCOM_CLK_APCC_MSM8953',
-	    'QCOM_RPMPD','PSTORE_RAM','KSU','SND_SOC_MSM8952','SND_SOC_MSM_WCD9335','ZRAM']:
+	    'QCOM_RPMPD','PSTORE_RAM','KSU','ZRAM']:
     assert f'CONFIG_{key}=y\n' in config, key
 print('The diagnostic symbols and the shipped config are as expected.')
 print(json.dumps(new,indent=2))

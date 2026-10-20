@@ -68,8 +68,15 @@
  */
 #define APCC_PLL_LOCK_DELAY_US	200
 #define APCC_PLL_LOCK_LOOPS	200
-#define APCC_MIN_RATE		652800000UL
-#define APCC_MAX_RATE		2016000000UL
+/*
+ * The donor overclock table runs the APCS HFPLL on the same 19.2 MHz grid
+ * from 480 MHz to 2784 MHz. The board's qcom,speed*-bin-v0 plans select the
+ * matching CPR corner; this range is the PLL's own limit.
+ */
+#define APCC_MIN_RATE		480000000UL
+#define APCC_MAX_RATE		2784000000UL
+/* The donor's clock-cpu-8953 early handoff leaves CPU4 at 652.8 MHz. */
+#define APCC_BOOT_RATE		652800000UL
 #define APCC_XO_RATE		19200000UL
 /* The mux ids are the clock ids, so a set of muxes is a bit mask. */
 #define APCC_MUX_ALL		((1U << APCC_NUM_CLOCKS) - 1)
@@ -957,7 +964,7 @@ static int apcc_handoff(struct apcc_msm8953 *apcc)
 	 * The PLL feeds nothing yet: this is the only write in the handoff
 	 * that cannot disturb the running CPUs.
 	 */
-	ret = apcc_program_pll(apcc, APCC_MIN_RATE);
+	ret = apcc_program_pll(apcc, APCC_BOOT_RATE);
 	if (ret)
 		goto restore;
 	/* The donor's CPU4 handoff: the alias1 mux to the PLL, then the
@@ -978,7 +985,7 @@ static int apcc_handoff(struct apcc_msm8953 *apcc)
 	ret = apcc_read_state(apcc, &observed);
 	if (ret)
 		goto restore;
-	if (apcc_state_rate(apcc, &observed, APCC_CPU4_CLK) != APCC_MIN_RATE ||
+	if (apcc_state_rate(apcc, &observed, APCC_CPU4_CLK) != APCC_BOOT_RATE ||
 	    observed.cfg[APCC_CPU0_CLK] != boot.cfg[APCC_CPU0_CLK] ||
 	    observed.cfg[APCC_CCI_CLK] != boot.cfg[APCC_CCI_CLK] ||
 	    (observed.cpu4_cbcr & APCC_RCG_ENABLE) != APCC_RCG_ENABLE) {

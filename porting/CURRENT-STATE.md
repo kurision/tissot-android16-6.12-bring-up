@@ -46,7 +46,7 @@ root feature is unaffected.
 | Area | State | Evidence |
 |---|---|---|
 | Kernel boots, Android comes up | Working | every run from 234 on |
-| CPU clock policy | Working | one shared `schedutil` policy over CPUs 0-7, 652.8-2016 MHz, the APCC handoff completes, no failed transitions |
+| CPU clock policy | Working | one shared `schedutil` policy over CPUs 0-7, 480-2784 MHz, the APCC handoff completes, no failed transitions |
 | Display | Working | the panel is driven; the homescreen renders |
 | GPU | Working, with one open fault | `/dev/kgsl-3d0` is driven with the stock ioctl ABI; the retirement stall below is open |
 | Touch | Working | the `edt-ft5x06` panel, the multi-touch slots |
@@ -57,7 +57,8 @@ root feature is unaffected.
 | Log capture | Working | the `logdump` partition, the USB console, the ramoops sampler |
 | The checkpoint reboot loop | In run302, not verified | the wakeup statistics relabel fix is in `init-run302`; the previous boot still reports `sys.boot.reason=reboot,checkpoint_commit_failed` and the early relabel diagnostics show `labels=0 skipped=1`, so the result is not closed |
 | The `adsprpcd` CAF ioctl layer | In the kernel, one command missing | the port decodes CAF's ioctl numbering; on the phone the daemon now fails on exactly one command, `GETINFO`, whose handler is committed but not in the flashed image |
-| Wi-Fi, cellular, cameras, Bluetooth | Failing | see `FAILING-COMPONENTS.md`; unchanged by this session's work |
+| Wi-Fi | Working on run304, persistent fix not yet booted | the NV blob was staged at `/data/vendor/wifi/firmware` and the interface associated; `CONFIG_EXTRA_FIRMWARE` in `7c1515865` makes that a kernel built-in for the next run |
+| Cellular, cameras, Bluetooth | Failing | see `FAILING-COMPONENTS.md`; unchanged by this session's work |
 
 ## What is open, and what is known about it
 
@@ -100,30 +101,35 @@ stops advancing while a fence is still pending, it captures dmesg,
 `/proc/interrupts`, `/proc/softirqs` and the kgsl state into
 `/data/local/tmp/kgsl-stall/`.
 
-### 2. The CPU has no thermal protection
+### 2. The CPU thermal path is enabled and boot-verified
 
-The clock policy works. What is missing is anything that can throttle it.
+The clock policy works. The pieces that can throttle it are live on the
+phone; only the sustained passive-trip behaviour remains to be exercised.
 
-* `CONFIG_QCOM_TSENS` is not set **in the built configuration**. The
-  defconfig says `=y`, but the build never reads the defconfig: the
-  configuration is `porting/tools/kernel.config`, and that file has it
-  off.
-* The CPU nodes have **no `#cooling-cells`**, so `&CPU0` is not a cooling
-  device and the four CPU thermal zones in the device tree have nothing to
-  throttle. The donor has `#cooling-cells = <2>` on all eight CPU nodes.
+* `CONFIG_QCOM_TSENS=y` is now in `porting/tools/kernel.config`, which is
+  the configuration the build copies to `out/.config`; the defconfig is
+  not read. `porting/tools/build-kernel.sh` also checks the symbol after
+  `olddefconfig`. `drivers/thermal/qcom/` compiles with it on.
+* The CPU nodes already carry `#cooling-cells = <2>`, and `msm8953.dtsi`
+  defines `cpu0-thermal` through `cpu7-thermal` plus `gpu-thermal` with
+  cooling maps. The earlier note that the CPU nodes had no cooling cells
+  was stale.
+* The `msm8953` TSENS node uses `qcom,msm8953-tsens` with the generic
+  `qcom,tsens-v2` fallback and `#qcom,sensors = <16>`. The v2 generic ops
+  have no software calibration callback, so no separate `tsens-8953.c`
+  is required.
+* The phone now runs `run304` with `CONFIG_QCOM_TSENS=y` and reports the
+  eight CPU zones plus `gpu-thermal`, `pm8953-thermal`, `battery` and
+  `bms`, all with sane temperatures. This verifies the TSENS probe and the
+  thermal-zone wiring. The CPU passive trip has now been exercised; see
+  section 8. The critical trip and the GPU trip are still untested.
 
-On the running phone there are three thermal zones — `pm8953-thermal`,
-`battery`, `bms` — and **no CPU zones at all**. The policy therefore sits at
-the top OPP (1.958-2.016 GHz) and the phone dies of heat: run261 at about
-326 s, run265 at about 581 s.
-
-The CPU burn is not the governor. The load is uninterruptible sleep — the
-fence waiters — and the binder storm is PowerManagerService raising SIGBUS
-on itself. The frequency is a symptom.
-
-Fixing it is two changes: put `CONFIG_QCOM_TSENS=y` where it survives (the
-build script's forced symbols, not the defconfig) and add `#cooling-cells` to
-the eight CPU nodes, with the OPP `cooling-device` link.
+The historical failure remains the reason this is first: with no CPU
+zones, the policy sat at the top OPP (1.958-2.016 GHz) and the phone died
+of heat, run261 at about 326 s and run265 at about 581 s. The CPU burn is
+not the governor. The load is uninterruptible sleep — the fence waiters
+— and the binder storm is PowerManagerService raising SIGBUS on itself.
+The frequency is a symptom.
 
 ### 3. The early hang: fixed by the relabel
 
@@ -194,22 +200,22 @@ were learned the hard way, and both are kept:
 shell is `uid=0` in `u:r:ksu:s0`, and `adsprpcd` is running with
 `/dev/adsprpc-smd` open and without its restart loop.
 
-### 4. The audio: the drivers are in, the device tree is not
+### 4. The audio: the drivers and DT are in, the link is missing legacy symbols
 
 Merged from the `ack-fix` worktree on 2026-10-20: CAF's AFE driver, the
 SDM450 soundcard and the machine driver, the SDM660 CDC, the WCD9xxx codec
 and the microphone bias and headset control, the CAF ALSA volume API, and
 the CAF fastrpc ioctl ABI. The whole `sound/` tree compiles clean with
-`W=1`.
+`W=1`, and `867dfaaac` added the donor's sound card node, routing,
+microphone bias and amplifier GPIOs in
+`msm8953-xiaomi-tissot-audio.dtsi`.
 
-**There is still no sound**, because the port's device tree has no sound
-card node and no audio pinctrl: the machine driver has nothing to bind to.
-The donor has the template —
-`oc-test/arch/arm64/boot/dts/vendor/qcom/mi8953/tissot/audio.dtsi`, the
-`int_codec: sound` node with the audio routing, the microphone bias
-properties, the CDC pinctrl states and the external amplifier's GPIO. The
-audio symbols are enabled in the build so that a boot shows whether the
-drivers probe.
+**There is still no sound image.** The current `build-kernel.sh` leaves the
+CAF audio stack out of the build. Enabling it leaves the full kernel
+unlinked on undefined `slim_*`, `msm_cdc_*`, `wcd_dsp_mgr_*`,
+`audio_ref_clk_*`, `wcdcal_get_fw_cal` and `apr_get_subsys_state` symbols
+referenced from `sound/soc/msm/`. The per-object compile is clean; the
+missing legacy SLIMBUS/APR/WCD shims are the blocker, not the device tree.
 
 ### 5. The capacitive navigation keys: fixed in the tree, and now in the flashed kernel
 
@@ -314,12 +320,12 @@ the design rationale and the pre-fix evidence remain in
   repository itself, uses `porting/tools/kernel.config` as the
   configuration, and writes to `out/` in the repository, reused, and
   emptied for a clean rebuild.
-* The image on the phone is **run302** (built and booted at 16:20 on
-  2026-10-20). Its kernel is `6.12.93-4k-gda553ac9776d`; it carries the
-  navigation keys, the CAF `GETINFO` ioctl and `CONFIG_ZRAM=y`.  The
-  crash-loop overlay is in its init binary but did not install (section 7).
-  The run302 verification is in
-  [findings/run302-overlay-not-installed-20261020.md](findings/run302-overlay-not-installed-20261020.md).
+* The image on the phone is **run304** (built and booted at 19:55 on
+  2026-10-20). Its kernel is `6.12.93-4k-gc6104317ff23-dirty`; it carries
+  the navigation keys, the CAF `GETINFO` ioctl, `CONFIG_ZRAM=y`, the
+  TSENS zones and the 480-2784 MHz CPU / 725 MHz GPU overclock.  Wi-Fi is
+  working on this boot through the runtime `/data` staging described in
+  section 9; the built-in NV fix is not in this image.
   The earlier run294 image was built before the ZRAM fix, so
   `CONFIG_ZRAM` was a module there and `/sys/block/zram0` did not exist on
   the device. The ROM's `init.rc` chowns and chmods
@@ -328,19 +334,181 @@ the design rationale and the pre-fix evidence remain in
   sets zram up; that is why the port needs `CONFIG_ZRAM=y` and no module
   autoload.
 
+### 8. The CPU/GPU overclock is live on hardware; sustained-load checks remain
+
+The donor's 19-corner 480-2784 MHz CPU table and 725 MHz GPU step are in
+`msm8953-xiaomi-tissot-oc.dtsi`, included at the end of the board DTS.
+
+* `apcc-msm8953.c` accepts 480-2784 MHz. The board overlay replaces all four
+  `qcom,speed*-bin-v0-{cl,cci}` plans with the donor's 19-corner tables.
+* The shared CPU OPP table gains the 12 missing grid points, so it has the
+  same 19 rates. `apc_vreg` uses the donor's 19-corner CPR ceilings, floors,
+  corner map and misc-fuse margins; `cpr4-apss-regulator.c` already
+  extrapolates corners 12-19 above Turbo.
+* The GPU gains the 725 MHz Turbo+ power level and the 100 MHz underclock.
+  The board's legacy `qcom,gpu-pwrlevels` is replaced with the donor's ten
+  levels; initial level is 320 MHz and the CA target is 400 MHz.
+* The generic thermal zones stay at 80 C CPU passive, 100 C CPU critical,
+  and 70 C GPU passive / 90 C GPU critical. The donor's 88 C
+  `deca-cpu-max-step` trip belongs to the CAF thermal driver and is not
+  ported.
+
+**Verified in the tree:** `drivers/clk/qcom/apcc-msm8953.o` compiles with
+`W=1`, the board DTB builds, the new DTS file is checkpatch-clean, and
+`CHECK_DTBS=y` returns 0 (the vendor GPU/battery/ion nodes still have no
+schema and produce the pre-existing warnings). The built DTB contains the
+19 OPPs, 19-corner CPR tables, 725 MHz GPU level and 480-2784 MHz APCC
+plans.
+
+**Verified on hardware (2026-10-20):** the `run304` image booted to Android
+(`sys.boot_completed=1`) and is running
+`6.12.93-4k-gc6104317ff23-dirty #18`, built 19:55 +0545. Both CPU clusters
+expose and run the 19 OPPs from 480 to 2784 MHz; `apcc_cpu0` reads
+2784 MHz, `apcc_cci` 1113.6 MHz, and `apc_corner` is 19. The CPR driver
+reports speed-bin fuse 2, 19 corners, closed-loop enabled, aging succeeded,
+and 1.14 V at the top corner. The GPU exposes 100-725 MHz, has a 725 MHz
+maximum, and its clock statistics show time spent at 725 MHz. The eight CPU
+zones report 80 C passive / 100 C critical; the GPU zone reports 70 C
+passive / 90 C critical. Sampled temperatures were 45-55 C CPU and 41-46 C
+GPU (an earlier sample reached 74 C CPU / 52.8 C GPU); both cooling devices
+were at state 0. No critical trip, panic or pstore record was present.
+
+**CPU thermal trip test (2026-10-20):** eight busy loops on the device.
+The CPU zones crossed the 80 C passive trip; at the 91.6 C peak the CPU
+cooling device moved to state 4 and `scaling_max_freq` fell from 2784 to
+2304 MHz. The test script's 90 C abort threshold stopped the load at that
+point, and the peak stayed below the 100 C critical trip. After the load
+stopped, the cooling device returned to state 0, `scaling_max_freq`
+returned to 2784 MHz, and the hottest zone fell to 67.4 C within 10 s
+(44-49 C at the final check). The GPU reached 65.2 C during the CPU test
+but stayed below its 70 C passive trip. No panic or pstore record was
+present. Log: `porting/artifacts/snapshot60/run304-thermal-stress.log`.
+
+**Still unverified:** the GPU passive trip and both critical trips. There
+was no GPU workload tool on the device, and the CPU test stopped before
+the 100 C critical trip. The boot dmesg ring had already rolled over, so
+this is live-sysfs evidence, not a full boot log.
+
+**Build and package:** `run304` links successfully with the current
+no-audio configuration. Its first package attempt failed because
+`package-diag-boot.py` added duplicate `lib` and `lib/firmware` directory
+records over the base ramdisk. The packager now reuses existing parent
+directories and refuses conflicting firmware files. `boot-run303.img` and
+`boot-run304.img` were generated after the fix: 45,799,424 bytes each, 696
+unique cpio records, 11 WCNSS firmware files. `run304` has since booted;
+`run303` carries the same kernel payload. The `run303-build.status` and
+`run304-build.status` files still say `status=1` because they record the
+original failed packaging attempt; the images were repackaged separately.
+
+### 9. Wi-Fi: the NV blob is loaded after switch_root
+
+`wlan0` exists on run304 with a valid serial-derived MAC, but every
+attempt to bring it up ends before association.  `wcn36xx` is bound and
+`remoteproc1` runs `wcnss.mdt`; the failure is the NV upload:
+
+```
+wcn36xx: ERROR Failed to load nv file wlan/prima/WCNSS_qcom_wlan_nv.bin: -2
+wcn36xx: ERROR Failed to push NV to chip
+loading /vendor/firmware/wlan/prima/WCNSS_qcom_wlan_nv.bin failed with error -13
+Direct firmware load for wlan/prima/WCNSS_qcom_wlan_nv.bin failed with error -2
+```
+
+The request happens when the interface is opened, long after
+`switch_root`, so the copy that packaging puts in the ramdisk at
+`lib/firmware` is no longer mounted.  The vendor tree has a symlink at
+`/vendor/firmware/wlan/prima/WCNSS_qcom_wlan_nv.bin`, but it points at
+`/mnt/vendor/persist`, and `request_firmware()` does the read with kernel
+credentials (`prepare_kernel_cred(&init_task)`), not the caller's.  The
+policy denies the kernel domain search on `mnt_vendor_file`:
+
+```
+avc: denied { search } for comm="ip" name="vendor" dev="tmpfs"
+  scontext=u:r:kernel:s0 tcontext=u:object_r:mnt_vendor_file:s0
+```
+
+The path was verified on run304 by copying the blob to
+`/data/vendor/wifi/firmware/wlan/prima/` and adding that directory to
+`firmware_class.path`.  The load was confirmed with SELinux permissive;
+after returning to enforcing with the firmware already loaded, `wlan0`
+associated to the 5 GHz "Private" AP and received `192.168.1.85`
+(`cmd wifi status`, `ip addr show wlan0`).  That proves the file and the
+path, but not a clean enforcing load, and the runtime directory does not
+survive a reboot.
+
+Commit `7c1515865` embeds only
+`wlan/prima/WCNSS_qcom_wlan_nv.bin` with `CONFIG_EXTRA_FIRMWARE`.  The
+firmware loader checks built-in firmware before any filesystem path in
+`_request_firmware_prepare()`, which removes both the switch_root timing
+and the SELinux denial from the NV load.  `wcnss.mdt` and its segments
+are still packaged into the ramdisk because the remoteproc requests them
+before `/vendor` is mounted.  The next clean boot has to confirm this.
+
+### 10. The CPU stays at 2784 MHz because `system_server` is busy
+
+The governor is not holding the maximum.  The policy is one shared
+`schedutil` over CPUs 0-7, `scaling_min_freq` is 480000,
+`scaling_max_freq` is 2784000, and a sample during the investigation
+showed individual CPUs at 1804/2304/2784 MHz while the load moved.  There
+is real work on the device:
+
+* `system_server` reached 87% of one CPU in `top`; `dumpsys cpuinfo`
+  attributed 47% to it over the sample.
+* `dumpsys media.audio_policy` reports `AudioPolicyManager: 0x0`,
+  `listAudioPorts n=24458` and `setMinVolumeIndexForGroup n=1115`.
+  `AS.AudioService` logs `Failed to init min/max for volume group -1 for
+  stream 11` about every two seconds.
+* `/proc/asound/cards` reports no soundcards, `/sys/bus/apr` does not
+  exist and `/sys/bus/slimbus/devices` is empty, while `adsp.mdt` is
+  running and the audio HAL and `audioserver` are alive.  This is the
+  audio-stack gap in section 4: the policy manager cannot be created, so
+  the framework keeps retrying port and volume discovery.
+
+**Stopping `audioserver` alone** (leaving `vendor.audio-hal` running)
+dropped `system_server` from 87% to 9.6%, idle from 616% to 716%, and
+load average from 5.1 to 2.52; the max-frequency share in
+`time_in_state` fell from 71% of wall time over 30 s to about 25% over
+8 s.  Starting `audioserver` again restored the loop.  So the audio retry
+is the dominant CPU consumer, not the governor, and the single shared
+`schedutil` policy then takes every CPU to 2784 MHz because one policy
+sees the busy core.  This is a real framework cost of the missing audio
+stack, not something to fix by editing OPPs or governor tunables.
+
+The other reports are real but secondary.  `libperfmgr` cannot write
+`/sys/class/devfreq/soc:qcom,cpu-cpu-ddr-bw/min_freq` (no DDR bandwidth
+devfreq device) or
+`/proc/sys/dev/xiaomi_msm8953_touchscreen/enable_dt2w` (the mainline
+touch driver has no such node); those are DDR/DT2W gaps, not CPU
+frequency.  `vendor.qti.data.factory` is missing and is restarted as a
+lazy HAL, `vendor.qrtr-ns` exits and the kernel logs `failed to send del
+client cmd`, and DevCheck's reads of `cur_freq` are denied and produce
+AVC lines.  Those should be cleaned up, but they do not explain the
+audio-driven `system_server` load.
+
+Consequently, do not tune `schedutil` or the OPP table to make the idle
+frequency fall.  The actionable item is the audio link (section 4), or a
+deliberate no-audio configuration that stops the framework retry.
+
 ## The order of the remaining work
 
-1. Rebuild with the health-check overlay moved next to the early-logcat
-   overlay, flash it to `boot_b`, and check the run302 list: `errno=0`
-   for the override, no `UPDATABLE_CRASHING` exec, qrtr-ns running, and
-   the camera/dataqti services stopped.  The run302 boot already has
-   `CONFIG_ZRAM=y` and the relabel fix; check the wakeup labels,
-   `/sys/block/zram0` and the navigation keys on that boot.
+1. Build **run305** with `7c1515865`, which embeds the WLAN NV blob, and
+   boot it from a clean enforcing start.  Check that `wlan0` comes up
+   without the `-13`/`-2` NV errors and that it associates.  The same
+   build should keep the run302 health-check overlay list (`errno=0` for
+   the override, no `UPDATABLE_CRASHING` exec, qrtr-ns running, camera
+   and dataqti stopped), the wakeup labels, `/sys/block/zram0` and the
+   navigation keys.
 2. Read the next boot's `adsprpcd` result: with `GETINFO` and ioctl 17
    both answered, the library should stop asking, and whatever it asks
    for next will be named in the kernel log.
-3. Write the sound card's device tree from the donor's `audio.dtsi` and
-   make sound work.
+3. Finish the CAF audio link: the device tree is in, but enabling the
+   stack still needs the legacy SLIMBUS/APR/WCD shims; then make sound
+   work.
 4. Catch a GPU stall with the watcher and read the ME_INIT spin.
-5. Add the CPU thermal path: TSENS in the built configuration, and
-   `#cooling-cells` on the CPU nodes.
+5. The CPU passive trip is verified (section 8): it throttled and
+   recovered. The GPU passive trip and both critical trips are still
+   unexercised; a GPU workload is needed before claiming the GPU path, and
+   the critical trips need a deliberate safety plan.
+6. The overclock is live on hardware: `cpufreq` exposes 480-2784 MHz and is
+   running at 2784, APCC and CPR corner 19 are active, and KGSL exposes and
+   has used the 725 MHz level. CPU sustained-load thermal behaviour is now
+   verified; GPU sustained-load validation remains.
