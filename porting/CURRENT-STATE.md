@@ -27,11 +27,17 @@ feature puts the adb shell in the `u:r:ksu:s0` domain as uid 0, which is
 what makes the kgsl debugfs readable — and the kgsl debugfs is where the
 GPU's retired count is.
 
-**Do not use the manager's grant-root flow.** The live-policy rewrite behind
-it (`KSU_IOCTL_SET_SEPOLICY`, which duplicates and rewrites the whole
-policydb in the kernel) **deadlocks this kernel**: it froze the phone on the
-first attempt, and the manager's "allow an app root" does the same thing.
-The adb root feature is fine; the allowlist path is not.
+**Do not use the manager's grant-root flow until the fix is in an image.** The
+path that crashed is `SET_APP_PROFILE`, not `KSU_IOCTL_SET_SEPOLICY`. It calls
+`ksu_mark_running_process_locked()`, which walks every thread under
+`tracepoint_reg_lock` with IRQs disabled and used to print one `tp_marker:`
+line per thread. On this phone (4,211 threads) that was ~5,000 synchronous
+printk lines; the watchdog declared a 25 s soft lockup at
+`do_set_app_profile` and panicked the kernel
+(`porting/findings/ksu-grant-root-softlockup-20261020.md`). The local fix
+removes the per-thread logging and keeps one summary line. It is **not yet
+verified on device**: rebuild, flash, grant root to an app, and check for the
+summary line and no soft lockup. The adb root feature is unaffected.
 
 ## What works
 
