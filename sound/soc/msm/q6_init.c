@@ -7,8 +7,17 @@
 #include <linux/module.h>
 #include <dsp/q6_init.h>
 
+static bool msm_dsplib_off;
+module_param(msm_dsplib_off, bool, 0644);
+MODULE_PARM_DESC(msm_dsplib_off, "do not initialise the DSP library");
+
 static int __init audio_q6_init(void)
 {
+	if (msm_dsplib_off) {
+		pr_info("DIAG: the DSP library is off by the command line\n");
+		return 0;
+	}
+
 	adsp_err_init();
 	audio_cal_init();
 	rtac_init();

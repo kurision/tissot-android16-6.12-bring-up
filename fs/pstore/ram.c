@@ -629,7 +629,7 @@ static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
 #define RAMOOPS_SNAP_PAYLOAD_OFFSET	(RAMOOPS_SNAP_OFFSET + PAGE_SIZE)
 #define RAMOOPS_SNAP_SLOT_STRIDE	(PAGE_SIZE + SZ_1M)
 #define RAMOOPS_SNAP_SLOTS		2
-#define RAMOOPS_SNAP_INTERVAL_MS	2000
+#define RAMOOPS_SNAP_INTERVAL_MS	500
 /*
  * The periodic snapshot is on again: the audio bring-up hangs before the
  * userspace, and this is the only channel that survives a hang. It copies
@@ -1289,6 +1289,14 @@ static int ramoops_snap_thread(void *unused)
 			if (ret <= 0 || kthread_should_stop())
 				continue;
 		}
+
+		/*
+		 * With periodic sampling the sample follows the logdump
+		 * partition as soon as it is there: the boot that has to be
+		 * caught can die before the first tick, and the sample that
+		 * matters is the one that holds the console log up to that
+		 * point.
+		 */
 
 		ret = ramoops_snap_take(s);
 		if (ret) {

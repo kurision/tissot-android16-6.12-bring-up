@@ -286,8 +286,17 @@ static struct rpmsg_driver apr_tal_rpmsg_driver = {
  *
  * Returns 0 on success and an appropriate error value on failure.
  */
+static bool msm_apr_off;
+module_param(msm_apr_off, bool, 0644);
+MODULE_PARM_DESC(msm_apr_off, "do not register the APR transport");
+
 int apr_tal_init(void)
 {
+	if (msm_apr_off) {
+		pr_info("DIAG: the APR transport is off by the command line\n");
+		return 0;
+	}
+
 	int i, j, k;
 	int ret;
 

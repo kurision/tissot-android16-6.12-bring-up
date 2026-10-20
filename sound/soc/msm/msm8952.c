@@ -3541,8 +3541,23 @@ static struct platform_driver msm8952_asoc_machine_driver = {
 	.remove = msm8952_asoc_machine_remove,
 };
 
+/*
+ * Bring-up switches. The audio stack hangs the boot somewhere in it, and
+ * there is no console on this phone: the kernel log is lost when the
+ * boot stops before the logdump partition exists. These take the parts of
+ * the stack out one at a time from the command line, so that each step
+ * of the bisection is a reflash and not a rebuild.
+ */
+static bool msm_audio_off;
+module_param(msm_audio_off, bool, 0644);
+MODULE_PARM_DESC(msm_audio_off, "do not register the sound card machine driver");
+
 static int __init msm8952_machine_init(void)
 {
+	if (msm_audio_off) {
+		pr_info("DIAG: the machine driver is off by the command line\n");
+		return 0;
+	}
 	return platform_driver_register(&msm8952_asoc_machine_driver);
 }
 module_init(msm8952_machine_init);
