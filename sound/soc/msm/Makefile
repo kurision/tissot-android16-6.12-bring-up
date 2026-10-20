@@ -14,17 +14,13 @@ ccflags-y += -I$(srctree)/sound/soc/msm/caf-include/uapi
 ccflags-y += -Wno-unused-but-set-variable -Wno-unused-variable \
 	     -Wno-unused-but-set-parameter -Wno-unused-parameter -Wno-unused-function -Wno-unused-const-variable
 
-wcd9335-objs += wcd9335.o wcd9335-regmap.o wcd9335-tables.o
-wcd9xxx-objs += wcd9xxx-core.o wcd9xxx-core-init.o wcd9xxx-irq.o \
-		wcd9xxx-resmgr-v2.o wcd9xxx-slimslave.o wcd9xxx-utils.o \
-		wcd9xxx-rst.o wcd9xxx-soc-init.o wcd9xxx-common-v2.o
-wcdmbhc-objs += wcd-mbhc-v2.o wcd-mbhc-adc.o wcd-clsh.o
-wcddsp-objs += wcd-dsp-mgr.o
-
-obj-$(CONFIG_SND_SOC_MSM_WCD9335) += wcd9335.o
-obj-$(CONFIG_WCD9XXX_CODEC_CORE) += wcd9xxx.o
-obj-$(CONFIG_SND_SOC_MSM_WCD_MBHC) += wcdmbhc.o
-obj-$(CONFIG_WCD_DSP_GLINK) += wcddsp.o
+#
+# The WCD9xxx codec stack is not built: tissot has no such codec. The
+# donor's Xiaomi boards delete the tasha (sound-9335) node and the
+# WSA881x nodes, and their audio is the analog CDC plus the MAX98927
+# speaker amplifier. The sources stay here because the machine driver
+# includes their headers, and the header's declarations are guarded by
+# the same symbols.
 
 #
 # The legacy pair is the CAF CDC the machine driver and the WCD9335 were
@@ -35,7 +31,9 @@ cdc-objs += msm-analog-cdc.o msm-digital-cdc-legacy.o \
 
 obj-$(CONFIG_SND_SOC_SDM660_CDC) += cdc.o
 
-msm8952-objs += msm8952.o msm8952-dai-links.o msm8952-slimbus.o
+# The slimbus codec machine is not built either: it is the machine for
+# the tasha codec, which this board does not have.
+msm8952-objs += msm8952.o msm8952-dai-links.o
 msm8952-objs += msm-pcm-afe-v2.o
 
 obj-$(CONFIG_SND_SOC_MSM8952) += msm8952.o
@@ -49,6 +47,7 @@ obj-$(CONFIG_SND_SOC_MSM8952) += msm8952.o
 # The compress (offload) and the listen-service platforms are not built
 # yet: they need CAF's compress_params.h, whose layout differs from the
 # one this kernel's userspace expects, so they are a separate decision.
+msmplatform-objs += msm-cdc-supply.o
 msmplatform-objs += msm-pcm-q6-v2.o msm-pcm-q6-noirq.o msm-pcm-hostless.o \
 		     msm-pcm-voice-v2.o msm-pcm-routing-v2.o \
 		     msm-pcm-routing-devdep.o msm-pcm-loopback-v2.o \
