@@ -356,11 +356,124 @@ porting/
 ├── logging/         log capture setup: pull-logs.sh + pstore decoder (see logging/README.md)
 ├── logs/            one dated directory per boot attempt (git-ignorable)
 ├── plan/            phase-by-phase port plan with verification steps
+├── tools/           the build and the boot-test tooling: build-kernel.sh,
+│                    kgsl-stall-watch.sh, boot-cycle.sh, stall-hunt.sh
 ├── drafts/          drop-in files for the kernel tree (pmi8950.dtsi, ...)
 ├── upstream-refs/   android-mainline + prior-art sources the analysis uses
 ├── artifacts/       live DTB/DTS, bootlogs, device fact tarball, ssh helpers
 └── build-test/      standalone dtc harness that builds the tissot DTS
 ```
+
+The boot images and the stock boot backup are not in the repository: they are
+in `../ack-kgsl-artifacts`, next to it, with a README there that lists each
+one and its checksum. `porting/artifacts/snapshot60/` holds the per-run
+evidence, which is generated and git-ignored.
+
+## Building the port kernel
+
+The full procedure is `BUIL_TISSOT.md` at the repository root, and it is
+scripted:
+
+```sh
+cd /home/kurision/development/kernel/ack-kgsl
+bash porting/tools/build-kernel.sh runNNN     # an unused run number
+```
+
+The image is flashed to `boot_b`; the phone then comes back on the port
+kernel by itself after a power cycle, and a hung kernel is recovered by
+forcing the phone off and flashing the previous image from fastboot.
+
+Five things about the build are not what a kernel tree normally does, and
+each one has bitten this port:
+
+**The configuration comes from the previous image, not from the defconfig.**
+`arch/arm64/configs/defconfig` is dead code here. The build extracts the
+configuration from an archived image (`scripts/extract-ikconfig` reads the
+kernel straight out of a boot image) and runs `make rustavailable` before
+`olddefconfig`. A resync with the wrong toolchain turns Rust and ashmem off
+while the C kernel still builds, and the framework then loses
+`/dev/ashmem`. The symbols the port needs on top of the archived
+configuration — KernelSU-Next and the audio port — are forced explicitly,
+because the configuration is not the port's to edit.
+
+**The kernel is built from a staged source tree, not from the repository.**
+`../ack-staged-run239` is refreshed from the repository before every build
+and then verified against it, file by file. The staged tree is what the
+compiler reads, so a stale one silently produces a kernel that does not
+contain the repository's fixes. That is exactly how the capacitive
+navigation keys came to be missing from a flashed image while the volume
+keys worked: the keys were committed to the repository, and the staged tree
+was a day older than the commits. The same staleness kept the CAF fastrpc
+ioctl ABI out of the kernel, which is why the `adsprpcd` daemon crash-looped
+with `failed to send del client cmd`.
+
+**The /init is not Android's.** The boot image carries a diagnostic ramdisk
+whose init is `scripts/initramfs-diag/init.c`, rebuilt from source on every
+build so an image never carries a stale init binary. It hands PID 1 to the
+ROM's init and does five things around that handover:
+
+* **The bootdevice guard.** It binds a read-only protected fstab
+  (`/dev/block/ack-protected-fstab.qcom`), the vendor file contexts, the USB
+  controller property, the early-logcat rc and the display-gate rcs, and it
+  releases the canonical bootdevice alias and the legacy wait path — all
+  *before* the ROM's init opens its SELinux policy. That window is about
+  1.35 seconds wide. The guard failing means the ROM's init waits forever
+  for a boot device that nobody releases, and the phone comes up on a dim
+  lit screen with no adb and no USB at all. Do not delay the guard by
+  anything.
+* **The log capture.** It streams `/dev/kmsg` into the `logdump` partition
+  and into a USB serial gadget, and it keeps a bounded USB console. The
+  `logdump` partition is the reason a boot can be read back after the fact.
+* **The ramoops sampler.** A bounded trace of the DIAG signal and process
+  events into the ramoops area, so the last reset survives a hard hang.
+* **The firmware harvest.** It copies the modem's firmware out of the
+  running system (`a530_pm4.fw` and friends) so it can be staged into a
+  later image.
+* **The adsprpc compatibility.** Downstream `adsprpcd` opens
+  `/dev/adsprpc-smd`; upstream FastRPC registers `/dev/fastrpc-adsp`. The
+  init creates the downstream name as an alias of the upstream one.
+
+**The SELinux policy is the ROM's, and the port works with it rather than
+on it.** The effective policy is the ROM's precompiled policy, loaded by
+the ROM's init from its own file. The port's base image carries a patched
+`userdebug_plat_sepolicy.cil` and a `force_debuggable` trigger, and the
+port can append a CIL fragment to it — but the *effective* policy is still
+the ROM's, so a runtime policy rewrite is the only thing that would change
+it at run time, and that is what KernelSU-Next's `SET_SEPOLICY` supercall
+does. **On this kernel that supercall deadlocks: the first attempt froze
+the phone, and the manager's "allow an app root" flow does the same thing.**
+The manager's *adb root* feature is fine — it puts the adb shell in the
+`u:r:ksu:s0` domain as uid 0 without touching the policy, and that is the
+supported way to get root here. Use it; do not use the grant-root path.
+
+The other way the ROM's policy and the 6.12 kernel disagree is by label.
+The ROM's policy was written for the 4.19 CAF kernel, and the 6.12 kernel
+puts the per-device wakeup statistics where the policy does not expect
+them, so they land on the generic `sysfs` type and the suspend service is
+denied reading them: 460 denials a boot, a failed checkpoint commit, a
+reboot request, and a reboot that never finishes. The fix is a label, not
+a policy change — the policy already has the type the ROM expects
+(`sysfs_wakeup`) — so the port's init relabels those nodes and the kgsl's
+power attributes. The relabel has to happen in the initramdisk's own mount
+namespace, before the guard chroots into the ROM's root, where `/sys` is
+not the kernel's.
+
+**Root comes from KernelSU-Next, built into the kernel.**
+`drivers/kernelsu/` is the v3.4.2 tag vendored in, built in rather than
+loaded as a module because the port has no module autoload and the driver
+has to be there before the manager talks to it. The version is pinned on
+the make command line (`KSU_GIT_VERSION=3355 KSU_GIT_VERSION_VALID=1
+KSU_GIT_TAG=v3.4.2`) because the driver derives its version from its own
+commit count, which it can only do when it lives in a repository of its
+own; vendored here it would fall back to version 1, which no manager
+accepts. 33355 is the version in the v3.4.2 manager APK's name, and the
+certificate the driver requires is the one that release was signed with.
+
+**The images live outside the repository.** A boot image is tens of
+megabytes and the stock boot backup is the only copy of the phone's
+original boot partition, so both are in `../ack-kgsl-artifacts` with a
+README listing each one. The repository keeps the documentation and the
+tooling; the per-run evidence is generated, git-ignored and disposable.
 
 ## Reproduce the two verified claims
 
