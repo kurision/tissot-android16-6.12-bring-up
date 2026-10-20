@@ -601,7 +601,6 @@ int snd_soc_put_enum_double(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol);
 int snd_soc_info_multi_ext(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_info *uinfo);
-EXPORT_SYMBOL_GPL(snd_soc_info_multi_ext);
 int snd_soc_info_volsw(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_info *uinfo);
 int snd_soc_info_volsw_sx(struct snd_kcontrol *kcontrol,
