@@ -30,6 +30,9 @@
 #define trace_applptr(substream, prev, curr)
 #endif
 
+/* The number of characters an int needs, with the sign and the null. */
+#define STRING_LENGTH_OF_INT 12
+
 static int fill_silence_frames(struct snd_pcm_substream *substream,
 			       snd_pcm_uframes_t off, snd_pcm_uframes_t frames);
 
@@ -2663,6 +2666,7 @@ int snd_pcm_add_volume_ctls(struct snd_pcm *pcm, int stream,
 }
 EXPORT_SYMBOL(snd_pcm_add_volume_ctls);
 
+/**
  * snd_pcm_add_chmap_ctls - create channel-mapping control elements
  * @pcm: the assigned PCM instance
  * @stream: stream direction
