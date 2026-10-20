@@ -2454,7 +2454,7 @@ int msm_slim_5_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	int rc;
 	void *config;
 	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
-	struct snd_soc_component *component;
+	struct snd_soc_component *component = NULL;
 	struct snd_interval *rate =
 		hw_param_interval(params, SNDRV_PCM_HW_PARAM_RATE);
 	struct snd_interval *channels =
@@ -2463,10 +2463,21 @@ int msm_slim_5_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 					snd_soc_card_get_drvdata(rtd->card);
 
 	pr_debug("%s enter\n", __func__);
+	if (!codec_dai) {
+		pr_err("%s: no codec dai\n", __func__);
+		return -EINVAL;
+	}
+
 	if (!strcmp(dev_name(codec_dai->dev), "tavil_codec"))
 		component = snd_soc_rtdcom_lookup(rtd, "tavil_codec");
 	else if (!strcmp(dev_name(codec_dai->dev), "tasha_codec"))
 		component = snd_soc_rtdcom_lookup(rtd, "tasha_codec");
+
+	if (!component) {
+		pr_err("%s: no codec component for %s\n", __func__,
+		       dev_name(codec_dai->dev));
+		return -EINVAL;
+	}
 
 	rate->min = rate->max = 16000;
 	channels->min = channels->max = 1;

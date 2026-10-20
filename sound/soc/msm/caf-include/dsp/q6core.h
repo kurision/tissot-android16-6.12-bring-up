@@ -265,7 +265,7 @@ struct avcs_load_unload_modules_payload {
 	uint32_t num_modules;
 	/**< Number of modules being registered */
 
-	struct avcs_load_unload_modules_sec_payload load_unload_info[0];
+	struct avcs_load_unload_modules_sec_payload load_unload_info[];
 	/*
 	 * < Load/unload information for num_modules.
 	 * It will be of type avcs_load_unload_info_t[num_modules]
