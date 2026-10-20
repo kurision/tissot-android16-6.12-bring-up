@@ -34,3 +34,18 @@
 ;; directory's label and relabels the files only if this fragment did not
 ;; land, so an image packaged without it keeps working.
 (genfscon sysfs "/devices/platform/soc@0/1c00000.gpu/kgsl/kgsl-3d0" (u object_r sysfs_kgsl ((s0) (s0))))
+
+;; ---------------
+;; qrtr-ns on 6.12: the userspace QRTR name service binds its fixed
+;; name-service port.  qrtr_port_assign() in net/qrtr/af_qrtr.c requires CAP_NET_ADMIN
+;; for any port below QRTR_MIN_EPH_SOCKET (0x4000), and the qrtr domain is
+;; denied the capability even when the init service is granted it:
+;;
+;;   avc: denied { net_admin } for comm="qrtr-ns" capability=12
+;;        scontext=u:r:qrtr:s0 tcontext=u:r:qrtr:s0 tclass=capability
+;;        permissive=0
+;;
+;; The initramfs overlay adds NET_ADMIN to the vendor.qrtr-ns service
+;; definition (the ROM only grants NET_BIND_SERVICE), so both the init
+;; capability set and this policy allow are required.
+(allow qrtr self (capability (net_admin)))

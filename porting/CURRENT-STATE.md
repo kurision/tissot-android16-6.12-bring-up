@@ -262,6 +262,28 @@ The measurement, the disassembly of the shipped library and the errno
 argument are in
 [findings/2026-10-20-fastrpc-getinfo-measured.md](findings/2026-10-20-fastrpc-getinfo-measured.md).
 
+### 7. The vendor crash loops: qrtr-ns is fixed, camera is parked
+
+The health-check removal stops the `flags_health_check` exec reaction,
+not the services that trigger it.  The current boot still had
+`sys.init.updatable_crashing=1` and init restarting `vendor.qrtr-ns`,
+`vendor.per_mgr`, `vendor.per_proxy`, `qcamerasvr` and `vendor.dataqti`.
+
+`vendor.qrtr-ns` is a real fix: 6.12's `qrtr_port_assign()` requires
+`CAP_NET_ADMIN` for the userspace name-service port
+(`net/qrtr/af_qrtr.c:736`), while the ROM grants only `NET_BIND_SERVICE`
+(`/vendor/etc/init/hw/init.qcom.rc:409`), and the `qrtr` domain is
+denied the capability.  The initramfs overlay grants `NET_ADMIN` and
+the policy fragment adds the matching capability allow; the in-kernel
+QRTR NS keeps the control port.
+
+`vendor.per_mgr`/`vendor.per_proxy` and `qcamerasvr` are the camera
+peripheral-manager stack, out of scope for this pass, and are disabled
+rather than left crash-looping.  `vendor.dataqti` waits for the
+rmnet/MHI node that only appears once the modem data path is up; it is
+stopped until then.  The evidence and the verification plan are in
+[findings/qrtr-ns-and-crash-loops-20261020.md](findings/qrtr-ns-and-crash-loops-20261020.md).
+
 ## The repository
 
 * The repository holds the documentation and the tooling. The per-run

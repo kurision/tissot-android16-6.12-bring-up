@@ -1220,12 +1220,69 @@ static int filter_flags_health_check_rc(const char *text, size_t used,
 }
 
 /*
+ * Vendor services that crash-loop on this port.  qrtr-ns is a real fix:
+ * 6.12's qrtr_port_assign() requires CAP_NET_ADMIN for the name-service
+ * port, while the ROM grants only NET_BIND_SERVICE.  The camera stack is
+ * deliberately disabled: camera bring-up is not part of this pass.
+ * dataqti waits for the rmnet/MHI node that only exists once the modem
+ * data path is up, so keep it stopped instead of retrying it every second.
+ *
+ * These definitions live in flags_health_check.rc, which is parsed after
+ * the vendor init files, so the `override` services replace the vendor
+ * definitions before class_start.  The property actions catch a vendor HAL
+ * that starts one of the disabled services explicitly.
+ */
+static const char crashloop_rc[] =
+	"\n"
+	"# ack: 6.12 QRTR needs CAP_NET_ADMIN for the userspace name service.\n"
+	"service vendor.qrtr-ns /vendor/bin/qrtr-ns -f\n"
+	"    class core\n"
+	"    user vendor_qrtr\n"
+	"    group vendor_qrtr\n"
+	"    capabilities NET_BIND_SERVICE NET_ADMIN\n"
+	"    override\n"
+	"\n"
+	"# ack: camera stack is out of scope for this bring-up.\n"
+	"service vendor.per_mgr /vendor/bin/pm-service\n"
+	"    class core\n"
+	"    user system\n"
+	"    group system\n"
+	"    capabilities NET_BIND_SERVICE\n"
+	"    ioprio rt 4\n"
+	"    task_profiles ServiceCapacityLow\n"
+	"    disabled\n"
+	"    override\n"
+	"\n"
+	"service qcamerasvr /system/vendor/bin/mm-qcamera-daemon\n"
+	"    class main\n"
+	"    user camera\n"
+	"    group camera system inet input graphics\n"
+	"    task_profiles ServiceCapacityLow\n"
+	"    disabled\n"
+	"    override\n"
+	"\n"
+	"# ack: data DPM waits on the missing rmnet/MHI node.\n"
+	"on property:init.svc.vendor.dataqti=running\n"
+	"    stop vendor.dataqti\n"
+	"on property:init.svc.vendor.dataqti=restarting\n"
+	"    stop vendor.dataqti\n"
+	"\n"
+	"# ack: catch an explicit start from a vendor HAL too.\n"
+	"on property:init.svc.vendor.per_mgr=running\n"
+	"    stop vendor.per_mgr\n"
+	"on property:init.svc.vendor.per_proxy=running\n"
+	"    stop vendor.per_proxy\n"
+	"on property:init.svc.qcamerasvr=running\n"
+	"    stop qcamerasvr\n";
+
+/*
  * The ROM's flags_health_check.rc runs flags_health_check
  * UPDATABLE_CRASHING every time sys.init.updatable_crashing flips to 1.
  * Several vendor services crash-loop on this port for bring-up reasons
  * unrelated to the boot flag, so that action becomes a continuous exec loop.
  * Keep the BOOT_FAILURE check and the boot-count reset; drop only the
- * crashing action, in a read-only bind overlay installed before policy load.
+ * crashing action, and append the vendor overrides above, in a read-only
+ * bind overlay installed before policy load.
  */
 static void guard_flags_health_check(int proc, int log)
 {
@@ -1261,6 +1318,12 @@ static void guard_flags_health_check(int proc, int log)
 		error = -ret;
 		goto done;
 	}
+	if (filtered_len + sizeof(crashloop_rc) - 1 > sizeof(filtered)) {
+		error = E2BIG;
+		goto done;
+	}
+	memcpy(filtered + filtered_len, crashloop_rc, sizeof(crashloop_rc) - 1);
+	filtered_len += sizeof(crashloop_rc) - 1;
 	fd = memfd_create("ack-flags-health-check-rc", MFD_CLOEXEC);
 	if (fd < 0)
 		goto failed;
