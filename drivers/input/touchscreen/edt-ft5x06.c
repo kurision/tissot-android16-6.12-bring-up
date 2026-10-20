@@ -76,6 +76,9 @@
 
 #define EDT_DEFAULT_NUM_X		1024
 #define EDT_DEFAULT_NUM_Y		1024
+#define EDT_MAX_KEYS			4
+#define EDT_KEY_WINDOW			50	/* sensor cells around a key */
+
 
 #define M06_REG_CMD(factory) ((factory) ? 0xf3 : 0xfc)
 #define M06_REG_ADDR(factory, addr) ((factory) ? (addr) & 0x7f : (addr) & 0x3f)
@@ -144,6 +147,17 @@ struct edt_ft5x06_ts_data {
 	char fw_version[EDT_NAME_LEN];
 
 	struct edt_reg_addr reg_addr;
+	/*
+	 * Some panels carry capacitive keys on a sensor row below the visible
+	 * area. The controller reports them as ordinary touch coordinates, so
+	 * they are matched here and reported as key events, not as touches.
+	 */
+	int key_x[EDT_MAX_KEYS];
+	int key_y[EDT_MAX_KEYS];
+	u32 key_code[EDT_MAX_KEYS];
+	u8 num_keys;
+	u8 key_state;
+
 	enum edt_ver version;
 	unsigned int crc_errors;
 	unsigned int header_errors;
@@ -296,6 +310,36 @@ static const struct regmap_config edt_M06_i2c_regmap_config = {
 	.write = edt_M06_i2c_write,
 };
 
+/*
+ * Reports a touch inside one of the configured key windows as a key event
+ * and consumes it, so it never reaches the touch input device.
+ *
+ * Keys live outside the reported ABS range, so this has to run on the raw
+ * controller coordinates: clamping to touchscreen-size-y happens later.
+ */
+static bool edt_ft5x06_report_key(struct edt_ft5x06_ts_data *tsdata,
+				  int x, int y, int type)
+{
+	int i;
+
+	for (i = 0; i < tsdata->num_keys; i++) {
+		if (abs(x - tsdata->key_x[i]) > EDT_KEY_WINDOW ||
+		    abs(y - tsdata->key_y[i]) > EDT_KEY_WINDOW)
+			continue;
+
+		if (type == TOUCH_EVENT_DOWN && !(tsdata->key_state & (1u << i))) {
+			input_report_key(tsdata->input, tsdata->key_code[i], 1);
+			tsdata->key_state |= 1u << i;
+		} else if (type == TOUCH_EVENT_UP && (tsdata->key_state & (1u << i))) {
+			input_report_key(tsdata->input, tsdata->key_code[i], 0);
+			tsdata->key_state &= ~(1u << i);
+		}
+		return true;
+	}
+
+	return false;
+}
+
 static irqreturn_t edt_ft5x06_ts_isr(int irq, void *dev_id)
 {
 	struct edt_ft5x06_ts_data *tsdata = dev_id;
@@ -330,6 +374,10 @@ static irqreturn_t edt_ft5x06_ts_isr(int irq, void *dev_id)
 		/* The FT5x26 send the y coordinate first */
 		if (tsdata->version == EV_FT)
 			swap(x, y);
+
+		if (tsdata->num_keys &&
+		    edt_ft5x06_report_key(tsdata, x, y, type))
+			continue;
 
 		id = (buf[2] >> 4) & 0x0f;
 
@@ -1147,6 +1195,8 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	unsigned long irq_flags;
 	int error, attempt;
 	u32 report_rate;
+	u32 keys[EDT_MAX_KEYS * 3] = { };
+	int num_keys, i;
 
 	dev_dbg(&client->dev, "probing for EDT FT5x06 I2C\n");
 
@@ -1336,6 +1386,35 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 			     0, tsdata->num_y * 64 - 1, 0, 0);
 
 	touchscreen_parse_properties(input, true, &tsdata->prop);
+	/*
+	 * Capacitive keys sit on a sensor row below the panel, so they are
+	 * matched on the raw controller coordinates, before they get clamped
+	 * to the panel size. The property is a list of <x y code> triplets in
+	 * controller coordinates; without it no key is reported.
+	 */
+	num_keys = device_property_read_u32_array(&client->dev, "edt,keys",
+						  keys, ARRAY_SIZE(keys));
+	if (num_keys < 0) {
+		num_keys = 0;
+	} else if (num_keys % 3) {
+		dev_warn(&client->dev, "ignoring trailing edt,keys value\n");
+		num_keys -= num_keys % 3;
+	}
+
+	tsdata->num_keys = min_t(int, num_keys / 3, EDT_MAX_KEYS);
+	if (num_keys / 3 > EDT_MAX_KEYS)
+		dev_warn(&client->dev,
+			 "edt,keys lists %d keys, only the first %d are used\n",
+			 num_keys / 3, EDT_MAX_KEYS);
+
+	for (i = 0; i < tsdata->num_keys; i++) {
+		tsdata->key_x[i] = keys[i * 3];
+		tsdata->key_y[i] = keys[i * 3 + 1];
+		tsdata->key_code[i] = keys[i * 3 + 2];
+	}
+	if (tsdata->num_keys)
+		dev_info(&client->dev, "%d capacitive key(s) configured\n",
+			 tsdata->num_keys);
 
 	error = input_mt_init_slots(input, tsdata->max_support_points,
 				    INPUT_MT_DIRECT);
@@ -1385,6 +1464,9 @@ static int edt_ft5x06_ts_suspend(struct device *dev)
 	struct edt_ft5x06_ts_data *tsdata = i2c_get_clientdata(client);
 	struct gpio_desc *reset_gpio = tsdata->reset_gpio;
 	int ret;
+
+	/* A key held across suspend never reports its release. */
+	tsdata->key_state = 0;
 
 	if (device_may_wakeup(dev))
 		return 0;

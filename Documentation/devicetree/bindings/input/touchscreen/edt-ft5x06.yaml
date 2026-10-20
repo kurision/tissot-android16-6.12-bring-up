@@ -103,6 +103,20 @@ properties:
     minimum: 0
     maximum: 255
 
+  edt,keys:
+    description: >
+      Capacitive keys sitting on a sensor row outside the visible panel.
+      The controller reports them as ordinary touch coordinates, and the
+      driver turns each of them into a key event. Given as <x y code>
+      triplets in controller coordinates; without this property no key is
+      reported.
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    minItems: 3
+    maxItems: 12
+    items:
+      minimum: 0
+      maximum: 4095
+
   touchscreen-size-x: true
   touchscreen-size-y: true
   touchscreen-fuzz-x: true
@@ -133,6 +147,9 @@ examples:
         interrupts = <5 IRQ_TYPE_EDGE_FALLING>;
         reset-gpios = <&gpio2 6 GPIO_ACTIVE_LOW>;
         wake-gpios = <&gpio4 9 GPIO_ACTIVE_HIGH>;
+        touchscreen-size-x = <1080>;
+        touchscreen-size-y = <1920>;
+        edt,keys = <500 2040 172 200 2040 139 800 2040 158>;
       };
     };
 
