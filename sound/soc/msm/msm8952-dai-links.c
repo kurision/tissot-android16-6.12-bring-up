@@ -70,9 +70,12 @@ static struct snd_soc_dai_link msm8952_tasha_fe_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16393" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_SLIMBUS_4_TX,
 		.stream_name = "Slimbus4 Capture",
@@ -85,9 +88,12 @@ static struct snd_soc_dai_link msm8952_tasha_fe_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16388" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 
 		.name = "SLIMBUS_2 Hostless Playback",
 		.stream_name = "SLIMBUS_2 Hostless Playback",
@@ -99,9 +105,12 @@ static struct snd_soc_dai_link msm8952_tasha_fe_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16389" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 
 		.name = "SLIMBUS_2 Hostless Capture",
 		.stream_name = "SLIMBUS_2 Hostless Capture",
@@ -113,9 +122,12 @@ static struct snd_soc_dai_link msm8952_tasha_fe_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-slim" },
-			{ .dai_name = "msm-cpe-lsm" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-cpe-lsm"),
+		},
+		.num_platforms = 1,
 
 		.name = "CPE Listen service",
 		.stream_name = "CPE Listen Audio Service",
@@ -135,9 +147,12 @@ static struct snd_soc_dai_link msm8952_tasha_fe_dai[] = {
 		.stream_name = "SLIMBUS_6 Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "SLIMBUS6_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -155,9 +170,12 @@ static struct snd_soc_dai_link msm8952_tasha_fe_dai[] = {
 		.stream_name = "QCHAT",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "QCHAT" },
-			{ .dai_name = "msm-pcm-voice" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-voice"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
@@ -179,9 +197,12 @@ static struct snd_soc_dai_link msm8952_tasha_be_dai[] = {
 		.stream_name = "Slimbus Playback",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16384" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_0_RX,
@@ -196,9 +217,12 @@ static struct snd_soc_dai_link msm8952_tasha_be_dai[] = {
 		.stream_name = "Slimbus Capture",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16385" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_0_TX,
@@ -211,9 +235,12 @@ static struct snd_soc_dai_link msm8952_tasha_be_dai[] = {
 		.stream_name = "Slimbus1 Playback",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16386" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_1_RX,
@@ -227,9 +254,12 @@ static struct snd_soc_dai_link msm8952_tasha_be_dai[] = {
 		.stream_name = "Slimbus1 Capture",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16387" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_1_TX,
@@ -242,9 +272,12 @@ static struct snd_soc_dai_link msm8952_tasha_be_dai[] = {
 		.stream_name = "Slimbus3 Playback",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16390" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_3_RX,
@@ -258,9 +291,12 @@ static struct snd_soc_dai_link msm8952_tasha_be_dai[] = {
 		.stream_name = "Slimbus3 Capture",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16391" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_3_TX,
@@ -273,9 +309,12 @@ static struct snd_soc_dai_link msm8952_tasha_be_dai[] = {
 		.stream_name = "Slimbus4 Playback",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16392" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_4_RX,
@@ -289,9 +328,12 @@ static struct snd_soc_dai_link msm8952_tasha_be_dai[] = {
 		.stream_name = "Slimbus5 Playback",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16394" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_5_RX,
@@ -306,9 +348,12 @@ static struct snd_soc_dai_link msm8952_tasha_be_dai[] = {
 		.stream_name = "Slimbus5 Capture",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16395" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_5_TX,
@@ -321,9 +366,12 @@ static struct snd_soc_dai_link msm8952_tasha_be_dai[] = {
 		.stream_name = "Slimbus6 Playback",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.16396" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_6_RX,
@@ -341,9 +389,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "MultiMedia1",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia1" },
-			{ .dai_name = "msm-pcm-dsp.0" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-dsp.0"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "snd-soc-dummy-dai" },
@@ -362,9 +413,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "MultiMedia2",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia2" },
-			{ .dai_name = "msm-pcm-dsp.0" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-dsp.0"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
@@ -383,9 +437,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "CS-Voice",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "VoiceMMode1" },
-			{ .dai_name = "msm-pcm-voice" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-voice"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -404,9 +461,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "VoIP",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "VoIP" },
-			{ .dai_name = "msm-voip-dsp" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-voip-dsp"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
@@ -425,9 +485,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "ULL",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia3" },
-			{ .dai_name = "msm-pcm-dsp.2" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-dsp.2"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -446,9 +509,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "SLIMBUS_0 Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "SLIMBUS0_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -466,9 +532,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "INT_FM Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "INT_FM_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -484,9 +553,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 	{/* hw:x,7 */
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.241" },
-			{ .dai_name = "msm-pcm-afe" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-afe"),
+		},
+		.num_platforms = 1,
 
 		.name = "MSM AFE-PCM RX",
 		.stream_name = "AFE-PROXY RX",
@@ -496,9 +568,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 	{/* hw:x,8 */
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.240" },
-			{ .dai_name = "msm-pcm-afe" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-afe"),
+		},
+		.num_platforms = 1,
 
 		.name = "MSM AFE-PCM TX",
 		.stream_name = "AFE-PROXY TX",
@@ -509,9 +584,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Compress1",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia4" },
-			{ .dai_name = "msm-compress-dsp" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-compress-dsp"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -530,9 +608,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "AUXPCM Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "AUXPCM_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -550,9 +631,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "SLIMBUS_1 Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "SLIMBUS1_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -569,9 +653,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "MultiMedia5",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia5" },
-			{ .dai_name = "msm-pcm-dsp.1" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-dsp.1"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -590,9 +677,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Voice2",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "VoiceMMode1" },
-			{ .dai_name = "msm-pcm-voice" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-voice"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -611,9 +701,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "MultiMedia9",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia9" },
-			{ .dai_name = "msm-pcm-dsp.0" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-dsp.0"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -632,9 +725,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "VoLTE",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "VoiceMMode1" },
-			{ .dai_name = "msm-pcm-voice" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-voice"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -653,9 +749,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "VoWLAN",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "VoiceMMode1" },
-			{ .dai_name = "msm-pcm-voice" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-voice"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -673,9 +772,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "INT_HFP_BT Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "INT_HFP_BT_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -693,9 +795,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "MultiMedia6",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia6" },
-			{ .dai_name = "msm-pcm-loopback" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-loopback"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -715,9 +820,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Listen 1 Audio Service",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "LSM1" },
-			{ .dai_name = "msm-lsm-client" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-lsm-client"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -734,9 +842,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Listen 2 Audio Service",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "LSM2" },
-			{ .dai_name = "msm-lsm-client" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-lsm-client"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -753,9 +864,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Listen 3 Audio Service",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "LSM3" },
-			{ .dai_name = "msm-lsm-client" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-lsm-client"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -772,9 +886,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Listen 4 Audio Service",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "LSM4" },
-			{ .dai_name = "msm-lsm-client" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-lsm-client"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -791,9 +908,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Listen 5 Audio Service",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "LSM5" },
-			{ .dai_name = "msm-lsm-client" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-lsm-client"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -810,9 +930,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Compress2",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia7" },
-			{ .dai_name = "msm-compress-dsp" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-compress-dsp"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -830,9 +953,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "SLIMBUS_3 Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "SLIMBUS3_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -849,9 +975,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "SLIMBUS_4 Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "SLIMBUS4_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -868,9 +997,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "QUAT_MI2S Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "QUAT_MI2S_RX_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -887,9 +1019,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "MultiMedia10",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia10" },
-			{ .dai_name = "msm-pcm-dsp.1" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-dsp.1"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
@@ -908,9 +1043,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Compress4",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia11" },
-			{ .dai_name = "msm-compress-dsp" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-compress-dsp"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -928,9 +1066,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Compress5",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia12" },
-			{ .dai_name = "msm-compress-dsp" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-compress-dsp"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -948,9 +1089,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Compress6",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia13" },
-			{ .dai_name = "msm-compress-dsp" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-compress-dsp"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -968,9 +1112,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Compress7",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia14" },
-			{ .dai_name = "msm-compress-dsp" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-compress-dsp"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -988,9 +1135,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Compress8",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia15" },
-			{ .dai_name = "msm-compress-dsp" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-compress-dsp"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -1008,9 +1158,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Compress9",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia16" },
-			{ .dai_name = "msm-pcm-dsp-noirq" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-dsp-noirq"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -1028,9 +1181,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "VoiceMMode1",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "VoiceMMode1" },
-			{ .dai_name = "msm-pcm-voice" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-voice"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -1048,9 +1204,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "VoiceMMode2",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "VoiceMMode2" },
-			{ .dai_name = "msm-pcm-voice" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-voice"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.dpcm_playback = 1,
@@ -1068,9 +1227,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Compress10",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia17" },
-			{ .dai_name = "msm-compress-dsp" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-compress-dsp"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -1088,9 +1250,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Compress11",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia18" },
-			{ .dai_name = "msm-compress-dsp" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-compress-dsp"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -1108,9 +1273,12 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.stream_name = "Compress12",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "MultiMedia19" },
-			{ .dai_name = "msm-compress-dsp" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-compress-dsp"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -1132,9 +1300,12 @@ static struct snd_soc_dai_link msm8952_tdm_fe_dai[] = {
 		.stream_name = "Primary TDM RX 0 Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "PRI_TDM_RX_0_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -1150,9 +1321,12 @@ static struct snd_soc_dai_link msm8952_tdm_fe_dai[] = {
 		.stream_name = "Primary TDM TX 0 Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "PRI_TDM_TX_0_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -1168,9 +1342,12 @@ static struct snd_soc_dai_link msm8952_tdm_fe_dai[] = {
 		.stream_name = "Secondary TDM RX 0 Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "SEC_TDM_RX_0_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -1186,9 +1363,12 @@ static struct snd_soc_dai_link msm8952_tdm_fe_dai[] = {
 		.stream_name = "Secondary TDM TX 0 Hostless",
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "SEC_TDM_TX_0_HOSTLESS" },
-			{ .dai_name = "msm-pcm-hostless" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-hostless"),
+		},
+		.num_platforms = 1,
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
@@ -1206,9 +1386,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-mi2s.3" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_QUAT_MI2S_RX,
 		.stream_name = "Quaternary MI2S Playback",
@@ -1223,9 +1406,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-auxpcm.1" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_AUXPCM_RX,
 		.stream_name = "AUX PCM Playback",
@@ -1239,9 +1425,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-auxpcm.1" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_AUXPCM_TX,
 		.stream_name = "AUX PCM Capture",
@@ -1255,9 +1444,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-mi2s.3" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_QUAT_MI2S_TX,
 		.stream_name = "Quaternary MI2S Capture",
@@ -1271,9 +1463,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.12288" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_INT_BT_SCO_RX,
 		.stream_name = "Internal BT-SCO Playback",
@@ -1287,9 +1482,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.12289" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_INT_BT_SCO_TX,
 		.stream_name = "Internal BT-SCO Capture",
@@ -1302,9 +1500,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.12292" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_INT_FM_RX,
 		.stream_name = "Internal FM Playback",
@@ -1318,9 +1519,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.12293" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_INT_FM_TX,
 		.stream_name = "Internal FM Capture",
@@ -1333,9 +1537,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.224" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_AFE_PCM_RX,
 		.stream_name = "AFE Playback",
@@ -1349,9 +1556,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.225" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_AFE_PCM_TX,
 		.stream_name = "AFE Capture",
@@ -1365,9 +1575,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.32772" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_INCALL_RECORD_TX,
 		.stream_name = "Voice Uplink Capture",
@@ -1381,9 +1594,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.32771" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_INCALL_RECORD_RX,
 		.stream_name = "Voice Downlink Capture",
@@ -1397,9 +1613,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.32773" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_VOICE_PLAYBACK_TX,
 		.stream_name = "Voice Farend Playback",
@@ -1413,9 +1632,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.32770" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_VOICE2_PLAYBACK_TX,
 		.stream_name = "Voice2 Farend Playback",
@@ -1429,9 +1651,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-mi2s.5" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_QUIN_MI2S_TX,
 		.stream_name = "Quinary MI2S Capture",
@@ -1446,9 +1671,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.8195" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_PROXY_TX,
 		.stream_name = "Proxy Capture",
@@ -1461,9 +1689,12 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-dev.8194" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_PROXY_RX,
 		.stream_name = "Proxy Playback",
@@ -1478,9 +1709,12 @@ static struct snd_soc_dai_link msm8952_hdmi_dba_dai_link[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-mi2s.5" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_QUIN_MI2S_RX,
 		.stream_name = "Quinary MI2S Playback",
@@ -1497,9 +1731,12 @@ static struct snd_soc_dai_link msm8952_quin_dai_link[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-mi2s.5" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_QUIN_MI2S_RX,
 		.stream_name = "Quinary MI2S Playback",
@@ -1517,9 +1754,12 @@ static struct snd_soc_dai_link msm8952_tdm_be_dai_link[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-tdm.36864" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_PRI_TDM_RX_0,
 		.stream_name = "Primary TDM0 Playback",
@@ -1533,9 +1773,12 @@ static struct snd_soc_dai_link msm8952_tdm_be_dai_link[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-tdm.36865" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_PRI_TDM_TX_0,
 		.stream_name = "Primary TDM0 Capture",
@@ -1549,9 +1792,12 @@ static struct snd_soc_dai_link msm8952_tdm_be_dai_link[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-tdm.36880" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_SEC_TDM_RX_0,
 		.stream_name = "Secondary TDM0 Playback",
@@ -1565,9 +1811,12 @@ static struct snd_soc_dai_link msm8952_tdm_be_dai_link[] = {
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
 			{ .dai_name = "msm-dai-q6-tdm.36881" },
-			{ .dai_name = "msm-pcm-routing" },
 		},
-		.num_cpus = 2,
+		.num_cpus = 1,
+		.platforms = (struct snd_soc_dai_link_component[]){
+			COMP_PLATFORM("msm-pcm-routing"),
+		},
+		.num_platforms = 1,
 
 		.name = LPASS_BE_SEC_TDM_TX_0,
 		.stream_name = "Secondary TDM0 Capture",
