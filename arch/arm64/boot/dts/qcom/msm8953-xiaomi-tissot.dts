@@ -811,5 +811,16 @@
 	qcom,mac-address-from-serial;
 };
 
+/* The modem is present in the SoC DTSI but disabled: nothing in the port
+ * had brought MPSS up.  It has no separate vdd_mss regulator here because
+ * the driver uses the MSM8953_VDDMD power domain.  Its only regulator is
+ * the 1.8 V PLL rail, pm8953_l7, the same supply the stock 4.19 DTS names
+ * vdd_pll.  rproc->auto_boot is false in the driver, so enabling the node
+ * only creates the remoteproc; userspace still starts it explicitly. */
+&mpss {
+	status = "okay";
+	pll-supply = <&pm8953_l7>;
+};
+
 /* CPU/GPU overclock and undervolt tables, kept in a separate file. */
 #include "msm8953-xiaomi-tissot-oc.dtsi"
