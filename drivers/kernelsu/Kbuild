@@ -75,25 +75,28 @@ endif
 ccflags-y += -I$(srctree)/security/selinux -I$(srctree)/security/selinux/include
 ccflags-y += -I$(objtree)/security/selinux -include $(srctree)/include/uapi/asm-generic/errno.h
 
-ifneq ($(KBUILD_EXTMOD),)
-# 6.18 exports the external module source as srcroot when M/MO are used.
-ifneq ($(srcroot),)
-KSU_KERNEL_DIR := $(srcroot)
-else
-KSU_KERNEL_DIR := $(KBUILD_EXTMOD)
-endif
-else ifeq ($(filter /%,$(src)),)
-KSU_KERNEL_DIR := $(srctree)/$(src)
-else
-KSU_KERNEL_DIR := $(src)
-endif
+# The KernelSU sources are next to this Kbuild, and that is the only
+# thing the include path has to name.
+#
+# Upstream computes it as $(srctree)/$(src), which is wrong for a build
+# whose output directory is inside the source tree: there $(src) already
+# carries the source tree prefix, so the two are doubled and the headers
+# are not found at all ("klog.h file not found", "arch.h file not
+# found"). The same expression is only right when the source tree is
+# outside the output tree, where $(srctree) is an absolute path and
+# $(src) is relative to it.
+#
+# This Kbuild's own directory is the same answer in every case: an
+# in-tree build, a build with the output directory inside the tree, and
+# an external module build.
+LPATH := /usr/bin/env PATH="$$PATH":/usr/bin:/usr/local/bin
+MDIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+KSU_KERNEL_DIR := $(MDIR)
 
 ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include
 
 obj-$(CONFIG_KSU) += kernelsu.o
 
-LPATH := /usr/bin/env PATH="$$PATH":/usr/bin:/usr/local/bin
-MDIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 # Check if this is a git repository
 # Try to detect Git repo intelligently
