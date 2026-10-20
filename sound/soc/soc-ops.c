@@ -163,16 +163,6 @@ static int snd_soc_read_signed(struct snd_soc_component *component,
 }
 
 /**
- * snd_soc_info_volsw - single mixer info callback
- * @kcontrol: mixer control
- * @uinfo: control element information
- *
- * Callback to provide information about a single mixer control, or a double
- * mixer control that spans 2 registers.
- *
- * Returns 0 for success.
- */
-/**
  * snd_soc_info_multi_ext - external single mixer info callback
  * @kcontrol: mixer control
  * @uinfo: control element information
@@ -206,6 +196,16 @@ int snd_soc_info_multi_ext(struct snd_kcontrol *kcontrol,
 }
 EXPORT_SYMBOL_GPL(snd_soc_info_multi_ext);
 
+/**
+ * snd_soc_info_volsw - single mixer info callback
+ * @kcontrol: mixer control
+ * @uinfo: control element information
+ *
+ * Callback to provide information about a single mixer control, or a double
+ * mixer control that spans 2 registers.
+ *
+ * Returns 0 for success.
+ */
 int snd_soc_info_volsw(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_info *uinfo)
 {
