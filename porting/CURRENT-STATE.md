@@ -48,6 +48,7 @@ The adb root feature is fine; the allowlist path is not.
 | Root | Working | KernelSU-Next's adb root, `uid=0` / `u:r:ksu:s0` |
 | Log capture | Working | the `logdump` partition, the USB console, the ramoops sampler |
 | The checkpoint reboot loop | Fixed | the wakeup statistics are relabelled `sysfs_wakeup`; the `system_suspend` denials are 0 and the boot no longer asks for a reboot |
+| The `adsprpcd` CAF ioctl layer | In the kernel, one command missing | the port decodes CAF's ioctl numbering; on the phone the daemon now fails on exactly one command, `GETINFO`, whose handler is committed but not in the flashed image |
 | Wi-Fi, cellular, cameras, Bluetooth | Failing | see `FAILING-COMPONENTS.md`; unchanged by this session's work |
 
 ## What is open, and what is known about it
@@ -211,6 +212,33 @@ closed. The `run289` image carries both fixes: its device tree has
 `edt,keys`, and the device reports `KEY_MENU`, `KEY_BACK` and
 `KEY_HOMEPAGE` from the touch controller.
 
+### 6. The adsprpcd loop: the CAF ioctl layer is in, one command is missing
+
+The vendor `adsprpcd` speaks CAF's ioctl numbering, not upstream's, and the
+port's CAF translation layer is in the running kernel. The daemon still
+loops — 60 refusals a boot — but it now refuses **one** command:
+
+```
+qcom,fastrpc ...: ioctl nr 8, cmd 0xc0045208, 4-byte payload
+qcom,fastrpc ...: CAF ioctl 8 is not implemented
+```
+
+Number 8 is CAF's `GETINFO`: the channel id in, the session's SMMU flag
+out. The handler for it is committed (`a526ed9a1`), but the image on the
+phone — `run294`, built at 11:38 — predates that commit at 12:21, so the
+running kernel still refuses it.
+
+**The GETINFO handler is necessary and not sufficient.** The library issues
+that command and then asks for attribute 257 through CAF ioctl 17
+(`0xc00c5211`, twelve bytes, `{domain, attribute}` in and the value out at
+offset 8). The port recognises that command and refuses it. Its meaning
+exists in no CAF header in the donor, and the upstream driver rejects an
+attribute id that high, so it needs the Qualcomm release that introduced it.
+
+The measurement, the disassembly of the shipped library and the errno
+argument are in
+[findings/2026-10-20-fastrpc-getinfo-measured.md](findings/2026-10-20-fastrpc-getinfo-measured.md).
+
 ## The repository
 
 * The repository holds the documentation and the tooling. The per-run
@@ -237,13 +265,15 @@ closed. The `run289` image carries both fixes: its device tree has
 
 ## The order of the remaining work
 
-1. Rebuild with `CONFIG_ZRAM=y`, flash it to `boot_b`, and check on the
-   device: the navigation keys, no checkpoint reboot, no `adsprpcd`
-   crash loop, and `/sys/block/zram0` present.
-2. Write the sound card's device tree from the donor's `audio.dtsi` and
+1. Rebuild with `CONFIG_ZRAM=y` and the CAF `GETINFO` handler, flash it to
+   `boot_b`, and check on the device: the navigation keys, no checkpoint
+   reboot, `/sys/block/zram0` present, and the `adsprpcd` message that
+   replaces the `GETINFO` refusal.
+2. Implement CAF ioctl 17, the attribute query the library makes next. It
+   needs the meaning of attribute 257, which no CAF header in the donor
+   documents.
+3. Write the sound card's device tree from the donor's `audio.dtsi` and
    make sound work.
-3. Catch a GPU stall with the watcher and read the ME_INIT spin.
-4. Add the CPU thermal path: TSENS in the built configuration, and
+4. Catch a GPU stall with the watcher and read the ME_INIT spin.
+5. Add the CPU thermal path: TSENS in the built configuration, and
    `#cooling-cells` on the CPU nodes.
-5. Relabel the wakeup statistics from a separate process in the initramdisk
-   and end the checkpoint reboot.

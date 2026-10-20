@@ -211,6 +211,18 @@ aarch64-linux-gnu-gcc -Os -static -DANDROID_CAPTURE -DANDROID_EARLY_LOGCAT \
   -o porting/artifacts/snapshot60/init-<run>
 ```
 
+**Two things about the KernelSU driver are not upstream's.** The vendored
+`drivers/kernelsu/` is the v3.4.2 tag, with one change to its `Kbuild`: it
+computes the include path for its own sources from its own directory,
+because upstream's `$(srctree)/$(src)` is wrong for a build whose output
+directory is inside the source tree — there `$(src)` already carries the
+source tree prefix, and the headers are not found at all. And the build
+script builds the kernel's `security/selinux/` directory before the driver,
+because the driver includes the SELinux headers and those include the
+generated `flask.h`, which that directory generates; the driver's objects
+have no dependency on it, so in a parallel build they would be compiled
+before the header exists.
+
 ## Packaging and verification
 
 The base image's ramdisk and command line, this kernel and this init are
