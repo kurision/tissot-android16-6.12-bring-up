@@ -630,6 +630,8 @@ static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
 #define RAMOOPS_SNAP_SLOT_STRIDE	(PAGE_SIZE + SZ_1M)
 #define RAMOOPS_SNAP_SLOTS		2
 #define RAMOOPS_SNAP_INTERVAL_MS	2000
+/* Legacy bring-up polling is off; panic and orderly-reset capture stay live. */
+#define RAMOOPS_PERIODIC_SNAPSHOTS	0
 /*
  * run225: once the first KGSL stage record lands, shorten the cadence so the
  * last sample falls inside the pre-reset blind window (~150 ms wide). The
@@ -1234,6 +1236,7 @@ static void ramoops_process_trace_stop(struct ramoops_snapper *s)
 static int ramoops_snap_thread(void *unused)
 {
 	struct ramoops_snapper *s = &ramoops_snapper;
+	unsigned long timeout = msecs_to_jiffies(RAMOOPS_SNAP_INTERVAL_MS);
 	int ret;
 	bool previous_attempted = false;
 	(void)unused;
@@ -1262,6 +1265,19 @@ static int ramoops_snap_thread(void *unused)
 			previous_attempted = true;
 			pr_info("DIAG: previous reset page commit ret=%d offset=%llu\n",
 				ret, RAMOOPS_PATH_OFFSET);
+		}
+
+		/*
+		 * Without periodic sampling, only an explicit panic completion may
+		 * request a snapshot. Keep the bounded wait so kthread_stop() still
+		 * drains this worker without depending on another completion. A failed
+		 * explicit capture keeps its existing bounded retry budget.
+		 */
+		if (!RAMOOPS_PERIODIC_SNAPSHOTS && !s->failures) {
+			ret = wait_for_completion_interruptible_timeout(&s->wake,
+									timeout);
+			if (ret <= 0 || kthread_should_stop())
+				continue;
 		}
 
 		ret = ramoops_snap_take(s);
@@ -1303,7 +1319,8 @@ static int ramoops_snap_thread(void *unused)
 		 * liveness witness this port relies on, at about one line
 		 * per boot.
 		 */
-		if (ramoops_reset_capture && !(s->seq % 100))
+		if (RAMOOPS_PERIODIC_SNAPSHOTS && ramoops_reset_capture &&
+		    !(s->seq % 100))
 			pr_info("DIAG: snapshot heartbeat seq=%llu uptime_ns=%llu\n",
 				s->seq, ktime_get_ns());
 		/*
@@ -1319,12 +1336,18 @@ static int ramoops_snap_thread(void *unused)
 		 * is a handful of MMIO reads and is non-blocking, so run226
 		 * samples it on every fast tick instead.
 		 */
-		if (smp_load_acquire(&ramoops_snap_fast))
-			ramoops_debug_apps_wdt();
-		wait_for_completion_interruptible_timeout(
-			&s->wake,
-			msecs_to_jiffies(smp_load_acquire(&ramoops_snap_fast) ?
-				RAMOOPS_SNAP_FAST_MS : RAMOOPS_SNAP_INTERVAL_MS));
+		if (RAMOOPS_PERIODIC_SNAPSHOTS) {
+			bool fast;
+
+			/* Pairs with the stage writer's release of the fast flag. */
+			fast = smp_load_acquire(&ramoops_snap_fast);
+			if (fast)
+				ramoops_debug_apps_wdt();
+			timeout = msecs_to_jiffies(fast ? RAMOOPS_SNAP_FAST_MS :
+						RAMOOPS_SNAP_INTERVAL_MS);
+			wait_for_completion_interruptible_timeout(&s->wake,
+								  timeout);
+		}
 	}
 	return 0;
 }
@@ -1554,11 +1577,18 @@ out:
 	 * cadence and cut short the wait that is already in progress, so the
 	 * sample immediately after the GPU start is taken at once.
 	 */
-	if (!smp_load_acquire(&ramoops_snap_fast)) {
-		smp_store_release(&ramoops_snap_fast, true);
-		pr_info("DIAG: snapshot cadence -> %u ms (stage activity)\n",
-			RAMOOPS_SNAP_FAST_MS);
-		complete(&ramoops_snapper.wake);
+	if (RAMOOPS_PERIODIC_SNAPSHOTS) {
+		bool fast;
+
+		/* Match the release below before enabling the fast cadence. */
+		fast = smp_load_acquire(&ramoops_snap_fast);
+		if (!fast) {
+			/* Publish the fast cadence before waking the snapshotter. */
+			smp_store_release(&ramoops_snap_fast, true);
+			pr_info("DIAG: snapshot cadence -> %u ms (stage activity)\n",
+				RAMOOPS_SNAP_FAST_MS);
+			complete(&ramoops_snapper.wake);
+		}
 	}
 
 	return err;

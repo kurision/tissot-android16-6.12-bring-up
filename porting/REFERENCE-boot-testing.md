@@ -10,6 +10,16 @@
 > git-ignored and disposable, and the boot images are in
 > ../ack-kgsl-artifacts.
 
+## GPU/CPU bring-up diagnostics disabled (2026-10-20; not boot-tested)
+
+At the user's request, legacy GPU success-path logging and ZAP stage records
+are compiled out. `RAMOOPS_PERIODIC_SNAPSHOTS=0` in `fs/pstore/ram.c` disables
+the continuous console/printk-tail snapshots and their fast-cadence trigger.
+Standard pstore, the explicit panic snapshot, orderly-reset capture and the
+ramdisk's primary kernel-log recorder remain enabled. Without periodic writes,
+old snapshot slots may still validate: do not attribute them to a new failed
+boot without fresh provenance. Pre-hang periodic samples are no longer promised.
+
 Status as of 2026-10-10 (run2/run3/run4 of snapshot60). Written after the
 kgsl port's first two failed diag boots produced **zero** kernel logs while
 the identical flow on the last known-good kernel worked. Every claim below
@@ -295,4 +305,3 @@ Full layout and next-image instructions are in `logging/README.md`,
 user's rebuilt kernel/DTB: a controlled deadline reboot persisted ACKRESET1
 and four CRC-valid raw/printk slots, recovered after stock returned.
 See `TRACKER-kgsl-port.md`, "Run107". This is not a panic/watchdog verdict.
-
