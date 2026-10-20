@@ -2339,8 +2339,20 @@ struct caf_ioctl_dsp_capabilities {
 	__u32 dsp_attributes[CAF_MAX_DSP_ATTRIBUTES];
 };
 
-/* Numbers 17 to 21 exist in the shipped library but in no CAF header here. */
-struct caf_ioctl_unknown_17 { __u8 payload[12]; };
+/*
+ * CAF's GET_DSP_INFO in the 2022 and later headers: one attribute, the
+ * domain, the attribute id, and the capability the kernel answers with.
+ * Twelve bytes, and the same three fields the upstream struct starts
+ * with, but the upstream one is twenty bytes long and so encodes a
+ * different command.
+ */
+struct caf_ioctl_capability {
+	__u32 domain;
+	__u32 attribute_id;
+	__u32 capability;
+};
+
+/* Numbers 18 to 21 exist in the shipped library but in no CAF header here. */
 struct caf_ioctl_unknown_18 { __u8 payload[24]; };
 struct caf_ioctl_unknown_19 { __u8 payload[64]; };
 struct caf_ioctl_unknown_20 { __u8 payload[48]; };
@@ -2360,8 +2372,9 @@ struct caf_ioctl_unknown_21 { __u8 payload[56]; };
 #define CAF_IOCTL_MUNMAP_FD	_IOWR('R', 13, struct caf_ioctl_munmap_fd)
 #define CAF_IOCTL_MMAP_64	_IOWR('R', 14, struct caf_ioctl_mmap)
 #define CAF_IOCTL_MUNMAP_64	_IOWR('R', 15, struct caf_ioctl_munmap)
-#define CAF_IOCTL_GET_DSP_INFO	_IOWR('R', 16, struct caf_ioctl_dsp_capabilities)
-#define CAF_IOCTL_UNKNOWN_17	_IOWR('R', 17, struct caf_ioctl_unknown_17)
+#define CAF_IOCTL_GET_DSP_CAPABILITIES \
+	_IOWR('R', 16, struct caf_ioctl_dsp_capabilities)
+#define CAF_IOCTL_GET_DSP_INFO	_IOWR('R', 17, struct caf_ioctl_capability)
 #define CAF_IOCTL_UNKNOWN_18	_IOWR('R', 18, struct caf_ioctl_unknown_18)
 #define CAF_IOCTL_UNKNOWN_19	_IOWR('R', 19, struct caf_ioctl_unknown_19)
 #define CAF_IOCTL_UNKNOWN_20	_IOWR('R', 20, struct caf_ioctl_unknown_20)
@@ -2384,13 +2397,24 @@ static_assert(CAF_IOCTL_INVOKE_CRC == 0xc028520b,
 	      "CAF INVOKE_CRC ABI mismatch");
 static_assert(CAF_IOCTL_MUNMAP_FD == 0xc018520d,
 	      "CAF MUNMAP_FD ABI mismatch");
-static_assert(CAF_IOCTL_GET_DSP_INFO == 0xc0205210,
+static_assert(CAF_IOCTL_GET_DSP_CAPABILITIES == 0xc0205210,
+	      "CAF GET_DSP_CAPABILITIES ABI mismatch");
+static_assert(CAF_IOCTL_GET_DSP_INFO == 0xc00c5211,
 	      "CAF GET_DSP_INFO ABI mismatch");
-static_assert(CAF_IOCTL_UNKNOWN_17 == 0xc00c5211, "CAF ioctl 17 ABI mismatch");
 static_assert(CAF_IOCTL_UNKNOWN_18 == 0xc0185212, "CAF ioctl 18 ABI mismatch");
 static_assert(CAF_IOCTL_UNKNOWN_19 == 0xc0405213, "CAF ioctl 19 ABI mismatch");
 static_assert(CAF_IOCTL_UNKNOWN_20 == 0xc0305214, "CAF ioctl 20 ABI mismatch");
 static_assert(CAF_IOCTL_UNKNOWN_21 == 0xc0385215, "CAF ioctl 21 ABI mismatch");
+
+/*
+ * CAF's attribute ids. The ids below the DSP's own array are the DSP's
+ * attributes; the ids above it are the kernel's own capabilities, which
+ * CAF answers from a table rather than from the DSP.
+ */
+#define CAF_ATTR_PERF_CAPABILITY	256
+#define CAF_ATTR_KERNEL_ERROR_CODE_V1	257
+#define CAF_ATTR_USERSPACE_ALLOCATION	258
+#define CAF_ATTR_DSPSIGNAL		259
 
 /* adsprpc_shared.h; the values select between attach, create and static. */
 #define CAF_INIT_ATTACH		0
@@ -2611,6 +2635,85 @@ static int fastrpc_caf_get_dsp_info(struct fastrpc_user *fl, char __user *argp)
 }
 
 /*
+ * CAF's GET_DSP_INFO, number 17: one attribute, the domain, the
+ * attribute id, and the capability the kernel answers with.
+ */
+static int fastrpc_caf_get_dsp_capability(struct fastrpc_user *fl, char __user *argp)
+{
+	struct caf_ioctl_capability caf;
+	struct fastrpc_ioctl_capability cap;
+	int err;
+
+	if (copy_from_user(&caf, argp, sizeof(caf)))
+		return -EFAULT;
+
+	switch (caf.attribute_id) {
+	case CAF_ATTR_PERF_CAPABILITY:
+		/*
+		 * CAF's value is a bit mask, and the client compares it with
+		 * two: CAF's second generation of the perf counters. This
+		 * driver has upstream's perf counters, and answering two
+		 * would send the client down an invoke path this driver
+		 * does not have. Not supported.
+		 */
+		caf.capability = 0;
+		break;
+	case CAF_ATTR_KERNEL_ERROR_CODE_V1:
+		/*
+		 * Whether the errors the DSP returns are the second
+		 * generation ones. This driver does not translate them:
+		 * the invoke returns the DSP's own value, here and in the
+		 * donor, so what the client sees is the DSP's error. The
+		 * DSP is the ROM's own firmware, and the ROM's own driver
+		 * answers one for it, so the client is told the same thing
+		 * it is told on the ROM it ships with.
+		 */
+		caf.capability = 1;
+		break;
+	case CAF_ATTR_USERSPACE_ALLOCATION:
+		/*
+		 * The userspace allocates the memory the DSP asks for. This
+		 * driver has FASTRPC_IOCTL_ALLOC_DMA_BUFF for that, and its
+		 * CAF control answers kalloc_support with one.
+		 */
+		caf.capability = 1;
+		break;
+	case CAF_ATTR_DSPSIGNAL:
+		/*
+		 * CAF's lightweight driver based signalling, the dspsignal
+		 * ioctls 23 to 27. This driver does not have them.
+		 */
+		caf.capability = 0;
+		break;
+	default:
+		if (caf.attribute_id >= FASTRPC_MAX_DSP_ATTRIBUTES) {
+			/*
+			 * An id the DSP's array does not reach, and not one
+			 * of the kernel's own: CAF refuses it with EOVERFLOW.
+			 */
+			return -EOVERFLOW;
+		}
+		/*
+		 * One of the DSP's own attributes: the same query the
+		 * upstream ioctl makes.
+		 */
+		memset(&cap, 0, sizeof(cap));
+		cap.domain = caf.domain;
+		cap.attribute_id = caf.attribute_id;
+		err = fastrpc_get_dsp_info(fl, cap);
+		if (err)
+			return err;
+		caf.capability = cap.capability;
+		break;
+	}
+
+	if (copy_to_user(argp, &caf, sizeof(caf)))
+		return -EFAULT;
+
+	return 0;
+}
+
+/*
  * Returns 0 with *matched cleared when cmd is not a CAF command, so the caller
  * is left to this driver's own numbering.
  */
@@ -2637,9 +2740,12 @@ static int fastrpc_caf_ioctl(struct fastrpc_user *fl, unsigned int cmd,
 	case CAF_IOCTL_INIT_ATTRS:
 		*matched = true;
 		return fastrpc_caf_init_attrs(fl, argp);
-	case CAF_IOCTL_GET_DSP_INFO:
+	case CAF_IOCTL_GET_DSP_CAPABILITIES:
 		*matched = true;
 		return fastrpc_caf_get_dsp_info(fl, argp);
+	case CAF_IOCTL_GET_DSP_INFO:
+		*matched = true;
+		return fastrpc_caf_get_dsp_capability(fl, argp);
 	case CAF_IOCTL_GETINFO:
 		*matched = true;
 		return fastrpc_caf_getinfo(fl, argp);
@@ -2649,7 +2755,6 @@ static int fastrpc_caf_ioctl(struct fastrpc_user *fl, unsigned int cmd,
 	case CAF_IOCTL_GETPERF:
 	case CAF_IOCTL_INVOKE_CRC:
 	case CAF_IOCTL_MUNMAP_FD:
-	case CAF_IOCTL_UNKNOWN_17:
 	case CAF_IOCTL_UNKNOWN_18:
 	case CAF_IOCTL_UNKNOWN_19:
 	case CAF_IOCTL_UNKNOWN_20:

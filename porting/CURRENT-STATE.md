@@ -238,9 +238,7 @@ offset 8). The port recognises that command and refuses it.
 the domain, the attribute id, and the capability the kernel answers with.
 The ids below 256 are the DSP's own attributes; the ids above it are the
 kernel's own capabilities, and 257 is "the driver has the second
-generation of the error codes". The implementation is staged, not in the
-tree, so that the next boot tests the `GETINFO` fix alone:
-`porting/staged/fastrpc-ioctl17-get-dsp-info.patch`.
+generation of the error codes". The implementation is in the tree.
 
 The measurement, the disassembly of the shipped library and the errno
 argument are in
@@ -276,10 +274,9 @@ argument are in
    `boot_b`, and check on the device: the navigation keys, no checkpoint
    reboot, `/sys/block/zram0` present, and the `adsprpcd` message that
    replaces the `GETINFO` refusal.
-2. Apply the staged CAF ioctl 17 implementation
-   (`porting/staged/fastrpc-ioctl17-get-dsp-info.patch`) once the
-   `GETINFO` fix has been seen on the device, and check that the library
-   stops asking for attributes.
+2. Read the next boot's `adsprpcd` result: with `GETINFO` and ioctl 17
+   both answered, the library should stop asking, and whatever it asks
+   for next will be named in the kernel log.
 3. Write the sound card's device tree from the donor's `audio.dtsi` and
    make sound work.
 4. Catch a GPU stall with the watcher and read the ME_INIT spin.
