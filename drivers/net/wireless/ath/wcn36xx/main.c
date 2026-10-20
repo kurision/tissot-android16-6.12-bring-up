@@ -1561,6 +1561,7 @@ static int wcn36xx_probe(struct platform_device *pdev)
 	void *wcnss;
 	int ret;
 	const u8 *addr;
+	u8 mac[ETH_ALEN];
 	int n_channels;
 
 	wcn36xx_dbg(WCN36XX_DBG_MAC, "platform probe\n");
@@ -1627,6 +1628,14 @@ static int wcn36xx_probe(struct platform_device *pdev)
 	} else if (addr) {
 		wcn36xx_info("mac address: %pM\n", addr);
 		SET_IEEE80211_PERM_ADDR(wcn->hw, addr);
+	} else if (of_property_read_bool(pdev->dev.of_node,
+					 "qcom,mac-address-from-serial")) {
+		if (wcn36xx_compat_mac_from_serial(mac)) {
+			wcn36xx_info("mac address from serial: %pM\n", mac);
+			SET_IEEE80211_PERM_ADDR(wcn->hw, mac);
+		} else {
+			wcn36xx_warn("no serial number for MAC fallback\n");
+		}
 	}
 
 	ret = wcn36xx_platform_get_resources(wcn, pdev);

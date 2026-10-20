@@ -48,6 +48,9 @@
 #
 #   ACK_TISSOT_BASE_IMAGE  the base boot image (also the second argument)
 #   ACK_SNAPSHOT_DIR       where the per-run evidence goes
+#   ACK_WCNSS_FIRMWARE_DIR the staged wcnss.* + WCNSS_qcom_wlan_nv.bin
+#                          tree (default: porting/artifacts/firmware-wcnss;
+#                          populate it with pull-wcnss-firmware.sh)
 #   RUST_TOOLCHAIN         the rustup toolchain directory
 #   RUSTC, HOSTRUSTC       the Rust compiler and the host compiler
 #   BINDGEN                the bindgen binary
@@ -266,10 +269,23 @@ cat "$BOOT/Image.gz" "$BOOT/dts/qcom/msm8953-xiaomi-tissot.dtb" > "$BOOT/Image.g
 	-o "$SNAP/init-$RUN"
 
 # --- the packaging ----------------------------------------------------------
+# WCNSS firmware is requested by the remoteproc before the vendor partition
+# is mounted, so it has to come from the ramdisk.  The directory is optional:
+# without it the image still boots, with WLAN stuck at the old -2 load error.
+FW_DIR=${ACK_WCNSS_FIRMWARE_DIR:-$REPO/porting/artifacts/firmware-wcnss}
+fw_args=()
+if [ -d "$FW_DIR" ]; then
+	test -f "$FW_DIR/wcnss.mdt" || {
+		echo "error: $FW_DIR exists but has no wcnss.mdt" >&2; exit 1; }
+	fw_args=(--firmware-dir "$FW_DIR")
+else
+	echo "warning: no WCNSS firmware in $FW_DIR; WLAN will not load" >&2
+fi
 sha256sum "$BASE_IMAGE" > "$SNAP/$RUN-base.sha256"
 python3 -B porting/logging/package-diag-boot.py --base-image "$BASE_IMAGE" \
  --kernel-dir "$SNAP/kdir-$RUN" --stage-kernel "$BOOT" --init "$SNAP/init-$RUN" \
  --keep-stock-console --policy-append "$REPO/porting/policy/port-genfs-kgsl.cil" \
+ "${fw_args[@]}" \
  --out "$SNAP/boot-$RUN.img" --report "$SNAP/package-$RUN.json"
 scripts/extract-ikconfig "$SNAP/kdir-$RUN/Image.gz" > "$SNAP/$RUN-embedded.config"
 

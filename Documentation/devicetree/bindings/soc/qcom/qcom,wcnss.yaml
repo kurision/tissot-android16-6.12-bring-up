@@ -81,6 +81,14 @@ properties:
         description:
           Names of SMEM states.
 
+      qcom,mac-address-from-serial:
+        type: boolean
+        description:
+          Derive a locally administered MAC address (the 02:00 prefix,
+          followed by the first four bytes of the device serial number)
+          when local-mac-address is not present. Intended for boards
+          whose bootloader does not fill local-mac-address.
+
     required:
       - compatible
       - interrupts

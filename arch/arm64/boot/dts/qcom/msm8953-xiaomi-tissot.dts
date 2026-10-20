@@ -802,3 +802,10 @@
 
 	status = "okay";
 };
+
+/* The stock aboot DTB has no local-mac-address, and this port boots with
+ * aboot rather than lk2nd (which synthesizes one from the serial).  Ask the
+ * driver for the same 02:00:<serial[0:7]> address lk2nd would provide. */
+&wcnss_wifi {
+	qcom,mac-address-from-serial;
+};

@@ -6,6 +6,7 @@ wcn36xx-y +=   main.o \
                smd.o \
                pmc.o \
                debug.o \
-               firmware.o
+               firmware.o \
+               wlan-compat.o
 
 wcn36xx-$(CONFIG_NL80211_TESTMODE) += testmode.o

@@ -188,6 +188,9 @@ sphinx_*/
 porting/artifacts/*.img
 porting/artifacts/snapshot*/*.img
 porting/artifacts/**/*.img
+# WCNSS firmware and device NV calibration pulled from the device by
+# porting/tools/pull-wcnss-firmware.sh; not redistributable.
+porting/artifacts/firmware-wcnss/
 porting/artifacts/**/*.gz-dtb
 porting/artifacts/**/kdir-*/
 porting/artifacts/snapshot*/*.gz
