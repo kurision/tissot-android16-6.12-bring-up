@@ -47,7 +47,7 @@ The adb root feature is fine; the allowlist path is not.
 | Hall sensor | Working | `SW_LID` on the gpio-keys device |
 | Root | Working | KernelSU-Next's adb root, `uid=0` / `u:r:ksu:s0` |
 | Log capture | Working | the `logdump` partition, the USB console, the ramoops sampler |
-| The checkpoint reboot loop | Fixed | the wakeup statistics are relabelled `sysfs_wakeup`; the `system_suspend` denials are 0 and the boot no longer asks for a reboot |
+| The checkpoint reboot loop | Fix committed, not in an image yet | the wakeup statistics are relabelled `sysfs_wakeup` by the initramdisk's relabel, which had no `/sys` to walk and so never labelled anything; the fix mounts one |
 | The `adsprpcd` CAF ioctl layer | In the kernel, one command missing | the port decodes CAF's ioctl numbering; on the phone the daemon now fails on exactly one command, `GETINFO`, whose handler is committed but not in the flashed image |
 | Wi-Fi, cellular, cameras, Bluetooth | Failing | see `FAILING-COMPONENTS.md`; unchanged by this session's work |
 
@@ -132,7 +132,7 @@ driver: `system_server` asked for a reboot, Android's init shut its services
 down, the kernel was told to terminate all tasks, and the reboot never
 reached the reset.
 
-The reason was in the same logdump: **460 SELinux denials** for the
+The reason was in the same logdump: **SELinux denials** for the
 `system_suspend` domain reading the wakeup statistics. The ROM's policy was
 written for the 4.19 CAF kernel, where the statistics lived under
 `/sys/devices/virtual/wakeup`; the 6.12 kernel puts them per device, so
@@ -143,36 +143,48 @@ reboot it cannot finish.
 **The fix is a label, not a policy change.** The ROM's policy already has
 the type it expects for them (`sysfs_wakeup`), and the port's own base
 policy has the matching `genfscon`. Relabelling the nodes by hand, live,
-made the denials stop, and the boot that followed had no "Checkpoint commit
-failed" and no reboot request.
+made the denials stop: 230 → 0 on the running phone.
 
-Two constraints on doing it in the initramdisk, both learned the hard way:
+**But the relabel in the initramdisk never did it.** The log said
+`ret=-1` and the nodes stayed on the generic type, because the relabel
+child is forked in the initramdisk's own mount namespace and that
+namespace has no `/sys` at all — the kernel mounts nothing there, and the
+ROM mounts its own in the ROM's own namespace. The walk found nothing.
+The child now mounts the kernel's sysfs for itself, and the log says how
+many labels it set.
 
-* The relabel must run in the **initramdisk's own mount namespace**, before
-  the guard chroots into the ROM's root, where `/sys` is not the kernel's.
-  In `run282` the relabel ran after the chroot and reported `ret=-1`: the
-  walk could not open its directory, and the labels never changed.
+The same fault cost the GPU its power control: the kgsl's `max_pwrlevel`,
+`min_pwrlevel`, `force_rail_on` and `force_clk_on` are on the generic type
+as well, so the writes that set the GPU's power level are denied
+(`NodeLooperThread` in the avc records), and the GPU stays at its lowest
+rate.
+
+**Where it stands:** the fix is committed (`9a58f8fbb`) and is in no image
+yet. The hand relabel of two wakeup directories on the running phone
+dropped the `system_suspend` denials from 230 to 0, which is the mechanism
+working; what the next boot has to show is the initramdisk's own relabel
+doing the same thing for all of them.
+
+The two constraints on doing it in the initramdisk are still the ones that
+were learned the hard way, and both are kept:
+
+* The relabel must not run in the ROM's mount namespace before the ROM has
+  mounted its `/sys`. It runs in the initramdisk's own namespace, and
+  mounts the kernel's sysfs there itself.
 * It must **not delay the bootdevice guard**. `run283` put the relabel in
   front of the guard and the phone came up on a dim lit screen with no adb
   and no USB. The guard has to install the read-only fstab and the vendor
   contexts *before* the ROM's init opens its SELinux policy, and the window
   between the two is about **1.35 seconds**. The guard losing that race
   means the ROM's init waits forever for a boot device that nobody
-  releases. The fix is a separate process that relabels in parallel with
-  the guard, not a delay in front of it.
+  releases. The relabel is a sibling process that waits for the guard on a
+  pipe, so the guard is never delayed.
 
-**Where it stands: 47 of 47 wakeup nodes are `u:object_r:sysfs_wakeup:s0`**
-and the kgsl's power attributes are `sysfs_gpu:s0`. The `system_suspend`
-denials went 367 → 6 → 0, no "Checkpoint commit failed" is logged, and
-`run289` stayed up for more than 160 s with no reboot request. The
-initramfs forks the relabel as a sibling process and waits for the guard
-on a pipe, so the guard is never delayed.
-
-**Where it stands on the phone: `run294` has been up since 12:08 with no
-reboot request.** The device reports the navigation keys
+**On the phone:** `run296` is up, the navigation keys are there
 (`KEY_BACK`, `KEY_HOMEPAGE`, `KEY_APPSELECT` and `BTN_TOUCH` from the
-`generic ft5x06 (3b)` input device), `/dev/ashmem` is there, and the
-adbd shell is `uid=0` in `u:r:ksu:s0`.
+`generic ft5x06 (3b)` input device), `/dev/ashmem` is there, the adbd
+shell is `uid=0` in `u:r:ksu:s0`, and `adsprpcd` is running with
+`/dev/adsprpc-smd` open and without its restart loop.
 
 ### 4. The audio: the drivers are in, the device tree is not
 
@@ -270,10 +282,10 @@ argument are in
 
 ## The order of the remaining work
 
-1. Rebuild with `CONFIG_ZRAM=y` and the CAF `GETINFO` handler, flash it to
-   `boot_b`, and check on the device: the navigation keys, no checkpoint
-   reboot, `/sys/block/zram0` present, and the `adsprpcd` message that
-   replaces the `GETINFO` refusal.
+1. Rebuild with the relabel fix and `CONFIG_ZRAM=y`, flash it to
+   `boot_b`, and check on the device: the wakeup nodes labelled
+   `sysfs_wakeup`, the `system_suspend` denials at 0, `/sys/block/zram0`
+   present, and the navigation keys.
 2. Read the next boot's `adsprpcd` result: with `GETINFO` and ioctl 17
    both answered, the library should stop asking, and whatever it asks
    for next will be named in the kernel log.
