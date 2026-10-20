@@ -1573,20 +1573,21 @@ static void harvest_modem_firmware(int log)
  *
  *  - The kgsl's power attributes (max_pwrlevel, min_pwrlevel, idle_timer,
  *    force_clk_on, force_rail_on) are on the generic sysfs type too. The
- *    policy's own genfscon for the kgsl's snapshot directory shows the type
- *    the ROM expects for the GPU - sysfs_gpu - and labelling the kgsl's
- *    sysfs files with it also lets the adb shell read the GPU state
- *    without root.
+ *    vendor policy grants hal_power_default access to sysfs_kgsl, but its
+ *    file-context rule matches the old soc/<addr>.qcom,kgsl-3d0 path, not this
+ *    kernel's soc@0/1c00000.gpu path. sysfs_gpu is a different type and
+ *    does not grant the power HAL the writes it needs. The service runs
+ *    as root, so the existing root-owned 0644 attributes need no chmod.
  *
  * Relabelling is a file attribute, not a policy change: the ROM's policy
- * is untouched and its existing rules for sysfs_wakeup and sysfs_gpu
+ * is untouched and its existing rules for sysfs_wakeup and sysfs_kgsl
  * apply from then on. That matters, because the alternative - patching
  * the policy at runtime - deadlocks this kernel: the kernel-side live
  * policy rewrite that KernelSU-Next uses for it (the SET_SEPOLICY
  * supercall) froze the phone on the first attempt.
  */
 #define DIAG_WAKEUP_LABEL	"u:object_r:sysfs_wakeup:s0"
-#define DIAG_GPU_LABEL		"u:object_r:sysfs_gpu:s0"
+#define DIAG_GPU_LABEL		"u:object_r:sysfs_kgsl:s0"
 #define DIAG_KGSL_SYSFS \
 	"/sys/devices/platform/soc@0/1c00000.gpu/kgsl/kgsl-3d0"
 
