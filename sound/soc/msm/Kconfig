@@ -11,14 +11,14 @@ config WCD9XXX_CODEC_CORE
 	  Core of the Qualcomm WCD9xxx codec family, second generation
 	  interface. Ported from CAF techpack/audio.
 
-config SND_SOC_WCD9335
+config SND_SOC_MSM_WCD9335
 	tristate "WCD9335 codec"
 	depends on SND_SOC && SLIMBUS
 	select WCD9XXX_CODEC_CORE
 	help
 	  The WCD9335 codec, which is the one fitted to tissot.
 
-config SND_SOC_WCD_MBHC
+config SND_SOC_MSM_WCD_MBHC
 	tristate "WCD microphone bias and headset control"
 	depends on SND_SOC
 	select WCD9XXX_CODEC_CORE
@@ -63,7 +63,7 @@ config SND_SOC_DIGITAL_CDC_LEGACY
 config SND_SOC_MSM8952
 	tristate "MSM8952 (SDM450) soundcard"
 	depends on SND_SOC && COMMON_CLK
-	select SND_SOC_WCD9335
+	select SND_SOC_MSM_WCD9335
 	select SND_SOC_SDM660_CDC
 	select WCD9XXX_CODEC_CORE
 	help

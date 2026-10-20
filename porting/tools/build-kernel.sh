@@ -128,17 +128,32 @@ cp "$OUT_DIR/.config" "$SNAP/$RUN-prebuild.config"
 #   The SND_SOC_* symbols: the audio port - the AFE, the WCD9335 codec,
 #   the SDM660 CDC and the machine driver. They are enabled so the boot
 #   shows whether they probe; the sound card's device tree is not
-#   written yet, so they will not produce sound.
-for sym in KSU SND_SOC_MSM8952 SND_SOC_WCD9335 SND_SOC_WCD_MBHC \
-           SND_SOC_WCD_MBHC_ADC WCD9XXX_CODEC_CORE SND_SOC_SDM660_CDC; do
+#   written yet, so they will not produce sound. The codec and the
+#   microphone bias symbols are the port's own (SND_SOC_MSM_*), not the
+#   upstream ones of the same name: the tree already carries upstream's
+#   WCD9335 and its microphone bias helper, and the port's machine driver
+#   wants the CAF ones, which register their DAIs as tasha_*.
+#   CONFIG_SLIMBUS and CONFIG_SLIM_QCOM_CTRL: the codec is a slimbus
+#   slave, and the tree's slimbus subsystem is off by default.
+for sym in KSU SND_SOC_MSM8952 SND_SOC_MSM_WCD9335 SND_SOC_MSM_WCD_MBHC \
+           SND_SOC_WCD_MBHC_ADC WCD9XXX_CODEC_CORE SND_SOC_SDM660_CDC \
+           SLIMBUS SLIM_QCOM_CTRL; do
  grep -q "^CONFIG_$sym=" "$OUT_DIR/.config" && sed -i "s/^CONFIG_$sym=.*/CONFIG_$sym=y/" "$OUT_DIR/.config" || \
 	echo "CONFIG_$sym=y" >> "$OUT_DIR/.config"
 done
 "${make_args[@]}" olddefconfig || exit 1
 scripts/diffconfig "$SNAP/$RUN-prebuild.config" "$OUT_DIR/.config" | tee "$SNAP/$RUN-config.diff"
-for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SND_SOC_MSM8952 SND_SOC_WCD9335 \
-           WCD9XXX_CODEC_CORE SND_SOC_SDM660_CDC; do
+for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SND_SOC_MSM8952 \
+           SND_SOC_MSM_WCD9335 SND_SOC_MSM_WCD_MBHC WCD9XXX_CODEC_CORE \
+           SND_SOC_SDM660_CDC SLIMBUS; do
  grep -qx "CONFIG_$sym=y" "$OUT_DIR/.config" || { echo "CONFIG_$sym is not set" >&2; exit 1; }
+done
+# The upstream WCD9335 and its microphone bias helper must stay off: the
+# port's versions define the same symbols.
+for sym in SND_SOC_WCD9335 SND_SOC_WCD_MBHC; do
+ if grep -qx "CONFIG_$sym=y" "$OUT_DIR/.config"; then
+  echo "CONFIG_$sym must not be set" >&2; exit 1
+ fi
 done
 for key in RUST_IS_AVAILABLE RUST ASHMEM SHMEM STAGING IKCONFIG IKCONFIG_PROC \
            PSTORE_RAM QCOM_IOMMU ARM_SMMU QCOM_SCM ANDROID_BINDER_IPC \
@@ -182,7 +197,7 @@ for name in ['ramoops_witness_write','ramoops_stage_write','ramoops_reset_note',
     assert name in symbols, name
 config=(s/f'{run}-embedded.config').read_text()
 for key in ['RUST_IS_AVAILABLE','RUST','ASHMEM','CPUFREQ_DT','QCOM_CLK_APCC_MSM8953',
-            'QCOM_RPMPD','PSTORE_RAM','KSU','SND_SOC_MSM8952','SND_SOC_WCD9335']:
+            'QCOM_RPMPD','PSTORE_RAM','KSU','SND_SOC_MSM8952','SND_SOC_MSM_WCD9335','SLIMBUS']:
     assert f'CONFIG_{key}=y\n' in config, key
 print('The source, the diagnostic symbols and the shipped config are as expected.')
 print(json.dumps(new,indent=2))

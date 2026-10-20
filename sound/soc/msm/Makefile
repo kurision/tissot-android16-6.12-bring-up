@@ -18,13 +18,16 @@ wcd9xxx-objs += wcd9xxx-core.o wcd9xxx-core-init.o wcd9xxx-irq.o \
 wcdmbhc-objs += wcd-mbhc-v2.o wcd-mbhc-adc.o wcd-clsh.o
 wcddsp-objs += wcd-dsp-mgr.o
 
-obj-$(CONFIG_SND_SOC_WCD9335) += wcd9335.o
+obj-$(CONFIG_SND_SOC_MSM_WCD9335) += wcd9335.o
 obj-$(CONFIG_WCD9XXX_CODEC_CORE) += wcd9xxx.o
-obj-$(CONFIG_SND_SOC_WCD_MBHC) += wcdmbhc.o
+obj-$(CONFIG_SND_SOC_MSM_WCD_MBHC) += wcdmbhc.o
 obj-$(CONFIG_WCD_DSP_GLINK) += wcddsp.o
 
+#
+# The legacy pair is the CAF CDC the machine driver and the WCD9335 were
+# written against. The other pair is the same driver in its upstream form
+# and defines the same symbols, so only one of them can be built.
 cdc-objs += msm-analog-cdc.o msm-digital-cdc-legacy.o \
-	    msm-digital-cdc-regmap.o msm-digital-cdc.o \
 	    msm-digital-cdc-legacy-regmap.o sdm660-cdc-irq.o
 
 obj-$(CONFIG_SND_SOC_SDM660_CDC) += cdc.o
