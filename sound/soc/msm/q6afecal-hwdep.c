@@ -12,11 +12,11 @@
 #include <sound/soc.h>
 #include "q6afecal-hwdep.h"
 
-const int cal_size_info[Q6AFE_MAX_CAL] = {
+static const int cal_size_info[Q6AFE_MAX_CAL] = {
 	[Q6AFE_VAD_CORE_CAL] = 132,
 };
 
-const char *cal_name_info[Q6AFE_MAX_CAL] = {
+static const char *cal_name_info[Q6AFE_MAX_CAL] = {
 	[Q6AFE_VAD_CORE_CAL] = "vad_core",
 };
 
