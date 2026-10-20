@@ -71,6 +71,13 @@ RUN=${1:-run-$(date -u +%Y%m%dT%H%M%SZ)}
 SNAP=${ACK_SNAPSHOT_DIR:-$REPO/porting/artifacts/snapshot60}
 OUT_DIR="$REPO/out"
 CONFIG="$REPO/porting/tools/kernel.config"
+# The WCNSS tree carries both the remoteproc firmware and the WLAN NV blob.
+# wcnss.mdt is requested before the vendor partition is mounted and is
+# packaged into the ramdisk; the NV blob is requested when wlan0 is brought
+# up, long after switch_root, so it is built into the kernel instead. See
+# the built-in firmware block in "the configuration" below.
+FW_DIR=${ACK_WCNSS_FIRMWARE_DIR:-$REPO/porting/artifacts/firmware-wcnss}
+NV_FIRMWARE="$FW_DIR/wlan/prima/WCNSS_qcom_wlan_nv.bin"
 
 # --- the base image ---------------------------------------------------------
 # A real, SHA-verified image. Not redistributable, so it is not in the
@@ -225,11 +232,38 @@ for sym in SND_SOC_WCD9335 SND_SOC_WCD_MBHC; do
  sed -i "/^CONFIG_$sym=/d" "$OUT_DIR/.config"
  echo "# CONFIG_$sym is not set" >> "$OUT_DIR/.config"
 done
+# The WLAN NV blob has to be available after switch_root. The vendor tree
+# points /vendor/firmware/wlan/prima/WCNSS_qcom_wlan_nv.bin at
+# /mnt/vendor/persist, but the firmware loader runs a read with kernel
+# credentials (request_firmware() overrides current->cred), and the
+# Android policy denies the kernel domain search on mnt_vendor_file. The
+# ramdisk copy is gone by then, so the direct filesystem load fails with
+# -EACCES and the interface never comes up.
+#
+# Built-in firmware is checked before any filesystem path in
+# _request_firmware_prepare(), so embedding this one blob removes both the
+# switch_root timing and the SELinux path from the WLAN bring-up. Only the
+# NV blob is embedded: wcnss.mdt is still needed before the vendor
+# partition is mounted, and it is packaged into the ramdisk below.
+if [ -f "$NV_FIRMWARE" ]; then
+	scripts/config --file "$OUT_DIR/.config" \
+		--set-str EXTRA_FIRMWARE "wlan/prima/WCNSS_qcom_wlan_nv.bin" \
+		--set-str EXTRA_FIRMWARE_DIR "$(realpath "$FW_DIR")"
+else
+	scripts/config --file "$OUT_DIR/.config" --set-str EXTRA_FIRMWARE ""
+	echo "warning: no NV blob at $NV_FIRMWARE; WLAN will not come up" >&2
+fi
 "${make_args[@]}" olddefconfig
 scripts/diffconfig "$SNAP/$RUN-prebuild.config" "$OUT_DIR/.config" | tee "$SNAP/$RUN-config.diff"
 for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SLIMBUS ZRAM; do
  grep -qx "CONFIG_$sym=y" "$OUT_DIR/.config" || { echo "CONFIG_$sym is not set" >&2; exit 1; }
 done
+if [ -f "$NV_FIRMWARE" ]; then
+ grep -qx 'CONFIG_EXTRA_FIRMWARE="wlan/prima/WCNSS_qcom_wlan_nv.bin"' "$OUT_DIR/.config" || {
+  echo "CONFIG_EXTRA_FIRMWARE was not accepted" >&2; exit 1; }
+ grep -qx "CONFIG_EXTRA_FIRMWARE_DIR=\"$(realpath "$FW_DIR")\"" "$OUT_DIR/.config" || {
+  echo "CONFIG_EXTRA_FIRMWARE_DIR was not accepted" >&2; exit 1; }
+fi
 for key in RUST_IS_AVAILABLE RUST ASHMEM SHMEM STAGING IKCONFIG IKCONFIG_PROC \
 	    PSTORE_RAM QCOM_IOMMU ARM_SMMU QCOM_SCM ANDROID_BINDER_IPC \
 	    USB_CONFIGFS USB_CONFIGFS_F_FS COMPAT CPUFREQ_DT \
@@ -271,9 +305,10 @@ cat "$BOOT/Image.gz" "$BOOT/dts/qcom/msm8953-xiaomi-tissot.dtb" > "$BOOT/Image.g
 
 # --- the packaging ----------------------------------------------------------
 # WCNSS firmware is requested by the remoteproc before the vendor partition
-# is mounted, so it has to come from the ramdisk.  The directory is optional:
-# without it the image still boots, with WLAN stuck at the old -2 load error.
-FW_DIR=${ACK_WCNSS_FIRMWARE_DIR:-$REPO/porting/artifacts/firmware-wcnss}
+# is mounted, so it has to come from the ramdisk. The NV blob is built into
+# the kernel, but packing the whole tree keeps the early load working. The
+# directory is optional: without it the image still boots, with WLAN stuck
+# at the old -2 load error.
 fw_args=()
 if [ -d "$FW_DIR" ]; then
 	test -f "$FW_DIR/wcnss.mdt" || {
