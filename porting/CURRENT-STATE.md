@@ -270,19 +270,16 @@ The measurement, the disassembly of the shipped library and the errno
 argument are in
 [findings/2026-10-20-fastrpc-getinfo-measured.md](findings/2026-10-20-fastrpc-getinfo-measured.md).
 
-### 7. The vendor crash loops: the overlay is in the image but run302 installed it too late
+### 7. The vendor crash loops: qrtr-ns is fixed, the rest are disabled
 
 The health-check removal stops the `flags_health_check` exec reaction,
-not the services that trigger it.  The current boot has
-`sys.init.updatable_crashing=1` and init restarting `vendor.qrtr-ns`,
-`vendor.per_mgr`, `vendor.per_proxy`, `qcamerasvr` and `vendor.dataqti`.
-The overlay is in the run302 init binary, but it did not install: the
-ROM's action is still at `flags_health_check.rc:10/11` and ran 217 times
-in six minutes; qrtr-ns still lacks `NET_ADMIN`; the camera stack is still
-restarting; `vendor.dataqti` is still running with the `QTI_SDM_INFO`
-flood.
+not the services that trigger it.  `vendor.per_mgr`/`vendor.per_proxy`
+and `qcamerasvr` are the camera peripheral-manager stack, out of scope
+for this pass, and are disabled rather than left crash-looping.
+`vendor.dataqti` waits for the rmnet/MHI node that only appears once
+the modem data path is up; it is stopped until then.
 
-`vendor.qrtr-ns` is a real fix: 6.12's `qrtr_port_assign()` requires
+`vendor.qrtr-ns` was a real fix: 6.12's `qrtr_port_assign()` requires
 `CAP_NET_ADMIN` for the userspace name-service port
 (`net/qrtr/af_qrtr.c:736`), while the ROM grants only `NET_BIND_SERVICE`
 (`/vendor/etc/init/hw/init.qcom.rc:409`), and the `qrtr` domain is
@@ -290,11 +287,46 @@ denied the capability.  The initramfs overlay grants `NET_ADMIN` and
 the policy fragment adds the matching capability allow; the in-kernel
 QRTR NS keeps the control port.
 
-`vendor.per_mgr`/`vendor.per_proxy` and `qcamerasvr` are the camera
-peripheral-manager stack, out of scope for this pass, and are disabled
-rather than left crash-looping.  `vendor.dataqti` waits for the
-rmnet/MHI node that only appears once the modem data path is up; it is
-stopped until then.
+**The override now applies, and the crash loop is gone.**  The service
+definition lives in the `/vendor` subcontext
+(`/vendor/etc/init/hw/init.qcom.rc:405`), so an override in a `/system`
+file is rejected by init's Treble check ("overrides another service
+across the treble boundary").  The override is therefore installed in
+`/vendor/etc/init/qcrild.rc`, which init parses after the definition
+(28.889 s vs 29.062 s in the device's own init log).  On the device:
+
+```
+service vendor.qrtr-ns /vendor/bin/qrtr-ns -f
+    capabilities NET_BIND_SERVICE NET_ADMIN
+CapEff: 0000000000001400        # NET_BIND_SERVICE | NET_ADMIN
+```
+
+`vendor.qrtr-ns` is started once and never restarts, and the phone no
+longer asks for `reboot,bootloader` 330 s into the boot.  The requester
+is **adbd**: AOSP's adb watchdog
+(`packages/modules/adb/daemon/watchdog.cpp`) runs
+`execl("/system/bin/reboot", "/system/bin/reboot", "bootloader", nullptr)`
+when no adb client has been connected for the watchdog timeout, and
+`/apex/com.android.adbd/bin/adbd` is the only file on the device that
+contains the string `bin/reboot`.  With the crash loop gone the reboot
+only moves from 330 s to ~1367 s; it is not removed.  The measurements,
+the falsified ROM-rescue-party attribution and the thermal findings are
+in
+[findings/2026-10-21-boot-reset-loop-analysis.md](findings/2026-10-21-boot-reset-loop-analysis.md).
+
+**The CPU has no thermal throttle path on this port.**  The CPU thermal
+zones trip only at 80 C (`passive`, mapped to `THERMAL_NO_LIMIT`) and
+100 C (`critical`), and only `policy0` registers a cpufreq cooling
+device, so the big cluster (cpu4-7, which uses the legacy per-cpu
+cpufreq directories) has none.  A Geekbench run therefore reaches the
+100 C critical trip, and the port's `kernel/reboot.c`
+(`__hw_protection_shutdown()`) forces a poweroff instead of the CPU
+backing off.
+
+Two defects remain open and are separate from the reset:
+`vendor.bluetooth-1-0-qti` is SIGKILLed by init every ~10 s before it
+settles, and the kernel still logs `failed to send del client cmd` once
+per second even with the name service alive.
 
 **Why run302 missed it:** `flags_health_check.rc` is in
 `/system/etc/init`, which init parses before the vendor files and before
@@ -479,8 +511,9 @@ devfreq device) or
 `/proc/sys/dev/xiaomi_msm8953_touchscreen/enable_dt2w` (the mainline
 touch driver has no such node); those are DDR/DT2W gaps, not CPU
 frequency.  `vendor.qti.data.factory` is missing and is restarted as a
-lazy HAL, `vendor.qrtr-ns` exits and the kernel logs `failed to send del
-client cmd`, and DevCheck's reads of `cur_freq` are denied and produce
+lazy HAL, `vendor.qrtr-ns` no longer exits but the kernel still logs
+`failed to send del client cmd`, and DevCheck's reads of `cur_freq` are
+denied and produce
 AVC lines.  Those should be cleaned up, but they do not explain the
 audio-driven `system_server` load.
 

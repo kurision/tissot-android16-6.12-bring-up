@@ -198,6 +198,9 @@ porting/artifacts/snapshot*/base-ramdisk
 porting/artifacts/snapshot*/Image.gz
 porting/artifacts/snapshot*/init
 porting/artifacts/snapshot*/daemon-probe-selftest-host
+# Pulled evidence directories: logdump blobs and decoded text, tens of MB per
+# run. The findings reports quote the measurements they contain.
+porting/artifacts/snapshot*/logs-*/
 
 # Keep only snapshot43 runs 10/11 capture evidence in repository history.
 # Older captures remain local; reports retain their checked measurements.
