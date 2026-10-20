@@ -1269,13 +1269,16 @@ static int ramoops_snap_thread(void *unused)
 
 		/*
 		 * Without periodic sampling, only an explicit panic completion may
-		 * request a snapshot. Keep the bounded wait so kthread_stop() still
-		 * drains this worker without depending on another completion. A failed
-		 * explicit capture keeps its existing bounded retry budget.
+		 * request a snapshot. Sleep until it arrives instead of waking every
+		 * RAMOOPS_SNAP_INTERVAL_MS: the timeout was only there to let
+		 * kthread_stop() drain a worker that had no other wakeup. The stop
+		 * path now completes the wake before kthread_stop(), so the worker
+		 * stays parked between panics. A failed explicit capture keeps its
+		 * existing bounded retry budget.
 		 */
 		if (!RAMOOPS_PERIODIC_SNAPSHOTS && !s->failures) {
-			ret = wait_for_completion_interruptible_timeout(&s->wake,
-									timeout);
+			ret = wait_for_completion_interruptible_timeout(
+				&s->wake, MAX_SCHEDULE_TIMEOUT);
 			if (ret <= 0 || kthread_should_stop())
 				continue;
 		}
@@ -1759,6 +1762,13 @@ static void ramoops_snap_stop(void)
 	vfree(s->reset_buf);
 	s->reset_buf = NULL;
 	if (s->task) {
+		/*
+		 * The worker parks on s->wake between panics. kthread_stop()
+		 * would set KTHREAD_SHOULD_STOP, but a task sleeping in the
+		 * completion wait is not woken by that flag alone, so release
+		 * the completion first and let the loop observe the stop.
+		 */
+		complete(&s->wake);
 		kthread_stop(s->task);
 		s->task = NULL;
 	}
