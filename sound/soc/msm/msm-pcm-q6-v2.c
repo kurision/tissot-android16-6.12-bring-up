@@ -135,7 +135,7 @@ static void msm_pcm_route_event_handler(enum msm_pcm_routing_event event,
 		q6asm_cmd(prtd->audio_client, CMD_PAUSE);
 		q6asm_cmd(prtd->audio_client, CMD_FLUSH);
 		q6asm_run(prtd->audio_client, 0, 0, 0);
-		/* fallthrough */
+		fallthrough;
 	default:
 		break;
 	}
@@ -628,7 +628,7 @@ static int msm_pcm_capture_prepare(struct snd_pcm_substream *substream)
 	return ret;
 }
 
-static int msm_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
+static int msm_pcm_trigger(struct snd_soc_component *component, struct snd_pcm_substream *substream, int cmd)
 {
 	int ret = 0;
 	struct snd_pcm_runtime *runtime = substream->runtime;
@@ -670,7 +670,7 @@ static int msm_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 	return ret;
 }
 
-static int msm_pcm_open(struct snd_pcm_substream *substream)
+static int msm_pcm_open(struct snd_soc_component *comp, struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct snd_soc_pcm_runtime *soc_prtd = substream->private_data;
@@ -789,7 +789,7 @@ static int msm_pcm_open(struct snd_pcm_substream *substream)
 }
 
 static int msm_pcm_playback_copy(struct snd_pcm_substream *substream, int a,
-	unsigned long hwoff, void __user *buf, unsigned long fbytes)
+	unsigned long hwoff, struct iov_iter *iter, unsigned long fbytes)
 {
 	int ret = 0;
 	int xfer = 0;
@@ -851,14 +851,13 @@ static int msm_pcm_playback_copy(struct snd_pcm_substream *substream, int a,
 		if (bufptr) {
 			pr_debug("%s:fbytes =%lu: xfer=%d size=%d\n",
 				 __func__, fbytes, xfer, size);
-			if (copy_from_user(bufptr, buf, xfer)) {
+			if (copy_from_iter(bufptr, xfer, iter)) {
 				ret = -EFAULT;
-				pr_err("%s: copy_from_user failed\n",
+				pr_err("%s: copy_from_iter failed\n",
 					__func__);
 				q6asm_cpu_buf_release(IN, prtd->audio_client);
 				goto fail;
 			}
-			buf += xfer;
 			fbytes -= xfer;
 			pr_debug("%s:fbytes = %lu: xfer=%d\n", __func__,
 				 fbytes, xfer);
@@ -956,7 +955,7 @@ static int msm_pcm_playback_close(struct snd_pcm_substream *substream)
 }
 
 static int msm_pcm_capture_copy(struct snd_pcm_substream *substream,
-		 int channel, unsigned long hwoff, void __user *buf,
+		 int channel, unsigned long hwoff, struct iov_iter *iter,
 						 unsigned long fbytes)
 {
 	int ret = 0;
@@ -1024,7 +1023,7 @@ static int msm_pcm_capture_copy(struct snd_pcm_substream *substream,
 				size = xfer = fbytes;
 		}
 
-		if (copy_to_user(buf, bufptr+offset, xfer)) {
+		if (copy_to_iter(bufptr+offset, xfer, iter)) {
 			pr_err("Failed to copy buf to user\n");
 			ret = -EFAULT;
 			q6asm_cpu_buf_release(OUT, prtd->audio_client);
@@ -1093,19 +1092,20 @@ static int msm_pcm_capture_close(struct snd_pcm_substream *substream)
 	return 0;
 }
 
-static int msm_pcm_copy(struct snd_pcm_substream *substream, int a,
-	 unsigned long hwoff, void __user *buf, unsigned long fbytes)
+static int msm_pcm_copy(struct snd_soc_component *component,
+	 struct snd_pcm_substream *substream, int a,
+	 unsigned long hwoff, struct iov_iter *iter, unsigned long fbytes)
 {
 	int ret = 0;
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		ret = msm_pcm_playback_copy(substream, a, hwoff, buf, fbytes);
+		ret = msm_pcm_playback_copy(substream, a, hwoff, iter, fbytes);
 	else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
-		ret = msm_pcm_capture_copy(substream, a, hwoff, buf, fbytes);
+		ret = msm_pcm_capture_copy(substream, a, hwoff, iter, fbytes);
 	return ret;
 }
 
-static int msm_pcm_close(struct snd_pcm_substream *substream)
+static int msm_pcm_close(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
 	int ret = 0;
 
@@ -1116,7 +1116,7 @@ static int msm_pcm_close(struct snd_pcm_substream *substream)
 	return ret;
 }
 
-static int msm_pcm_prepare(struct snd_pcm_substream *substream)
+static int msm_pcm_prepare(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
 	int ret = 0;
 
@@ -1127,7 +1127,7 @@ static int msm_pcm_prepare(struct snd_pcm_substream *substream)
 	return ret;
 }
 
-static snd_pcm_uframes_t msm_pcm_pointer(struct snd_pcm_substream *substream)
+static snd_pcm_uframes_t msm_pcm_pointer(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
 
 	struct snd_pcm_runtime *runtime = substream->runtime;
@@ -1140,7 +1140,7 @@ static snd_pcm_uframes_t msm_pcm_pointer(struct snd_pcm_substream *substream)
 	return bytes_to_frames(runtime, (prtd->pcm_irq_pos));
 }
 
-static int msm_pcm_mmap(struct snd_pcm_substream *substream,
+static int msm_pcm_mmap(struct snd_soc_component *component, struct snd_pcm_substream *substream,
 				struct vm_area_struct *vma)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
@@ -1161,7 +1161,7 @@ static int msm_pcm_mmap(struct snd_pcm_substream *substream,
 	return msm_audio_ion_mmap(ab, vma);
 }
 
-static int msm_pcm_hw_params(struct snd_pcm_substream *substream,
+static int msm_pcm_hw_params(struct snd_soc_component *component, struct snd_pcm_substream *substream,
 				struct snd_pcm_hw_params *params)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
@@ -1201,7 +1201,7 @@ static int msm_pcm_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static int msm_pcm_ioctl(struct snd_pcm_substream *substream,
+static int msm_pcm_ioctl(struct snd_soc_component *component, struct snd_pcm_substream *substream,
 			 unsigned int cmd, void __user *arg)
 {
 	struct msm_audio *prtd = NULL;
@@ -1285,27 +1285,14 @@ done:
 }
 
 #ifdef CONFIG_COMPAT
-static int msm_pcm_compat_ioctl(struct snd_pcm_substream *substream,
+static int msm_pcm_compat_ioctl(struct snd_soc_component *component, struct snd_pcm_substream *substream,
 			 unsigned int cmd, void __user *arg)
 {
-	return msm_pcm_ioctl(substream, cmd, arg);
+	return msm_pcm_ioctl(component, substream, cmd, arg);
 }
 #else
 #define msm_pcm_compat_ioctl NULL
 #endif
-
-static const struct snd_pcm_ops msm_pcm_ops = {
-	.open           = msm_pcm_open,
-	.copy_user	= msm_pcm_copy,
-	.hw_params	= msm_pcm_hw_params,
-	.close          = msm_pcm_close,
-	.ioctl          = msm_pcm_ioctl,
-	.compat_ioctl   = msm_pcm_compat_ioctl,
-	.prepare        = msm_pcm_prepare,
-	.trigger        = msm_pcm_trigger,
-	.pointer        = msm_pcm_pointer,
-	.mmap		= msm_pcm_mmap,
-};
 
 static int msm_pcm_adsp_stream_cmd_put(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
@@ -1477,7 +1464,7 @@ static int msm_pcm_add_audio_adsp_stream_callback_control(
 
 	pr_debug("%s: added new pcm FE with name %s, id %d, cpu dai %s, device no %d\n",
 		 __func__, rtd->dai_link->name, rtd->dai_link->id,
-		 rtd->dai_link->cpu_dai_name, rtd->pcm->device);
+		 rtd->dai_link->cpus[0].dai_name, rtd->pcm->device);
 	ctl_len = strlen(mixer_ctl_name) + 1 + strlen(deviceNo) + 1;
 	mixer_str = kzalloc(ctl_len, GFP_KERNEL);
 	if (!mixer_str) {
@@ -2813,7 +2800,8 @@ static int msm_pcm_add_controls(struct snd_soc_pcm_runtime *rtd)
 	return ret;
 }
 
-static int msm_asoc_pcm_new(struct snd_soc_pcm_runtime *rtd)
+static int msm_asoc_pcm_new(struct snd_soc_component *component,
+			struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_card *card = rtd->card->snd_card;
 	int ret = 0;
@@ -2853,8 +2841,8 @@ static int msm_asoc_pcm_new(struct snd_soc_pcm_runtime *rtd)
 	return ret;
 }
 
-static snd_pcm_sframes_t msm_pcm_delay_blk(struct snd_pcm_substream *substream,
-		struct snd_soc_dai *dai)
+static snd_pcm_sframes_t msm_pcm_delay_blk(struct snd_soc_component *component,
+		struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct msm_audio *prtd = runtime->private_data;
@@ -2882,9 +2870,18 @@ static snd_pcm_sframes_t msm_pcm_delay_blk(struct snd_pcm_substream *substream,
 
 static struct snd_soc_component_driver msm_soc_component = {
 	.name		= DRV_NAME,
-	.ops		= &msm_pcm_ops,
-	.pcm_new	= msm_asoc_pcm_new,
-	.delay_blk      = msm_pcm_delay_blk,
+	.open		= msm_pcm_open,
+	.close		= msm_pcm_close,
+	.prepare	= msm_pcm_prepare,
+	.hw_params	= msm_pcm_hw_params,
+	.ioctl		= msm_pcm_ioctl,
+	.compat_ioctl	= msm_pcm_compat_ioctl,
+	.trigger	= msm_pcm_trigger,
+	.pointer	= msm_pcm_pointer,
+	.copy		= msm_pcm_copy,
+	.mmap		= msm_pcm_mmap,
+	.delay		= msm_pcm_delay_blk,
+	.pcm_construct	= msm_asoc_pcm_new,
 };
 
 static int msm_pcm_probe(struct platform_device *pdev)
@@ -2933,7 +2930,7 @@ static int msm_pcm_probe(struct platform_device *pdev)
 					NULL, 0);
 }
 
-static int msm_pcm_remove(struct platform_device *pdev)
+static void msm_pcm_remove(struct platform_device *pdev)
 {
 	struct msm_plat_data *pdata;
 	int i = 0;
@@ -2948,7 +2945,6 @@ static int msm_pcm_remove(struct platform_device *pdev)
 	mutex_destroy(&pdata->lock);
 	kfree(pdata);
 	snd_soc_unregister_component(&pdev->dev);
-	return 0;
 }
 static const struct of_device_id msm_pcm_dt_match[] = {
 	{.compatible = "qcom,msm-pcm-dsp"},

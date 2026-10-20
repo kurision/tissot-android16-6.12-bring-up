@@ -4,6 +4,9 @@
 # <soc/...>, <ipc/...> and <sound/...>, so those trees are staged alongside.
 
 ccflags-y += -I$(srctree)/sound/soc/msm/caf-include
+# CAF's audio stack includes its uapi headers as <sound/...>, and the
+# kernel tree dropped some of them upstream, so they are staged here.
+ccflags-y += -I$(srctree)/sound/soc/msm/caf-include/uapi
 #
 # The imported CAF sources predate 6.12 warnings that are fatal here. Their
 # unused locals and parameters are left alone rather than edited out of vendor
@@ -36,6 +39,22 @@ msm8952-objs += msm8952.o msm8952-dai-links.o msm8952-slimbus.o
 msm8952-objs += msm-pcm-afe-v2.o
 
 obj-$(CONFIG_SND_SOC_MSM8952) += msm8952.o
+
+#
+# The PCM platform layer and the CPU DAIs. The machine driver's backend
+# links all use the routing PCM, and its frontend links use the DSP PCM
+# and the FE DAIs, so without these the card registers with no routes
+# at all and the vendor audio HAL finds no device to open.
+#
+# The compress (offload) and the listen-service platforms are not built
+# yet: they need CAF's compress_params.h, whose layout differs from the
+# one this kernel's userspace expects, so they are a separate decision.
+msmplatform-objs += msm-pcm-q6-v2.o msm-pcm-q6-noirq.o msm-pcm-hostless.o \
+		     msm-pcm-voice-v2.o msm-pcm-routing-v2.o \
+		     msm-pcm-routing-devdep.o msm-pcm-loopback-v2.o \
+		     msm-dai-q6-v2.o msm-dai-fe.o msm-dai-stub-v2.o
+
+obj-$(CONFIG_SND_SOC_MSM8952) += msmplatform.o
 
 afedrv-objs += q6afe.o
 

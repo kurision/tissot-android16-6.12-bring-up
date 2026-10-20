@@ -4,6 +4,7 @@
 
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/of_platform.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/bitops.h>
@@ -1409,7 +1410,26 @@ static int msm_dai_q6_aux_pcm_probe(struct snd_soc_dai *dai)
 	return rc;
 }
 
+/* The DAI-level probe and remove are called through the ops in this
+ * kernel; the definitions come later in the file. */
+static int msm_dai_q6_dai_probe(struct snd_soc_dai *dai);
+static int msm_dai_q6_dai_remove(struct snd_soc_dai *dai);
+static int msm_dai_q6_dai_mi2s_probe(struct snd_soc_dai *dai);
+static int msm_dai_q6_dai_mi2s_remove(struct snd_soc_dai *dai);
+static int msm_dai_q6_dai_meta_mi2s_probe(struct snd_soc_dai *dai);
+static int msm_dai_q6_dai_meta_mi2s_remove(struct snd_soc_dai *dai);
+static int msm_dai_q6_dai_tdm_probe(struct snd_soc_dai *dai);
+static int msm_dai_q6_dai_tdm_remove(struct snd_soc_dai *dai);
+static int msm_dai_q6_dai_cdc_dma_probe(struct snd_soc_dai *dai);
+static int msm_dai_q6_dai_cdc_dma_remove(struct snd_soc_dai *dai);
+static int msm_dai_q6_aux_pcm_probe(struct snd_soc_dai *dai);
+static int msm_dai_q6_dai_auxpcm_remove(struct snd_soc_dai *dai);
+static int msm_dai_q6_spdif_dai_probe(struct snd_soc_dai *dai);
+static int msm_dai_q6_spdif_dai_remove(struct snd_soc_dai *dai);
+
 static struct snd_soc_dai_ops msm_dai_q6_auxpcm_ops = {
+	.probe	= msm_dai_q6_aux_pcm_probe,
+	.remove	= msm_dai_q6_dai_auxpcm_remove,
 	.prepare	= msm_dai_q6_auxpcm_prepare,
 	.trigger	= msm_dai_q6_auxpcm_trigger,
 	.hw_params	= msm_dai_q6_auxpcm_hw_params,
@@ -1446,8 +1466,6 @@ static struct snd_soc_dai_driver msm_dai_q6_aux_pcm_dai[] = {
 		.id = MSM_DAI_PRI_AUXPCM_DT_DEV_ID,
 		.name = "Pri AUX PCM",
 		.ops = &msm_dai_q6_auxpcm_ops,
-		.probe = msm_dai_q6_aux_pcm_probe,
-		.remove = msm_dai_q6_dai_auxpcm_remove,
 	},
 	{
 		.playback = {
@@ -1473,8 +1491,6 @@ static struct snd_soc_dai_driver msm_dai_q6_aux_pcm_dai[] = {
 		.id = MSM_DAI_SEC_AUXPCM_DT_DEV_ID,
 		.name = "Sec AUX PCM",
 		.ops = &msm_dai_q6_auxpcm_ops,
-		.probe = msm_dai_q6_aux_pcm_probe,
-		.remove = msm_dai_q6_dai_auxpcm_remove,
 	},
 	{
 		.playback = {
@@ -1500,8 +1516,6 @@ static struct snd_soc_dai_driver msm_dai_q6_aux_pcm_dai[] = {
 		.id = MSM_DAI_TERT_AUXPCM_DT_DEV_ID,
 		.name = "Tert AUX PCM",
 		.ops = &msm_dai_q6_auxpcm_ops,
-		.probe = msm_dai_q6_aux_pcm_probe,
-		.remove = msm_dai_q6_dai_auxpcm_remove,
 	},
 	{
 		.playback = {
@@ -1527,8 +1541,6 @@ static struct snd_soc_dai_driver msm_dai_q6_aux_pcm_dai[] = {
 		.id = MSM_DAI_QUAT_AUXPCM_DT_DEV_ID,
 		.name = "Quat AUX PCM",
 		.ops = &msm_dai_q6_auxpcm_ops,
-		.probe = msm_dai_q6_aux_pcm_probe,
-		.remove = msm_dai_q6_dai_auxpcm_remove,
 	},
 	{
 		.playback = {
@@ -1554,8 +1566,6 @@ static struct snd_soc_dai_driver msm_dai_q6_aux_pcm_dai[] = {
 		.id = MSM_DAI_QUIN_AUXPCM_DT_DEV_ID,
 		.name = "Quin AUX PCM",
 		.ops = &msm_dai_q6_auxpcm_ops,
-		.probe = msm_dai_q6_aux_pcm_probe,
-		.remove = msm_dai_q6_dai_auxpcm_remove,
 	},
 	{
 		.playback = {
@@ -1581,8 +1591,6 @@ static struct snd_soc_dai_driver msm_dai_q6_aux_pcm_dai[] = {
 		.id = MSM_DAI_SEN_AUXPCM_DT_DEV_ID,
 		.name = "Sen AUX PCM",
 		.ops = &msm_dai_q6_auxpcm_ops,
-		.probe = msm_dai_q6_aux_pcm_probe,
-		.remove = msm_dai_q6_dai_auxpcm_remove,
 	},
 };
 
@@ -2114,6 +2122,8 @@ static int msm_dai_q6_spdif_dai_remove(struct snd_soc_dai *dai)
 
 
 static struct snd_soc_dai_ops msm_dai_q6_spdif_ops = {
+	.probe	= msm_dai_q6_spdif_dai_probe,
+	.remove	= msm_dai_q6_spdif_dai_remove,
 	.prepare	= msm_dai_q6_spdif_prepare,
 	.hw_params	= msm_dai_q6_spdif_hw_params,
 	.shutdown	= msm_dai_q6_spdif_shutdown,
@@ -2141,8 +2151,6 @@ static struct snd_soc_dai_driver msm_dai_q6_spdif_spdif_rx_dai[] = {
 		.name = "PRI_SPDIF_RX",
 		.ops = &msm_dai_q6_spdif_ops,
 		.id = AFE_PORT_ID_PRIMARY_SPDIF_RX,
-		.probe = msm_dai_q6_spdif_dai_probe,
-		.remove = msm_dai_q6_spdif_dai_remove,
 	},
 	{
 		.playback = {
@@ -2165,8 +2173,6 @@ static struct snd_soc_dai_driver msm_dai_q6_spdif_spdif_rx_dai[] = {
 		.name = "SEC_SPDIF_RX",
 		.ops = &msm_dai_q6_spdif_ops,
 		.id = AFE_PORT_ID_SECONDARY_SPDIF_RX,
-		.probe = msm_dai_q6_spdif_dai_probe,
-		.remove = msm_dai_q6_spdif_dai_remove,
 	},
 };
 
@@ -2192,8 +2198,6 @@ static struct snd_soc_dai_driver msm_dai_q6_spdif_spdif_tx_dai[] = {
 		.name = "PRI_SPDIF_TX",
 		.ops = &msm_dai_q6_spdif_ops,
 		.id = AFE_PORT_ID_PRIMARY_SPDIF_TX,
-		.probe = msm_dai_q6_spdif_dai_probe,
-		.remove = msm_dai_q6_spdif_dai_remove,
 	},
 	{
 		.capture = {
@@ -2216,8 +2220,6 @@ static struct snd_soc_dai_driver msm_dai_q6_spdif_spdif_tx_dai[] = {
 		.name = "SEC_SPDIF_TX",
 		.ops = &msm_dai_q6_spdif_ops,
 		.id = AFE_PORT_ID_SECONDARY_SPDIF_TX,
-		.probe = msm_dai_q6_spdif_dai_probe,
-		.remove = msm_dai_q6_spdif_dai_remove,
 	},
 };
 
@@ -2717,9 +2719,8 @@ static int msm_dai_q6_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 }
 
 static int msm_dai_q6_set_channel_map(struct snd_soc_dai *dai,
-				unsigned int tx_num, unsigned int *tx_slot,
-				unsigned int rx_num, unsigned int *rx_slot)
-
+				unsigned int tx_num, const unsigned int *tx_slot,
+				unsigned int rx_num, const unsigned int *rx_slot)
 {
 	int rc = 0;
 	struct msm_dai_q6_dai_data *dai_data = dev_get_drvdata(dai->dev);
@@ -2811,7 +2812,7 @@ static int msm_dai_q6_set_channel_map(struct snd_soc_dai *dai,
 }
 
 static int msm_dai_q6_spk_digital_mute(struct snd_soc_dai *dai,
-				       int mute)
+				       int mute, int stream)
 {
 	int port_id = dai->id;
 	struct msm_dai_q6_dai_data *dai_data = dev_get_drvdata(dai->dev);
@@ -2823,6 +2824,8 @@ static int msm_dai_q6_spk_digital_mute(struct snd_soc_dai *dai,
 }
 
 static struct snd_soc_dai_ops msm_dai_q6_ops = {
+	.probe	= msm_dai_q6_dai_probe,
+	.remove	= msm_dai_q6_dai_remove,
 	.prepare	= msm_dai_q6_prepare,
 	.hw_params	= msm_dai_q6_hw_params,
 	.shutdown	= msm_dai_q6_shutdown,
@@ -2831,12 +2834,14 @@ static struct snd_soc_dai_ops msm_dai_q6_ops = {
 };
 
 static struct snd_soc_dai_ops msm_dai_slimbus_0_rx_ops = {
+	.probe	= msm_dai_q6_dai_probe,
+	.remove	= msm_dai_q6_dai_remove,
 	.prepare	= msm_dai_q6_prepare,
 	.hw_params	= msm_dai_q6_hw_params,
 	.shutdown	= msm_dai_q6_shutdown,
 	.set_fmt	= msm_dai_q6_set_fmt,
 	.set_channel_map = msm_dai_q6_set_channel_map,
-	.digital_mute = msm_dai_q6_spk_digital_mute,
+	.mute_stream = msm_dai_q6_spk_digital_mute,
 };
 
 static int msm_dai_q6_cal_info_put(struct snd_kcontrol *kcontrol,
@@ -4133,8 +4138,6 @@ static struct snd_soc_dai_driver msm_dai_q6_afe_rx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = RT_PROXY_DAI_001_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.playback = {
@@ -4150,8 +4153,6 @@ static struct snd_soc_dai_driver msm_dai_q6_afe_rx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = RT_PROXY_DAI_002_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 };
 
@@ -4174,8 +4175,6 @@ static struct snd_soc_dai_driver msm_dai_q6_afe_lb_tx_dai[] = {
 			.rate_max =     192000,
 		},
 		.id = AFE_LOOPBACK_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 };
 
@@ -4194,8 +4193,6 @@ static struct snd_soc_dai_driver msm_dai_q6_afe_tx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = RT_PROXY_DAI_002_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.capture = {
@@ -4210,8 +4207,6 @@ static struct snd_soc_dai_driver msm_dai_q6_afe_tx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = RT_PROXY_DAI_001_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 };
 
@@ -4228,8 +4223,6 @@ static struct snd_soc_dai_driver msm_dai_q6_bt_sco_rx_dai = {
 	},
 	.ops = &msm_dai_q6_ops,
 	.id = INT_BT_SCO_RX,
-	.probe = msm_dai_q6_dai_probe,
-	.remove = msm_dai_q6_dai_remove,
 };
 
 static struct snd_soc_dai_driver msm_dai_q6_bt_a2dp_rx_dai = {
@@ -4245,8 +4238,6 @@ static struct snd_soc_dai_driver msm_dai_q6_bt_a2dp_rx_dai = {
 	},
 	.ops = &msm_dai_q6_ops,
 	.id = INT_BT_A2DP_RX,
-	.probe = msm_dai_q6_dai_probe,
-	.remove = msm_dai_q6_dai_remove,
 };
 
 static struct snd_soc_dai_driver msm_dai_q6_bt_sco_tx_dai = {
@@ -4262,8 +4253,6 @@ static struct snd_soc_dai_driver msm_dai_q6_bt_sco_tx_dai = {
 	},
 	.ops = &msm_dai_q6_ops,
 	.id = INT_BT_SCO_TX,
-	.probe = msm_dai_q6_dai_probe,
-	.remove = msm_dai_q6_dai_remove,
 };
 
 static struct snd_soc_dai_driver msm_dai_q6_fm_rx_dai = {
@@ -4280,8 +4269,6 @@ static struct snd_soc_dai_driver msm_dai_q6_fm_rx_dai = {
 	},
 	.ops = &msm_dai_q6_ops,
 	.id = INT_FM_RX,
-	.probe = msm_dai_q6_dai_probe,
-	.remove = msm_dai_q6_dai_remove,
 };
 
 static struct snd_soc_dai_driver msm_dai_q6_fm_tx_dai = {
@@ -4298,8 +4285,6 @@ static struct snd_soc_dai_driver msm_dai_q6_fm_tx_dai = {
 	},
 	.ops = &msm_dai_q6_ops,
 	.id = INT_FM_TX,
-	.probe = msm_dai_q6_dai_probe,
-	.remove = msm_dai_q6_dai_remove,
 };
 
 static struct snd_soc_dai_driver msm_dai_q6_voc_playback_dai[] = {
@@ -4317,8 +4302,6 @@ static struct snd_soc_dai_driver msm_dai_q6_voc_playback_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = VOICE_PLAYBACK_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.playback = {
@@ -4334,8 +4317,6 @@ static struct snd_soc_dai_driver msm_dai_q6_voc_playback_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = VOICE2_PLAYBACK_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 };
 
@@ -4354,8 +4335,6 @@ static struct snd_soc_dai_driver msm_dai_q6_incall_record_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = VOICE_RECORD_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.capture = {
@@ -4371,8 +4350,6 @@ static struct snd_soc_dai_driver msm_dai_q6_incall_record_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = VOICE_RECORD_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 };
 
@@ -4390,8 +4367,6 @@ static struct snd_soc_dai_driver msm_dai_q6_proxy_tx_dai = {
 	},
 	.ops = &msm_dai_q6_ops,
 	.id = RT_PROXY_PORT_002_TX,
-	.probe = msm_dai_q6_dai_probe,
-	.remove = msm_dai_q6_dai_remove,
 };
 
 static struct snd_soc_dai_driver msm_dai_q6_proxy_rx_dai = {
@@ -4408,8 +4383,6 @@ static struct snd_soc_dai_driver msm_dai_q6_proxy_rx_dai = {
 	},
 	.ops = &msm_dai_q6_ops,
 	.id = RT_PROXY_PORT_002_RX,
-	.probe = msm_dai_q6_dai_probe,
-	.remove = msm_dai_q6_dai_remove,
 };
 
 static struct snd_soc_dai_driver msm_dai_q6_usb_rx_dai = {
@@ -4432,8 +4405,6 @@ static struct snd_soc_dai_driver msm_dai_q6_usb_rx_dai = {
 	},
 	.ops = &msm_dai_q6_ops,
 	.id = AFE_PORT_ID_USB_RX,
-	.probe = msm_dai_q6_dai_probe,
-	.remove = msm_dai_q6_dai_remove,
 };
 
 static struct snd_soc_dai_driver msm_dai_q6_usb_tx_dai = {
@@ -4456,8 +4427,6 @@ static struct snd_soc_dai_driver msm_dai_q6_usb_tx_dai = {
 	},
 	.ops = &msm_dai_q6_ops,
 	.id = AFE_PORT_ID_USB_TX,
-	.probe = msm_dai_q6_dai_probe,
-	.remove = msm_dai_q6_dai_remove,
 };
 
 static int msm_auxpcm_dev_probe(struct platform_device *pdev)
@@ -4726,7 +4695,7 @@ fail_pdata_nomem:
 	return rc;
 }
 
-static int msm_auxpcm_dev_remove(struct platform_device *pdev)
+static void msm_auxpcm_dev_remove(struct platform_device *pdev)
 {
 	struct msm_dai_q6_auxpcm_dai_data *dai_data;
 
@@ -4738,7 +4707,6 @@ static int msm_auxpcm_dev_remove(struct platform_device *pdev)
 	kfree(dai_data);
 	kfree(pdev->dev.platform_data);
 
-	return 0;
 }
 
 static const struct of_device_id msm_auxpcm_dev_dt_match[] = {
@@ -4749,7 +4717,6 @@ static const struct of_device_id msm_auxpcm_dev_dt_match[] = {
 
 static struct platform_driver msm_auxpcm_dev_driver = {
 	.probe  = msm_auxpcm_dev_probe,
-	.remove = msm_auxpcm_dev_remove,
 	.driver = {
 		.name = "msm-auxpcm-dev",
 		.owner = THIS_MODULE,
@@ -4772,8 +4739,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_rx_dai[] = {
 		},
 		.ops = &msm_dai_slimbus_0_rx_ops,
 		.id = SLIMBUS_0_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.playback = {
@@ -4788,8 +4753,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_rx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_1_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.playback = {
@@ -4804,8 +4767,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_rx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_2_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.playback = {
@@ -4820,8 +4781,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_rx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_3_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.playback = {
@@ -4836,8 +4795,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_rx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_4_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.playback = {
@@ -4852,8 +4809,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_rx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_6_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.playback = {
@@ -4868,8 +4823,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_rx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_5_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.playback = {
@@ -4884,8 +4837,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_rx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_7_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.playback = {
@@ -4900,8 +4851,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_rx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_8_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.playback = {
@@ -4916,8 +4865,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_rx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_9_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 };
 
@@ -4939,8 +4886,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_tx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_0_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.capture = {
@@ -4959,8 +4904,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_tx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_1_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.capture = {
@@ -4978,8 +4921,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_tx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_2_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.capture = {
@@ -4997,8 +4938,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_tx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_3_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.capture = {
@@ -5017,8 +4956,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_tx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_4_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.capture = {
@@ -5036,8 +4973,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_tx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_5_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.capture = {
@@ -5055,8 +4990,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_tx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_6_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.capture = {
@@ -5075,8 +5008,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_tx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_7_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.capture = {
@@ -5095,8 +5026,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_tx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_8_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 	{
 		.capture = {
@@ -5116,8 +5045,6 @@ static struct snd_soc_dai_driver msm_dai_q6_slimbus_tx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = SLIMBUS_9_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
 	},
 };
 
@@ -5817,6 +5744,8 @@ static void msm_dai_q6_mi2s_shutdown(struct snd_pcm_substream *substream,
 }
 
 static struct snd_soc_dai_ops msm_dai_q6_mi2s_ops = {
+	.probe	= msm_dai_q6_dai_mi2s_probe,
+	.remove	= msm_dai_q6_dai_mi2s_remove,
 	.startup	= msm_dai_q6_mi2s_startup,
 	.prepare	= msm_dai_q6_mi2s_prepare,
 	.hw_params	= msm_dai_q6_mi2s_hw_params,
@@ -5859,8 +5788,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "Primary MI2S",
 		.id = MSM_PRIM_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -5890,8 +5817,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "Secondary MI2S",
 		.id = MSM_SEC_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -5921,8 +5846,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "Tertiary MI2S",
 		.id = MSM_TERT_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -5952,8 +5875,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "Quaternary MI2S",
 		.id = MSM_QUAT_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -5978,8 +5899,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "Quinary MI2S",
 		.id = MSM_QUIN_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -6003,8 +5922,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "Senary MI2S",
 		.id = MSM_SENARY_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -6043,8 +5960,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "INT0 MI2S",
 		.id = MSM_INT0_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -6070,8 +5985,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "INT1 MI2S",
 		.id = MSM_INT1_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -6097,8 +6010,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "INT2 MI2S",
 		.id = MSM_INT2_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -6124,8 +6035,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "INT3 MI2S",
 		.id = MSM_INT3_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -6152,8 +6061,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "INT4 MI2S",
 		.id = MSM_INT4_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -6179,8 +6086,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "INT5 MI2S",
 		.id = MSM_INT5_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -6206,8 +6111,6 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.ops = &msm_dai_q6_mi2s_ops,
 		.name = "INT6 MI2S",
 		.id = MSM_INT6_MI2S,
-		.probe = msm_dai_q6_dai_mi2s_probe,
-		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
 };
 
@@ -6554,10 +6457,9 @@ rtn:
 	return rc;
 }
 
-static int msm_dai_q6_mi2s_dev_remove(struct platform_device *pdev)
+static void msm_dai_q6_mi2s_dev_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_component(&pdev->dev);
-	return 0;
 }
 
 static int msm_dai_q6_dai_meta_mi2s_probe(struct snd_soc_dai *dai)
@@ -6965,6 +6867,8 @@ static void msm_dai_q6_meta_mi2s_shutdown(struct snd_pcm_substream *substream,
 }
 
 static struct snd_soc_dai_ops msm_dai_q6_meta_mi2s_ops = {
+	.probe	= msm_dai_q6_dai_meta_mi2s_probe,
+	.remove	= msm_dai_q6_dai_meta_mi2s_remove,
 	.startup	= msm_dai_q6_meta_mi2s_startup,
 	.prepare	= msm_dai_q6_meta_mi2s_prepare,
 	.hw_params	= msm_dai_q6_meta_mi2s_hw_params,
@@ -6994,8 +6898,6 @@ static struct snd_soc_dai_driver msm_dai_q6_meta_mi2s_dai[] = {
 		.ops = &msm_dai_q6_meta_mi2s_ops,
 		.name = "Primary META MI2S",
 		.id = AFE_PORT_ID_PRIMARY_META_MI2S_RX,
-		.probe = msm_dai_q6_dai_meta_mi2s_probe,
-		.remove = msm_dai_q6_dai_meta_mi2s_remove,
 	},
 	{
 		.playback = {
@@ -7013,8 +6915,6 @@ static struct snd_soc_dai_driver msm_dai_q6_meta_mi2s_dai[] = {
 		.ops = &msm_dai_q6_meta_mi2s_ops,
 		.name = "Secondary META MI2S",
 		.id = AFE_PORT_ID_SECONDARY_META_MI2S_RX,
-		.probe = msm_dai_q6_dai_meta_mi2s_probe,
-		.remove = msm_dai_q6_dai_meta_mi2s_remove,
 	},
 };
 
@@ -7209,10 +7109,9 @@ rtn:
 	return rc;
 }
 
-static int msm_dai_q6_meta_mi2s_dev_remove(struct platform_device *pdev)
+static void msm_dai_q6_meta_mi2s_dev_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_component(&pdev->dev);
-	return 0;
 }
 
 static const struct snd_soc_component_driver msm_dai_q6_component = {
@@ -7239,34 +7138,34 @@ static int msm_dai_q6_dev_probe(struct platform_device *pdev)
 
 	switch (id) {
 	case SLIMBUS_0_RX:
-		strlcpy(stream_name, "Slimbus Playback", 80);
+		strscpy(stream_name, "Slimbus Playback", 80);
 		goto register_slim_playback;
 	case SLIMBUS_2_RX:
-		strlcpy(stream_name, "Slimbus2 Playback", 80);
+		strscpy(stream_name, "Slimbus2 Playback", 80);
 		goto register_slim_playback;
 	case SLIMBUS_1_RX:
-		strlcpy(stream_name, "Slimbus1 Playback", 80);
+		strscpy(stream_name, "Slimbus1 Playback", 80);
 		goto register_slim_playback;
 	case SLIMBUS_3_RX:
-		strlcpy(stream_name, "Slimbus3 Playback", 80);
+		strscpy(stream_name, "Slimbus3 Playback", 80);
 		goto register_slim_playback;
 	case SLIMBUS_4_RX:
-		strlcpy(stream_name, "Slimbus4 Playback", 80);
+		strscpy(stream_name, "Slimbus4 Playback", 80);
 		goto register_slim_playback;
 	case SLIMBUS_5_RX:
-		strlcpy(stream_name, "Slimbus5 Playback", 80);
+		strscpy(stream_name, "Slimbus5 Playback", 80);
 		goto register_slim_playback;
 	case SLIMBUS_6_RX:
-		strlcpy(stream_name, "Slimbus6 Playback", 80);
+		strscpy(stream_name, "Slimbus6 Playback", 80);
 		goto register_slim_playback;
 	case SLIMBUS_7_RX:
-		strlcpy(stream_name, "Slimbus7 Playback", sizeof(stream_name));
+		strscpy(stream_name, "Slimbus7 Playback", sizeof(stream_name));
 		goto register_slim_playback;
 	case SLIMBUS_8_RX:
-		strlcpy(stream_name, "Slimbus8 Playback", sizeof(stream_name));
+		strscpy(stream_name, "Slimbus8 Playback", sizeof(stream_name));
 		goto register_slim_playback;
 	case SLIMBUS_9_RX:
-		strlcpy(stream_name, "Slimbus9 Playback", sizeof(stream_name));
+		strscpy(stream_name, "Slimbus9 Playback", sizeof(stream_name));
 		goto register_slim_playback;
 register_slim_playback:
 		rc = -ENODEV;
@@ -7287,34 +7186,34 @@ register_slim_playback:
 				__func__, stream_name);
 		break;
 	case SLIMBUS_0_TX:
-		strlcpy(stream_name, "Slimbus Capture", 80);
+		strscpy(stream_name, "Slimbus Capture", 80);
 		goto register_slim_capture;
 	case SLIMBUS_1_TX:
-		strlcpy(stream_name, "Slimbus1 Capture", 80);
+		strscpy(stream_name, "Slimbus1 Capture", 80);
 		goto register_slim_capture;
 	case SLIMBUS_2_TX:
-		strlcpy(stream_name, "Slimbus2 Capture", 80);
+		strscpy(stream_name, "Slimbus2 Capture", 80);
 		goto register_slim_capture;
 	case SLIMBUS_3_TX:
-		strlcpy(stream_name, "Slimbus3 Capture", 80);
+		strscpy(stream_name, "Slimbus3 Capture", 80);
 		goto register_slim_capture;
 	case SLIMBUS_4_TX:
-		strlcpy(stream_name, "Slimbus4 Capture", 80);
+		strscpy(stream_name, "Slimbus4 Capture", 80);
 		goto register_slim_capture;
 	case SLIMBUS_5_TX:
-		strlcpy(stream_name, "Slimbus5 Capture", 80);
+		strscpy(stream_name, "Slimbus5 Capture", 80);
 		goto register_slim_capture;
 	case SLIMBUS_6_TX:
-		strlcpy(stream_name, "Slimbus6 Capture", 80);
+		strscpy(stream_name, "Slimbus6 Capture", 80);
 		goto register_slim_capture;
 	case SLIMBUS_7_TX:
-		strlcpy(stream_name, "Slimbus7 Capture", sizeof(stream_name));
+		strscpy(stream_name, "Slimbus7 Capture", sizeof(stream_name));
 		goto register_slim_capture;
 	case SLIMBUS_8_TX:
-		strlcpy(stream_name, "Slimbus8 Capture", sizeof(stream_name));
+		strscpy(stream_name, "Slimbus8 Capture", sizeof(stream_name));
 		goto register_slim_capture;
 	case SLIMBUS_9_TX:
-		strlcpy(stream_name, "Slimbus9 Capture", sizeof(stream_name));
+		strscpy(stream_name, "Slimbus9 Capture", sizeof(stream_name));
 		goto register_slim_capture;
 register_slim_capture:
 		rc = -ENODEV;
@@ -7369,10 +7268,10 @@ register_slim_capture:
 			&msm_dai_q6_component, &msm_dai_q6_usb_tx_dai, 1);
 		break;
 	case RT_PROXY_DAI_001_RX:
-		strlcpy(stream_name, "AFE Playback", 80);
+		strscpy(stream_name, "AFE Playback", 80);
 		goto register_afe_playback;
 	case RT_PROXY_DAI_002_RX:
-		strlcpy(stream_name, "AFE-PROXY RX", 80);
+		strscpy(stream_name, "AFE-PROXY RX", 80);
 register_afe_playback:
 		rc = -ENODEV;
 		len = strnlen(stream_name, 80);
@@ -7391,10 +7290,10 @@ register_afe_playback:
 			__func__, stream_name);
 		break;
 	case RT_PROXY_DAI_001_TX:
-		strlcpy(stream_name, "AFE-PROXY TX", 80);
+		strscpy(stream_name, "AFE-PROXY TX", 80);
 		goto register_afe_capture;
 	case RT_PROXY_DAI_002_TX:
-		strlcpy(stream_name, "AFE Capture", 80);
+		strscpy(stream_name, "AFE Capture", 80);
 register_afe_capture:
 		rc = -ENODEV;
 		len = strnlen(stream_name, 80);
@@ -7413,10 +7312,10 @@ register_afe_capture:
 			__func__, stream_name);
 		break;
 	case VOICE_PLAYBACK_TX:
-		strlcpy(stream_name, "Voice Farend Playback", 80);
+		strscpy(stream_name, "Voice Farend Playback", 80);
 		goto register_voice_playback;
 	case VOICE2_PLAYBACK_TX:
-		strlcpy(stream_name, "Voice2 Farend Playback", 80);
+		strscpy(stream_name, "Voice2 Farend Playback", 80);
 register_voice_playback:
 		rc = -ENODEV;
 		len = strnlen(stream_name, 80);
@@ -7435,10 +7334,10 @@ register_voice_playback:
 			       __func__, stream_name);
 		break;
 	case VOICE_RECORD_RX:
-		strlcpy(stream_name, "Voice Downlink Capture", 80);
+		strscpy(stream_name, "Voice Downlink Capture", 80);
 		goto register_uplink_capture;
 	case VOICE_RECORD_TX:
-		strlcpy(stream_name, "Voice Uplink Capture", 80);
+		strscpy(stream_name, "Voice Uplink Capture", 80);
 register_uplink_capture:
 		rc = -ENODEV;
 		len = strnlen(stream_name, 80);
@@ -7473,10 +7372,9 @@ register_uplink_capture:
 	return rc;
 }
 
-static int msm_dai_q6_dev_remove(struct platform_device *pdev)
+static void msm_dai_q6_dev_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_component(&pdev->dev);
-	return 0;
 }
 
 static const struct of_device_id msm_dai_q6_dev_dt_match[] = {
@@ -7487,7 +7385,6 @@ MODULE_DEVICE_TABLE(of, msm_dai_q6_dev_dt_match);
 
 static struct platform_driver msm_dai_q6_dev = {
 	.probe  = msm_dai_q6_dev_probe,
-	.remove = msm_dai_q6_dev_remove,
 	.driver = {
 		.name = "msm-dai-q6-dev",
 		.owner = THIS_MODULE,
@@ -7512,10 +7409,9 @@ static int msm_dai_q6_probe(struct platform_device *pdev)
 	return rc;
 }
 
-static int msm_dai_q6_remove(struct platform_device *pdev)
+static void msm_dai_q6_remove(struct platform_device *pdev)
 {
 	of_platform_depopulate(&pdev->dev);
-	return 0;
 }
 
 static const struct of_device_id msm_dai_q6_dt_match[] = {
@@ -7525,7 +7421,6 @@ static const struct of_device_id msm_dai_q6_dt_match[] = {
 MODULE_DEVICE_TABLE(of, msm_dai_q6_dt_match);
 static struct platform_driver msm_dai_q6 = {
 	.probe  = msm_dai_q6_probe,
-	.remove = msm_dai_q6_remove,
 	.driver = {
 		.name = "msm-dai-q6",
 		.owner = THIS_MODULE,
@@ -7547,9 +7442,8 @@ static int msm_dai_mi2s_q6_probe(struct platform_device *pdev)
 	return rc;
 }
 
-static int msm_dai_mi2s_q6_remove(struct platform_device *pdev)
+static void msm_dai_mi2s_q6_remove(struct platform_device *pdev)
 {
-	return 0;
 }
 
 static const struct of_device_id msm_dai_mi2s_dt_match[] = {
@@ -7561,7 +7455,6 @@ MODULE_DEVICE_TABLE(of, msm_dai_mi2s_dt_match);
 
 static struct platform_driver msm_dai_mi2s_q6 = {
 	.probe  = msm_dai_mi2s_q6_probe,
-	.remove = msm_dai_mi2s_q6_remove,
 	.driver = {
 		.name = "msm-dai-mi2s",
 		.owner = THIS_MODULE,
@@ -7653,10 +7546,9 @@ static int msm_dai_q6_spdif_dev_probe(struct platform_device *pdev)
 	return rc;
 }
 
-static int msm_dai_q6_spdif_dev_remove(struct platform_device *pdev)
+static void msm_dai_q6_spdif_dev_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_component(&pdev->dev);
-	return 0;
 }
 
 static const struct of_device_id msm_dai_q6_spdif_dt_match[] = {
@@ -7667,7 +7559,6 @@ MODULE_DEVICE_TABLE(of, msm_dai_q6_spdif_dt_match);
 
 static struct platform_driver msm_dai_q6_spdif_driver = {
 	.probe  = msm_dai_q6_spdif_dev_probe,
-	.remove = msm_dai_q6_spdif_dev_remove,
 	.driver = {
 		.name = "msm-dai-q6-spdif",
 		.owner = THIS_MODULE,
@@ -7885,9 +7776,8 @@ rtn:
 	return rc;
 }
 
-static int msm_dai_tdm_q6_remove(struct platform_device *pdev)
+static void msm_dai_tdm_q6_remove(struct platform_device *pdev)
 {
-	return 0;
 }
 
 static const struct of_device_id msm_dai_tdm_dt_match[] = {
@@ -7899,7 +7789,6 @@ MODULE_DEVICE_TABLE(of, msm_dai_tdm_dt_match);
 
 static struct platform_driver msm_dai_tdm_q6 = {
 	.probe  = msm_dai_tdm_q6_probe,
-	.remove = msm_dai_tdm_q6_remove,
 	.driver = {
 		.name = "msm-dai-tdm",
 		.owner = THIS_MODULE,
@@ -9311,8 +9200,8 @@ static int msm_dai_q6_tdm_set_sysclk(struct snd_soc_dai *dai,
 }
 
 static int msm_dai_q6_tdm_set_channel_map(struct snd_soc_dai *dai,
-				unsigned int tx_num, unsigned int *tx_slot,
-				unsigned int rx_num, unsigned int *rx_slot)
+				unsigned int tx_num, const unsigned int *tx_slot,
+				unsigned int rx_num, const unsigned int *rx_slot)
 {
 	int rc = 0;
 	struct msm_dai_q6_tdm_dai_data *dai_data =
@@ -9952,6 +9841,8 @@ static void msm_dai_q6_tdm_shutdown(struct snd_pcm_substream *substream,
 }
 
 static struct snd_soc_dai_ops msm_dai_q6_tdm_ops = {
+	.probe	= msm_dai_q6_dai_tdm_probe,
+	.remove	= msm_dai_q6_dai_tdm_remove,
 	.prepare          = msm_dai_q6_tdm_prepare,
 	.hw_params        = msm_dai_q6_tdm_hw_params,
 	.set_tdm_slot     = msm_dai_q6_tdm_set_tdm_slot,
@@ -9979,8 +9870,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_RX_0",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_RX,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10000,8 +9889,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_RX_1",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_RX_1,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10021,8 +9908,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_RX_2",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_RX_2,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10042,8 +9927,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_RX_3",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_RX_3,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10063,8 +9946,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_RX_4",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_RX_4,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10084,8 +9965,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_RX_5",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_RX_5,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10105,8 +9984,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_RX_6",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_RX_6,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10126,8 +10003,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_RX_7",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_RX_7,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10147,8 +10022,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_TX_0",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_TX,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10168,8 +10041,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_TX_1",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_TX_1,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10189,8 +10060,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_TX_2",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_TX_2,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10210,8 +10079,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_TX_3",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_TX_3,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10231,8 +10098,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_TX_4",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_TX_4,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10252,8 +10117,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_TX_5",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_TX_5,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10273,8 +10136,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_TX_6",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_TX_6,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10294,8 +10155,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "PRI_TDM_TX_7",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_PRIMARY_TDM_TX_7,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10315,8 +10174,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_RX_0",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_RX,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10336,8 +10193,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_RX_1",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_RX_1,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10357,8 +10212,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_RX_2",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_RX_2,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10378,8 +10231,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_RX_3",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_RX_3,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10399,8 +10250,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_RX_4",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_RX_4,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10420,8 +10269,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_RX_5",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_RX_5,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10441,8 +10288,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_RX_6",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_RX_6,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10462,8 +10307,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_RX_7",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_RX_7,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10483,8 +10326,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_TX_0",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_TX,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10504,8 +10345,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_TX_1",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_TX_1,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10525,8 +10364,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_TX_2",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_TX_2,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10546,8 +10383,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_TX_3",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_TX_3,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10567,8 +10402,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_TX_4",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_TX_4,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10588,8 +10421,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_TX_5",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_TX_5,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10609,8 +10440,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_TX_6",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_TX_6,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10630,8 +10459,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEC_TDM_TX_7",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SECONDARY_TDM_TX_7,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10651,8 +10478,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_RX_0",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_RX,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10672,8 +10497,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_RX_1",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_RX_1,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10693,8 +10516,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_RX_2",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_RX_2,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10714,8 +10535,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_RX_3",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_RX_3,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10735,8 +10554,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_RX_4",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_RX_4,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10756,8 +10573,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_RX_5",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_RX_5,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10777,8 +10592,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_RX_6",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_RX_6,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10798,8 +10611,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_RX_7",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_RX_7,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10819,8 +10630,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_TX_0",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_TX,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10840,8 +10649,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_TX_1",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_TX_1,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10861,8 +10668,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_TX_2",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_TX_2,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10882,8 +10687,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_TX_3",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_TX_3,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10903,8 +10706,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_TX_4",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_TX_4,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10924,8 +10725,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_TX_5",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_TX_5,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10945,8 +10744,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_TX_6",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_TX_6,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -10966,8 +10763,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "TERT_TDM_TX_7",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_TERTIARY_TDM_TX_7,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -10987,8 +10782,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_RX_0",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_RX,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11008,8 +10801,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_RX_1",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_RX_1,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11029,8 +10820,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_RX_2",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_RX_2,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11050,8 +10839,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_RX_3",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_RX_3,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11071,8 +10858,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_RX_4",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_RX_4,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11092,8 +10877,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_RX_5",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_RX_5,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11113,8 +10896,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_RX_6",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_RX_6,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11134,8 +10915,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_RX_7",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_RX_7,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11155,8 +10934,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_TX_0",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_TX,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11176,8 +10953,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_TX_1",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_TX_1,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11197,8 +10972,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_TX_2",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_TX_2,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11218,8 +10991,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_TX_3",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_TX_3,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11239,8 +11010,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_TX_4",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_TX_4,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11260,8 +11029,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_TX_5",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_TX_5,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11281,8 +11048,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_TX_6",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_TX_6,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11302,8 +11067,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUAT_TDM_TX_7",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUATERNARY_TDM_TX_7,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11323,8 +11086,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_RX_0",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_RX,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11344,8 +11105,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_RX_1",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_RX_1,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11365,8 +11124,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_RX_2",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_RX_2,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11386,8 +11143,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_RX_3",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_RX_3,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11407,8 +11162,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_RX_4",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_RX_4,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11428,8 +11181,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_RX_5",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_RX_5,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11449,8 +11200,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_RX_6",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_RX_6,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11470,8 +11219,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_RX_7",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_RX_7,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11491,8 +11238,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_TX_0",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_TX,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11512,8 +11257,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_TX_1",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_TX_1,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11533,8 +11276,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_TX_2",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_TX_2,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11554,8 +11295,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_TX_3",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_TX_3,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11575,8 +11314,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_TX_4",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_TX_4,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11596,8 +11333,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_TX_5",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_TX_5,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11617,8 +11352,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_TX_6",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_TX_6,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11638,8 +11371,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "QUIN_TDM_TX_7",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_QUINARY_TDM_TX_7,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11659,8 +11390,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_RX_0",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_RX,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11680,8 +11409,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_RX_1",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_RX_1,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11701,8 +11428,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_RX_2",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_RX_2,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11722,8 +11447,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_RX_3",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_RX_3,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11743,8 +11466,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_RX_4",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_RX_4,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11764,8 +11485,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_RX_5",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_RX_5,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11785,8 +11504,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_RX_6",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_RX_6,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.playback = {
@@ -11806,8 +11523,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_RX_7",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_RX_7,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11827,8 +11542,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_TX_0",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_TX,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11848,8 +11561,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_TX_1",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_TX_1,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11869,8 +11580,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_TX_2",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_TX_2,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11890,8 +11599,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_TX_3",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_TX_3,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11911,8 +11618,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_TX_4",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_TX_4,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11932,8 +11637,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_TX_5",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_TX_5,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11953,8 +11656,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_TX_6",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_TX_6,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 	{
 		.capture = {
@@ -11974,8 +11675,6 @@ static struct snd_soc_dai_driver msm_dai_q6_tdm_dai[] = {
 		.name = "SEN_TDM_TX_7",
 		.ops = &msm_dai_q6_tdm_ops,
 		.id = AFE_PORT_ID_SENARY_TDM_TX_7,
-		.probe = msm_dai_q6_dai_tdm_probe,
-		.remove = msm_dai_q6_dai_tdm_remove,
 	},
 };
 
@@ -12201,7 +11900,7 @@ rtn:
 	return rc;
 }
 
-static int msm_dai_q6_tdm_dev_remove(struct platform_device *pdev)
+static void msm_dai_q6_tdm_dev_remove(struct platform_device *pdev)
 {
 	struct msm_dai_q6_tdm_dai_data *dai_data =
 		dev_get_drvdata(&pdev->dev);
@@ -12210,7 +11909,6 @@ static int msm_dai_q6_tdm_dev_remove(struct platform_device *pdev)
 
 	kfree(dai_data);
 
-	return 0;
 }
 
 static const struct of_device_id msm_dai_q6_tdm_dev_dt_match[] = {
@@ -12328,8 +12026,8 @@ static int msm_dai_q6_dai_cdc_dma_remove(struct snd_soc_dai *dai)
 }
 
 static int msm_dai_q6_cdc_dma_set_channel_map(struct snd_soc_dai *dai,
-			unsigned int tx_num_ch, unsigned int *tx_ch_mask,
-			unsigned int rx_num_ch, unsigned int *rx_ch_mask)
+			unsigned int tx_num_ch, const unsigned int *tx_ch_mask,
+			unsigned int rx_num_ch, const unsigned int *rx_ch_mask)
 
 {
 	int rc = 0;
@@ -12488,7 +12186,7 @@ static void msm_dai_q6_cdc_dma_shutdown(struct snd_pcm_substream *substream,
 }
 
 static int msm_dai_q6_cdc_dma_digital_mute(struct snd_soc_dai *dai,
-				       int mute)
+				       int mute, int stream)
 {
 	int port_id = dai->id;
 	struct msm_dai_q6_cdc_dma_dai_data *dai_data =
@@ -12501,6 +12199,8 @@ static int msm_dai_q6_cdc_dma_digital_mute(struct snd_soc_dai *dai,
 }
 
 static struct snd_soc_dai_ops msm_dai_q6_cdc_dma_ops = {
+	.probe	= msm_dai_q6_dai_cdc_dma_probe,
+	.remove	= msm_dai_q6_dai_cdc_dma_remove,
 	.prepare          = msm_dai_q6_cdc_dma_prepare,
 	.hw_params        = msm_dai_q6_cdc_dma_hw_params,
 	.shutdown         = msm_dai_q6_cdc_dma_shutdown,
@@ -12508,11 +12208,13 @@ static struct snd_soc_dai_ops msm_dai_q6_cdc_dma_ops = {
 };
 
 static struct snd_soc_dai_ops msm_dai_q6_cdc_wsa_dma_ops = {
+	.probe	= msm_dai_q6_dai_cdc_dma_probe,
+	.remove	= msm_dai_q6_dai_cdc_dma_remove,
 	.prepare          = msm_dai_q6_cdc_dma_prepare,
 	.hw_params        = msm_dai_q6_cdc_dma_hw_params,
 	.shutdown         = msm_dai_q6_cdc_dma_shutdown,
 	.set_channel_map = msm_dai_q6_cdc_dma_set_channel_map,
-	.digital_mute = msm_dai_q6_cdc_dma_digital_mute,
+	.mute_stream = msm_dai_q6_cdc_dma_digital_mute,
 };
 
 static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
@@ -12539,8 +12241,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		.name = "WSA_CDC_DMA_RX_0",
 		.ops = &msm_dai_q6_cdc_wsa_dma_ops,
 		.id = AFE_PORT_ID_WSA_CODEC_DMA_RX_0,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.capture = {
@@ -12565,8 +12265,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		.name = "WSA_CDC_DMA_TX_0",
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_WSA_CODEC_DMA_TX_0,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 		},
 	{
 		.playback = {
@@ -12591,8 +12289,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		.name = "WSA_CDC_DMA_RX_1",
 		.ops = &msm_dai_q6_cdc_wsa_dma_ops,
 		.id = AFE_PORT_ID_WSA_CODEC_DMA_RX_1,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.capture = {
@@ -12617,8 +12313,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		.name = "WSA_CDC_DMA_TX_1",
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_WSA_CODEC_DMA_TX_1,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.capture = {
@@ -12643,8 +12337,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		.name = "WSA_CDC_DMA_TX_2",
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_WSA_CODEC_DMA_TX_2,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.capture = {
@@ -12668,8 +12360,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		.name = "VA_CDC_DMA_TX_0",
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_VA_CODEC_DMA_TX_0,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.capture = {
@@ -12693,8 +12383,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		.name = "VA_CDC_DMA_TX_1",
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_VA_CODEC_DMA_TX_1,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.capture = {
@@ -12718,8 +12406,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		.name = "VA_CDC_DMA_TX_2",
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_VA_CODEC_DMA_TX_2,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.playback = {
@@ -12743,8 +12429,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_RX_CODEC_DMA_RX_0,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.capture = {
@@ -12768,8 +12452,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_TX_CODEC_DMA_TX_0,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.playback = {
@@ -12793,8 +12475,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_RX_CODEC_DMA_RX_1,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.capture = {
@@ -12818,8 +12498,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_TX_CODEC_DMA_TX_1,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.playback = {
@@ -12843,8 +12521,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_RX_CODEC_DMA_RX_2,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.capture = {
@@ -12868,8 +12544,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_TX_CODEC_DMA_TX_2,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},	{
 		.playback = {
 			.stream_name = "RX CDC DMA3 Playback",
@@ -12892,8 +12566,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_RX_CODEC_DMA_RX_3,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.capture = {
@@ -12917,8 +12589,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_TX_CODEC_DMA_TX_3,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.playback = {
@@ -12942,8 +12612,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_RX_CODEC_DMA_RX_4,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.capture = {
@@ -12967,8 +12635,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_TX_CODEC_DMA_TX_4,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.playback = {
@@ -12992,8 +12658,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_RX_CODEC_DMA_RX_5,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.capture = {
@@ -13017,8 +12681,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_TX_CODEC_DMA_TX_5,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.playback = {
@@ -13042,8 +12704,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_RX_CODEC_DMA_RX_6,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 	{
 		.playback = {
@@ -13067,8 +12727,6 @@ static struct snd_soc_dai_driver msm_dai_q6_cdc_dma_dai[] = {
 		},
 		.ops = &msm_dai_q6_cdc_dma_ops,
 		.id = AFE_PORT_ID_RX_CODEC_DMA_RX_7,
-		.probe = msm_dai_q6_dai_cdc_dma_probe,
-		.remove = msm_dai_q6_dai_cdc_dma_remove,
 	},
 };
 
@@ -13123,10 +12781,9 @@ static int msm_dai_q6_cdc_dma_dev_probe(struct platform_device *pdev)
 	return -ENODEV;
 }
 
-static int msm_dai_q6_cdc_dma_dev_remove(struct platform_device *pdev)
+static void msm_dai_q6_cdc_dma_dev_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_component(&pdev->dev);
-	return 0;
 }
 
 static const struct of_device_id msm_dai_q6_cdc_dma_dev_dt_match[] = {
@@ -13161,10 +12818,9 @@ static int msm_dai_cdc_dma_q6_probe(struct platform_device *pdev)
 	return rc;
 }
 
-static int msm_dai_cdc_dma_q6_remove(struct platform_device *pdev)
+static void msm_dai_cdc_dma_q6_remove(struct platform_device *pdev)
 {
 	of_platform_depopulate(&pdev->dev);
-	return 0;
 }
 
 static const struct of_device_id msm_dai_cdc_dma_dt_match[] = {
@@ -13176,7 +12832,6 @@ MODULE_DEVICE_TABLE(of, msm_dai_cdc_dma_dt_match);
 
 static struct platform_driver msm_dai_cdc_dma_q6 = {
 	.probe  = msm_dai_cdc_dma_q6_probe,
-	.remove = msm_dai_cdc_dma_q6_remove,
 	.driver = {
 		.name = "msm-dai-cdc-dma",
 		.owner = THIS_MODULE,

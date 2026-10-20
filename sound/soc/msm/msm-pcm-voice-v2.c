@@ -147,7 +147,7 @@ static int msm_pcm_capture_prepare(struct snd_pcm_substream *substream)
 
 	return 0;
 }
-static int msm_pcm_open(struct snd_pcm_substream *substream)
+static int msm_pcm_open(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct msm_voice *voice;
@@ -226,7 +226,7 @@ static int msm_pcm_capture_close(struct snd_pcm_substream *substream)
 
 	return 0;
 }
-static int msm_pcm_close(struct snd_pcm_substream *substream)
+static int msm_pcm_close(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
 
 	struct snd_pcm_runtime *runtime = substream->runtime;
@@ -252,7 +252,7 @@ static int msm_pcm_close(struct snd_pcm_substream *substream)
 
 	return ret;
 }
-static int msm_pcm_prepare(struct snd_pcm_substream *substream)
+static int msm_pcm_prepare(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
 	int ret = 0;
 	struct snd_pcm_runtime *runtime = substream->runtime;
@@ -276,7 +276,7 @@ static int msm_pcm_prepare(struct snd_pcm_substream *substream)
 	return ret;
 }
 
-static int msm_pcm_hw_params(struct snd_pcm_substream *substream,
+static int msm_pcm_hw_params(struct snd_soc_component *component, struct snd_pcm_substream *substream,
 				struct snd_pcm_hw_params *params)
 {
 
@@ -287,7 +287,7 @@ static int msm_pcm_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static int msm_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
+static int msm_pcm_trigger(struct snd_soc_component *component, struct snd_pcm_substream *substream, int cmd)
 {
 	int ret = 0;
 	struct snd_pcm_runtime *runtime = substream->runtime;
@@ -337,7 +337,7 @@ static int msm_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 	return ret;
 }
 
-static int msm_pcm_ioctl(struct snd_pcm_substream *substream,
+static int msm_pcm_ioctl(struct snd_soc_component *component, struct snd_pcm_substream *substream,
 			 unsigned int cmd, void *arg)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
@@ -737,18 +737,9 @@ static struct snd_kcontrol_new msm_voice_rec_config_controls[] = {
 			     msm_voice_rec_config_put),
 };
 
-static const struct snd_pcm_ops msm_pcm_ops = {
-	.open			= msm_pcm_open,
-	.hw_params		= msm_pcm_hw_params,
-	.close			= msm_pcm_close,
-	.prepare		= msm_pcm_prepare,
-	.trigger		= msm_pcm_trigger,
-	.ioctl			= msm_pcm_ioctl,
-	.compat_ioctl		= msm_pcm_ioctl,
-};
 
-
-static int msm_asoc_pcm_new(struct snd_soc_pcm_runtime *rtd)
+static int msm_asoc_pcm_new(struct snd_soc_component *component,
+			struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_card *card = rtd->card->snd_card;
 	int ret = 0;
@@ -769,8 +760,14 @@ static int msm_pcm_voice_probe(struct snd_soc_component *component)
 
 static struct snd_soc_component_driver msm_soc_component = {
 	.name		= DRV_NAME,
-	.ops		= &msm_pcm_ops,
-	.pcm_new	= msm_asoc_pcm_new,
+	.open		= msm_pcm_open,
+	.close		= msm_pcm_close,
+	.prepare	= msm_pcm_prepare,
+	.hw_params	= msm_pcm_hw_params,
+	.ioctl		= msm_pcm_ioctl,
+	.compat_ioctl	= msm_pcm_ioctl,
+	.trigger	= msm_pcm_trigger,
+	.pcm_construct	= msm_asoc_pcm_new,
 	.probe		= msm_pcm_voice_probe,
 };
 
@@ -834,10 +831,9 @@ int msm_voice_get_probe_status(void)
 
 EXPORT_SYMBOL(msm_voice_get_probe_status);
 
-static int msm_pcm_remove(struct platform_device *pdev)
+static void msm_pcm_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_component(&pdev->dev);
-	return 0;
 }
 
 static const struct of_device_id msm_voice_dt_match[] = {

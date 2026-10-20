@@ -5590,7 +5590,7 @@ static int tasha_codec_set_iir_gain(struct snd_soc_dapm_widget *w,
 	dev_dbg(component->dev, "%s: event = %d\n", __func__, event);
 
 	switch (event) {
-	case SND_SOC_DAPM_POST_PMU: /* fall through */
+	case SND_SOC_DAPM_POST_PMU: fallthrough;
 	case SND_SOC_DAPM_PRE_PMD:
 		if (strnstr(w->name, "IIR0", sizeof("IIR0"))) {
 			snd_soc_component_write(component,

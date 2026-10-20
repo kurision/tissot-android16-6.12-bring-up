@@ -77,4 +77,4 @@ obj-$(CONFIG_SND_SOC)	+= xilinx/
 obj-$(CONFIG_SND_SOC)	+= xtensa/
 obj-$(CONFIG_SND_SOC)	+= sdw_utils/
 
-obj-$(CONFIG_SND_SOC_WCD9335)	+= msm/
+obj-$(CONFIG_SND_SOC_MSM8952)	+= msm/

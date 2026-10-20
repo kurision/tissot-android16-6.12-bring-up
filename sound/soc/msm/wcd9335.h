@@ -131,7 +131,7 @@ enum {
 	RX_GAIN_OFFSET_0_DB,
 };
 
-#if IS_ENABLED(CONFIG_SND_SOC_WCD9335)
+#if IS_ENABLED(CONFIG_SND_SOC_MSM_WCD9335)
 extern void *tasha_get_afe_config(struct snd_soc_component *component,
 				  enum afe_config_type config_type);
 extern int tasha_cdc_mclk_enable(struct snd_soc_component *component,
@@ -160,7 +160,7 @@ extern int tasha_set_spkr_mode(struct snd_soc_component *component, int mode);
 extern int tasha_set_spkr_gain_offset(struct snd_soc_component *component,
 				int offset);
 extern enum codec_variant tasha_codec_ver(void);
-#else /* CONFIG_SND_SOC_WCD9335 */
+#else /* CONFIG_SND_SOC_MSM_WCD9335 */
 static inline void *tasha_get_afe_config(struct snd_soc_component *component,
 				  enum afe_config_type config_type)
 {
@@ -235,5 +235,5 @@ static inline enum codec_variant tasha_codec_ver(void)
 {
 	return 0;
 }
-#endif /* CONFIG_SND_SOC_WCD9335 */
+#endif /* CONFIG_SND_SOC_MSM_WCD9335 */
 #endif
