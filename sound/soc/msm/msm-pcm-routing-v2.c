@@ -1265,8 +1265,13 @@ static int msm_routing_get_adm_topology(int fedai_id, int session_type,
 	pr_debug("%s: fedai_id %d, session_type %d, be_id %d\n",
 	       __func__, fedai_id, session_type, be_id);
 
-		goto done;
-
+	/*
+	 * The donor had "if (cal_data == NULL) goto done;" here, with
+	 * cal_data an array, so the test was always false and the lookup
+	 * below always ran.  The port removed the test but left the
+	 * goto, which turned the lookup into dead code: every session
+	 * was set up with the "no COPP topology" value.
+	 */
 	app_type = fe_dai_app_type_cfg[fedai_id][session_type][be_id].app_type;
 	acdb_dev_id =
 		fe_dai_app_type_cfg[fedai_id][session_type][be_id].acdb_dev_id;
@@ -1287,7 +1292,6 @@ static int msm_routing_get_adm_topology(int fedai_id, int session_type,
 		if (topology < 0)
 			topology = NULL_COPP_TOPOLOGY;
 	}
-done:
 	pr_debug("%s: Using topology %d\n", __func__, topology);
 	return topology;
 }
