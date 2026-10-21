@@ -4,11 +4,11 @@
  * SDM660 analog CDC, the WCD9xxx codec, the MAX98927 speaker amplifier
  * and the PCM platforms and DAIs the machine driver binds to.
  *
- * The machine driver in this kernel does not read the older
- * asoc-platform/asoc-cpu lists: it names the components it wants, and a
- * component is found by the name of its device node. The PCM platforms
- * are therefore named "<driver>.<id>", the way the ASoC core parses the
- * id out of a platform device name.
+ * The machine driver names the components it wants; ASoC derives a
+ * component's name from its device node, which carries the parent bus
+ * prefix, so the driver resolves those names to device nodes through the
+ * asoc-platform/asoc-cpu lists below. The PCM platforms keep the vendor
+ * "<driver>.<id>" names as the keys of those lists.
  *
  * The topology is the donor's (oc-test/arch/arm64/boot/dts/vendor/qcom/
  * mi8953/tissot/audio.dtsi and msm8953-audio.dtsi), with the property
@@ -119,6 +119,49 @@
 		 */
 		asoc-codec-names = "msm-dig-codec", "analog-codec";
 		asoc-codec = <&msm_digital_codec>, <&pmic_analog_codec>;
+
+		/*
+		 * The platform and CPU DAI names the machine driver uses. This
+		 * kernel's ASoC names a component after its device node, which
+		 * carries the parent bus prefix, so the names in the links do
+		 * not match it. The machine driver resolves them to these
+		 * nodes instead.
+		 */
+		asoc-platform = <&msm_pcm_dsp_0>, <&msm_pcm_dsp_1>,
+				<&msm_pcm_dsp_2>, <&msm_pcm_voice>,
+				<&msm_pcm_loopback>, <&msm_pcm_hostless>,
+				<&msm_pcm_afe>, <&msm_pcm_routing>,
+				<&msm_pcm_dsp_noirq>;
+		asoc-platform-names = "msm-pcm-dsp.0", "msm-pcm-dsp.1",
+				"msm-pcm-dsp.2", "msm-pcm-voice",
+				"msm-pcm-loopback", "msm-pcm-hostless",
+				"msm-pcm-afe", "msm-pcm-routing",
+				"msm-pcm-dsp-noirq";
+
+		asoc-cpu = <&msm_dai_mi2s_0>, <&msm_dai_mi2s_1>,
+				<&msm_dai_mi2s_2>, <&msm_dai_mi2s_3>,
+				<&msm_dai_mi2s_4>, <&msm_dai_mi2s_5>,
+				<&msm_dai_auxpcm>,
+				<&msm_dai_bt_sco_rx>, <&msm_dai_bt_sco_tx>,
+				<&msm_dai_bt_sco_rx_2>, <&msm_dai_bt_sco_tx_2>,
+				<&msm_dai_int_fm_rx>, <&msm_dai_int_fm_tx>,
+				<&msm_dai_afe_pcm_rx>, <&msm_dai_afe_pcm_tx>,
+				<&msm_dai_incall_record_rx>,
+				<&msm_dai_incall_record_tx>,
+				<&msm_dai_incall_music_rx>,
+				<&msm_dai_incall_music_tx>,
+				<&msm_dai_proxy_rx>, <&msm_dai_proxy_tx>;
+		asoc-cpu-names = "msm-dai-q6-mi2s.0", "msm-dai-q6-mi2s.1",
+				"msm-dai-q6-mi2s.2", "msm-dai-q6-mi2s.3",
+				"msm-dai-q6-mi2s.4", "msm-dai-q6-mi2s.6",
+				"msm-dai-q6-auxpcm.1",
+				"msm-dai-q6-dev.12288", "msm-dai-q6-dev.12289",
+				"msm-dai-q6-dev.12292", "msm-dai-q6-dev.12293",
+				"msm-dai-q6-dev.224", "msm-dai-q6-dev.225",
+				"msm-dai-q6-dev.240", "msm-dai-q6-dev.241",
+				"msm-dai-q6-dev.32770", "msm-dai-q6-dev.32771",
+				"msm-dai-q6-dev.32772", "msm-dai-q6-dev.32773",
+				"msm-dai-q6-dev.8194", "msm-dai-q6-dev.8195";
 
 		qcom,audio-routing =
 			"RX_BIAS", "MCLK",
@@ -422,7 +465,16 @@
 	/* The auxiliary PCM. */
 	msm_dai_auxpcm: qcom,msm-auxpcm-dev {
 		compatible = "qcom,msm-auxpcm-dev";
-		qcom,msm-dai-q6-dev-id = <1>;
+		qcom,msm-cpudai-auxpcm-mode = <0>, <0>;
+		qcom,msm-cpudai-auxpcm-sync = <1>, <1>;
+		qcom,msm-cpudai-auxpcm-frame = <5>, <4>;
+		qcom,msm-cpudai-auxpcm-quant = <2>, <2>;
+		qcom,msm-cpudai-auxpcm-num-slots = <1>, <1>;
+		qcom,msm-cpudai-auxpcm-slot-mapping = <1>, <1>;
+		qcom,msm-cpudai-auxpcm-data = <0>, <0>;
+		qcom,msm-cpudai-auxpcm-pcm-clk-rate = <2048000>, <2048000>;
+		qcom,msm-auxpcm-interface = "primary";
+		qcom,msm-cpudai-afe-clk-ver = <2>;
 	};
 };
 

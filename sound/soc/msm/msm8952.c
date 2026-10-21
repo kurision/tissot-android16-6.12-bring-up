@@ -2971,24 +2971,75 @@ static int msm8952_populate_dai_link_component_of_node(
 		struct msm_asoc_mach_data *pdata,
 		struct snd_soc_card *card)
 {
-	int i, index, ret = 0;
+	int i, j, index, ret = 0;
 	struct device *cdev = card->dev;
 	struct snd_soc_dai_link *dai_link = card->dai_link;
 	struct device_node *phandle;
 
 	/*
-	 * CAF resolved the platform, CPU and codec names to OF nodes here by
-	 * matching them against asoc-platform-names, asoc-cpu-names and
-	 * asoc-codec-names. This tree's ASoC resolves the component names in
-	 * the cpus[] and codecs[] arrays itself, so that pass is left out.
+	 * The machine driver names a platform by its device name and a CPU
+	 * DAI by its port name, the way the vendor ASoC did. This kernel's
+	 * ASoC instead names a component after its device node, which carries
+	 * the parent bus prefix ("soc@0:msm-pcm-dsp.0"), so a lookup by those
+	 * names cannot match and the card defers forever. Resolve the names to
+	 * device nodes from the lists the device tree provides; a component
+	 * with a device node is matched by node, so drop the name.
 	 *
-	 * The codec of a link is the one thing it cannot do itself: a link
-	 * names the codec's DAI, and the codec's component is found by its
-	 * name or its device node. The two CDC codecs of the primary MI2S
-	 * links are therefore taken from the device tree here, by the name
-	 * the tree gives them.
+	 * The codec of a link needs the same treatment: a link names the
+	 * codec's DAI, and the codec's component is found by its name or its
+	 * device node. The two CDC codecs of the primary MI2S links are
+	 * therefore taken from the device tree here, by the name the tree
+	 * gives them.
 	 */
 	for (i = 0; i < card->num_links; i++) {
+		for (j = 0; j < dai_link[i].num_platforms; j++) {
+			struct snd_soc_dai_link_component *platform =
+					&dai_link[i].platforms[j];
+
+			if (platform->of_node || !platform->name)
+				continue;
+
+			index = of_property_match_string(cdev->of_node,
+							 "asoc-platform-names",
+							 platform->name);
+			if (index < 0)
+				continue;
+
+			phandle = of_parse_phandle(cdev->of_node,
+						   "asoc-platform", index);
+			if (!phandle) {
+				dev_err(cdev, "%s: no node for platform %s\n",
+					__func__, platform->name);
+				return -EINVAL;
+			}
+			platform->of_node = phandle;
+			platform->name = NULL;
+		}
+
+		for (j = 0; j < dai_link[i].num_cpus; j++) {
+			struct snd_soc_dai_link_component *cpu =
+					&dai_link[i].cpus[j];
+
+			if (cpu->of_node || !cpu->dai_name)
+				continue;
+
+			index = of_property_match_string(cdev->of_node,
+							 "asoc-cpu-names",
+							 cpu->dai_name);
+			if (index < 0)
+				continue;
+
+			phandle = of_parse_phandle(cdev->of_node,
+						   "asoc-cpu", index);
+			if (!phandle) {
+				dev_err(cdev, "%s: no node for cpu dai %s\n",
+					__func__, cpu->dai_name);
+				return -EINVAL;
+			}
+			cpu->of_node = phandle;
+			cpu->dai_name = NULL;
+		}
+
 		if ((dai_link[i].id == MSM_BACKEND_DAI_PRI_MI2S_RX) ||
 		(dai_link[i].id == MSM_BACKEND_DAI_TERTIARY_MI2S_TX) ||
 		(dai_link[i].id == MSM_BACKEND_DAI_SENARY_MI2S_TX)) {
