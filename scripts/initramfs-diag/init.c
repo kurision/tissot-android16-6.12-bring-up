@@ -1706,6 +1706,63 @@ static void rebind_remoteproc(const char *match, int log)
 	closedir(rp);
 }
 
+/*
+ * The MSS (qcom_q6v5_mss) sets rproc->auto_boot = false in this port, so
+ * nothing starts it.  With the firmware search path already pointed at the
+ * modem image, writing "start" to the matching remoteproc's state is the
+ * documented interface (Documentation/ABI/testing/sysfs-class-remoteproc).
+ * Match on "mba", the MBA image name the MSS driver is registered with;
+ * adsp.mdt and wcnss.mdt do not contain it.
+ */
+static void start_remoteproc(const char *match, int log)
+{
+	char message[256], dirpath[128], name[64], state[32];
+	DIR *rp;
+	struct dirent *entry;
+	int ret;
+
+	rp = opendir("/sys/class/remoteproc");
+	if (!rp) {
+		snprintf(message, sizeof(message),
+			 "DIAG: fwlate %s: remoteproc class errno=%d\n",
+			 match, errno);
+		say(log, message);
+		return;
+	}
+	while ((entry = readdir(rp))) {
+		if (strncmp(entry->d_name, "remoteproc", 10))
+			continue;
+		snprintf(dirpath, sizeof(dirpath),
+			 "/sys/class/remoteproc/%s/firmware", entry->d_name);
+		if (read_file(dirpath, name, sizeof(name)))
+			continue;
+		if (!strstr(name, match))
+			continue;
+		snprintf(dirpath, sizeof(dirpath),
+			 "/sys/class/remoteproc/%s/state", entry->d_name);
+		if (read_file(dirpath, state, sizeof(state)))
+			state[0] = '\0';
+		snprintf(message, sizeof(message),
+			 "DIAG: fwlate %s %s before state=%s\n",
+			 match, entry->d_name, state[0] ? state : "?");
+		say(log, message);
+		if (strstr(state, "running"))
+			continue;
+		ret = attribute(dirpath, "start");
+		snprintf(message, sizeof(message),
+			 "DIAG: fwlate %s %s start ret=%d errno=%d\n",
+			 match, entry->d_name, ret, ret ? errno : 0);
+		say(log, message);
+		if (read_file(dirpath, state, sizeof(state)))
+			state[0] = '\0';
+		snprintf(message, sizeof(message),
+			 "DIAG: fwlate %s %s after state=%s\n",
+			 match, entry->d_name, state[0] ? state : "?");
+		say(log, message);
+	}
+	closedir(rp);
+}
+
 static void harvest_modem_child(int log)
 {
 	time_t deadline = monotonic_seconds() + 240;
@@ -1762,6 +1819,7 @@ static void harvest_modem_child(int log)
 	sleep(2);
 	rebind_remoteproc("adsp", log);
 	rebind_remoteproc("wcnss", log);
+	start_remoteproc("mba", log);
 	say(log, "DIAG: fwlate done\n");
 	_exit(0);
 }

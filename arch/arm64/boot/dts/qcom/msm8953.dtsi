@@ -2202,6 +2202,32 @@
 			     <GIC_PPI 4 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
 			     <GIC_PPI 1 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>;
 	};
+
+	/*
+	 * The stock QTI Bluetooth HAL does not use the mainline HCI
+	 * transport: it opens the two WCNSS SMD channels directly through
+	 * the smd_pkt character devices.  Only the Bluetooth children are
+	 * described here; the modem and ADSP packet channels are not needed
+	 * by the Bluetooth HAL and are left out until the modem data path is
+	 * verified separately.
+	 */
+	qcom,smdpkt {
+		compatible = "qcom,smdpkt";
+
+		qcom,smdpkt-apps-riva-bt-acl {
+			qcom,smdpkt-edge = "wcnss";
+			qcom,smdpkt-ch-name = "APPS_RIVA_BT_ACL";
+			qcom,smdpkt-dev-name = "smd2";
+			qcom,smdpkt-fragmented-read;
+		};
+
+		qcom,smdpkt-apps-riva-bt-cmd {
+			qcom,smdpkt-edge = "wcnss";
+			qcom,smdpkt-ch-name = "APPS_RIVA_BT_CMD";
+			qcom,smdpkt-dev-name = "smd3";
+			qcom,smdpkt-fragmented-read;
+		};
+	};
 };
 
 /* MSM8953 CPU bring-up: clock controller, APC rail, CPR. See the file. */

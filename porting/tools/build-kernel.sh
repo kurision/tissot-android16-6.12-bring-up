@@ -223,10 +223,16 @@ cp "$OUT_DIR/.config" "$SNAP/$RUN-prebuild.config"
 # The CAF audio stack is not built here: it needs CAF's DSP library,
 # which this kernel does not carry, and with it in the kernel does not
 # link. It is built on the ack-audio branch.
-for sym in KSU SLIMBUS SLIM_QCOM_CTRL ZRAM ZRAM_BACKEND_LZ4 ZRAM_BACKEND_ZSTD; do
+for sym in KSU SLIMBUS SLIM_QCOM_CTRL ZRAM ZRAM_BACKEND_LZ4 ZRAM_BACKEND_ZSTD MSM_SMD_PKT; do
  grep -q "^CONFIG_$sym=" "$OUT_DIR/.config" && sed -i "s/^CONFIG_$sym=.*/CONFIG_$sym=y/" "$OUT_DIR/.config" || \
 	echo "CONFIG_$sym=y" >> "$OUT_DIR/.config"
 done
+# The QTI Bluetooth HAL opens the WCNSS channels through /dev/smd2 and
+# /dev/smd3, which the smd_pkt driver provides.  btqcomsmd claims the same
+# channels through the WCNSS control interface and registers hci0, which
+# this HAL ignores; keep it out of the kernel so the two cannot race.
+sed -i "/^CONFIG_BT_QCOMSMD=/d" "$OUT_DIR/.config"
+echo "# CONFIG_BT_QCOMSMD is not set" >> "$OUT_DIR/.config"
 # The upstream WCD9335 and its microphone bias helper have to be off: the
 # port's own versions of both are built, they register the same DAIs, and
 # they define the same symbols. They are turned off here, and not only
@@ -259,9 +265,11 @@ else
 fi
 "${make_args[@]}" olddefconfig
 scripts/diffconfig "$SNAP/$RUN-prebuild.config" "$OUT_DIR/.config" | tee "$SNAP/$RUN-config.diff"
-for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SLIMBUS ZRAM; do
+for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SLIMBUS ZRAM MSM_SMD_PKT; do
  grep -qx "CONFIG_$sym=y" "$OUT_DIR/.config" || { echo "CONFIG_$sym is not set" >&2; exit 1; }
 done
+grep -qx '# CONFIG_BT_QCOMSMD is not set' "$OUT_DIR/.config" || {
+ echo "CONFIG_BT_QCOMSMD is still enabled" >&2; exit 1; }
 if [ -f "$NV_FIRMWARE" ]; then
  grep -qx 'CONFIG_EXTRA_FIRMWARE="wlan/prima/WCNSS_qcom_wlan_nv.bin"' "$OUT_DIR/.config" || {
   echo "CONFIG_EXTRA_FIRMWARE was not accepted" >&2; exit 1; }
