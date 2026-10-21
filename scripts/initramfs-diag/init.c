@@ -30,6 +30,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <sys/sysmacros.h>
 #include <sys/xattr.h>
 #include <termios.h>
@@ -2954,8 +2955,41 @@ static int launch_android(char **argv)
 		klog = open("/dev/kmsg", O_WRONLY);
 		if (klog < 0)
 			kerr = errno;
-		/* Before the handshake: Android's init starts with them in. */
-		load_ack_modules(klog);
+		/*
+		 * Before the handshake: Android's init starts with them in.
+		 * In a child of its own: a module whose init oopses kills the
+		 * process loading it, and if that were this one, the bootdevice
+		 * guard below would never be forked and Android's init would
+		 * wait forever for the boot device (run332, run332c). Wait for
+		 * it, but not forever: a load stuck in the kernel must not hold
+		 * the boot either.
+		 */
+		{
+			pid_t loader = fork();
+
+			if (loader == 0) {
+				close(ready[1]);
+				close(in);
+				load_ack_modules(klog);
+				_exit(0);
+			}
+			if (loader > 0) {
+				int status, waited;
+
+				for (waited = 0; waited < 300; waited++) {
+					if (waitpid(loader, &status, WNOHANG) == loader)
+						break;
+					usleep(100000);
+				}
+				if (waited == 300)
+					say(klog, "DIAG: module loader still running after 30 s; boot continues\n");
+				else if (!WIFEXITED(status) || WEXITSTATUS(status))
+					say(klog, "DIAG: module loader died (a module's init crashed?); boot continues\n");
+			} else {
+				say(klog, "DIAG: module loader fork failed; loading inline\n");
+				load_ack_modules(klog);
+			}
+		}
 		for (n = 0; n < POLL_TRIES; n++) {
 			out = open_logdump();
 			if (out >= 0)
