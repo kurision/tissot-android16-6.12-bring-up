@@ -2841,33 +2841,26 @@ static int msm_asoc_pcm_new(struct snd_soc_component *component,
 	return ret;
 }
 
-static snd_pcm_sframes_t msm_pcm_delay_blk(struct snd_soc_component *component,
-		struct snd_pcm_substream *substream)
-{
-	struct snd_pcm_runtime *runtime = substream->runtime;
-	struct msm_audio *prtd = runtime->private_data;
-	struct audio_client *ac = prtd->audio_client;
-	snd_pcm_sframes_t frames;
-	int ret;
-
-	ret = q6asm_get_path_delay(prtd->audio_client);
-	if (ret) {
-		pr_err("%s: get_path_delay failed, ret=%d\n", __func__, ret);
-		return 0;
-	}
-
-	/* convert microseconds to frames */
-	frames = ac->path_delay / 1000 * runtime->rate / 1000;
-
-	/* also convert the remainder from the initial division */
-	frames += ac->path_delay % 1000 * runtime->rate / 1000000;
-
-	/* overcompensate for the loss of precision (empirical) */
-	frames += 2;
-
-	return frames;
-}
-
+/*
+ * The donor (CAF 4.19) does not report a path delay for this platform
+ * either, and it must not: the query is a DSP round trip, and upstream
+ * 6.12 calls a component's delay callback from soc_pcm_pointer(), which
+ * runs inside snd_pcm_update_hw_ptr0() under the PCM stream lock with
+ * interrupts disabled.  Sleeping there is "BUG: scheduling while
+ * atomic" (run344, sound/soc/msm/msm-pcm-q6-v2.c).
+ *
+ * CAF 4.19 handled this with a separate blocking hook
+ * (snd_soc_dai_ops.delay_blk, include/sound/soc.h in the donor tree).
+ * The donor's ASoC core skipped the delay computation for any component
+ * that provided it (sound/soc/soc-pcm.c: "if (component->driver->
+ * delay_blk) return offset;"), and the donor's ALSA core never called
+ * ops->delay_blk at all, so the query never ran and the runtime delay
+ * stayed 0.  Removing the callback restores that behaviour.
+ *
+ * q6asm_get_path_delay() itself is unchanged and still used, from
+ * sleepable contexts, by the compress path
+ * (sound/soc/msm/msm-compress-q6-v2.c).
+ */
 static struct snd_soc_component_driver msm_soc_component = {
 	.name		= DRV_NAME,
 	.open		= msm_pcm_open,
@@ -2880,7 +2873,6 @@ static struct snd_soc_component_driver msm_soc_component = {
 	.pointer	= msm_pcm_pointer,
 	.copy		= msm_pcm_copy,
 	.mmap		= msm_pcm_mmap,
-	.delay		= msm_pcm_delay_blk,
 	.pcm_construct	= msm_asoc_pcm_new,
 };
 
