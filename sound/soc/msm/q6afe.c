@@ -8945,9 +8945,15 @@ static int afe_get_clk_src(u16 port_id, char *clk_src)
 		return -EINVAL;
 	}
 
-	/* an array member is never NULL; an empty name means unset */
-	if (!clkinfo_per_port[idx].clk_src_name[0])
-		return -EINVAL;
+	/*
+	 * The donor tested "clk_src_name == NULL", with clk_src_name
+	 * an array member, so the test was always false: the donor
+	 * copied the (possibly empty) name and returned 0.  The port
+	 * turned the dead test into a live one, which made this
+	 * getter fail with -EINVAL for every port on this platform:
+	 * nothing here ever sets the name (afe_set_clk_src_array()
+	 * has no caller here).
+	 */
 	strscpy(clk_src, clkinfo_per_port[idx].clk_src_name,
 				CLK_SRC_NAME_MAX);
 	pr_debug("%s: clk src name %s port id 0x%x\n", __func__, clk_src,
