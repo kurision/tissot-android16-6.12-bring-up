@@ -59,6 +59,9 @@
 #   CLANG, CROSS_CC        the C compiler and the aarch64 cross compiler
 #   LLVM_NM                llvm-nm, for the symbol check at the end
 #   RUST_PROFILE_FLAGS     the AutoFDO flags
+#   ACK_LK_KERNEL_LIMIT    the largest image_size the bootloader can load
+#                          (default 54001664: the DTB sits at 0x13400000)
+#   ACK_LK_HEADROOM_WARN   warn below this much headroom (default 1 MiB)
 #
 # See BUILD_TISSOT.md for the toolchain requirements and the rest of the
 # procedure.
@@ -293,6 +296,40 @@ LOG="$SNAP/$RUN-build.log"
 "${make_args[@]}" -j"$(nproc)" security/selinux/ 2>&1 | tee -a "$LOG"
 "${make_args[@]}" -j"$(nproc)" drivers/kernelsu/ 2>&1 | tee -a "$LOG"
 "${make_args[@]}" -j"$(nproc)" Image.gz 2>&1 | tee -a "$LOG"
+
+# --- the bootloader's limit -------------------------------------------------
+# The phone's LK ignores the boot header's addresses: it puts the kernel at
+# 0x10080000, then copies the DTB to 0x13400000 and the ramdisk to
+# 0x13600000, and it never checks the kernel against either. A kernel whose
+# in-memory size reaches past the DTB has its own image overwritten by the
+# DTB, then zeroes the DTB with its .bss, and dies before it has a console:
+# no log in any channel and no reset. run323 to run326 and run328 died that
+# way (porting/findings/2026-10-21-kernel-overruns-the-dtb.md).
+#
+# The size that matters is image_size in the arm64 Image header: the whole
+# in-memory footprint including .bss, not the file size.
+LK_KERNEL_LIMIT=${ACK_LK_KERNEL_LIMIT:-54001664}	# 0x13400000 - 0x10080000
+LK_HEADROOM_WARN=${ACK_LK_HEADROOM_WARN:-1048576}
+image_size=$(python3 - "$OUT_DIR/arch/arm64/boot/Image" <<'PY'
+import struct, sys
+
+with open(sys.argv[1], 'rb') as image:
+    head = image.read(64)
+assert head[56:60] == b'ARM\x64', 'not an arm64 Image'
+print(struct.unpack_from('<Q', head, 16)[0])
+PY
+)
+headroom=$((LK_KERNEL_LIMIT - image_size))
+echo "image_size=$image_size limit=$LK_KERNEL_LIMIT headroom=$headroom" | tee -a "$LOG"
+if [ "$headroom" -lt 0 ]; then
+	echo "error: the kernel's image_size is $((-headroom)) bytes over the" >&2
+	echo "error: bootloader's limit; it would overwrite its own DTB and not boot" >&2
+	exit 1
+fi
+if [ "$headroom" -lt "$LK_HEADROOM_WARN" ]; then
+	echo "warning: only $headroom bytes left below the DTB" >&2
+fi
+
 "${make_args[@]}" dt_binding_check DT_SCHEMA_FILES=clock/qcom,apcc-msm8953.yaml
 "${make_args[@]}" CHECK_DTBS=y qcom/msm8953-xiaomi-tissot.dtb
 BOOT="$OUT_DIR/arch/arm64/boot"
