@@ -507,10 +507,11 @@ stack, not something to fix by editing OPPs or governor tunables.
 
 The other reports are real but secondary.  `libperfmgr` cannot write
 `/sys/class/devfreq/soc:qcom,cpu-cpu-ddr-bw/min_freq` (no DDR bandwidth
-devfreq device) or
-`/proc/sys/dev/xiaomi_msm8953_touchscreen/enable_dt2w` (the mainline
-touch driver has no such node); those are DDR/DT2W gaps, not CPU
-frequency.  `vendor.qti.data.factory` is missing and is restarted as a
+devfreq device); that is a DDR gap, not CPU frequency.  The DT2W gap is
+closed: `edt-ft5x06` now provides
+`/proc/sys/dev/xiaomi_msm8953_touchscreen/enable_dt2w` for panels with
+`edt,gesture-wakeup`, and run334a verified the ROM toggle's write and a
+double-tap wake (`porting/findings/2026-10-21-dt2w-hardware.md`).  `vendor.qti.data.factory` is missing and is restarted as a
 lazy HAL, `vendor.qrtr-ns` no longer exits but the kernel still logs
 `failed to send del client cmd`, and DevCheck's reads of `cur_freq` are
 denied and produce
