@@ -851,7 +851,7 @@ static int msm_pcm_playback_copy(struct snd_pcm_substream *substream, int a,
 		if (bufptr) {
 			pr_debug("%s:fbytes =%lu: xfer=%d size=%d\n",
 				 __func__, fbytes, xfer, size);
-			if (copy_from_iter(bufptr, xfer, iter)) {
+			if (copy_from_iter(bufptr, xfer, iter) != xfer) {
 				ret = -EFAULT;
 				pr_err("%s: copy_from_iter failed\n",
 					__func__);
@@ -1023,7 +1023,7 @@ static int msm_pcm_capture_copy(struct snd_pcm_substream *substream,
 				size = xfer = fbytes;
 		}
 
-		if (copy_to_iter(bufptr+offset, xfer, iter)) {
+		if (copy_to_iter(bufptr+offset, xfer, iter) != xfer) {
 			pr_err("Failed to copy buf to user\n");
 			ret = -EFAULT;
 			q6asm_cpu_buf_release(OUT, prtd->audio_client);
