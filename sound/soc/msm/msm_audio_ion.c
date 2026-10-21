@@ -41,7 +41,7 @@ struct msm_audio_ion_private {
 
 struct msm_audio_alloc_data {
 	size_t len;
-	void *vaddr;
+	struct iosys_map map;
 	struct dma_buf *dma_buf;
 	struct dma_buf_attachment *attach;
 	struct sg_table *table;
@@ -244,7 +244,7 @@ static void *msm_audio_ion_map_kernel(struct dma_buf *dma_buf)
 		goto exit;
 	}
 
-	if (dma_buf_vmap(dma_buf, &addr)) {
+	if (dma_buf_vmap_unlocked(dma_buf, &addr)) {
 		pr_err("%s: kernel mapping of dma_buf failed\n",
 		       __func__);
 		goto exit;
@@ -258,7 +258,7 @@ static void *msm_audio_ion_map_kernel(struct dma_buf *dma_buf)
 	list_for_each_entry(alloc_data, &(msm_audio_ion_data.alloc_list),
 			    list) {
 		if (alloc_data->dma_buf == dma_buf) {
-			alloc_data->vaddr = addr.vaddr;
+			alloc_data->map = addr;
 			break;
 		}
 	}
@@ -271,7 +271,7 @@ exit:
 static int msm_audio_ion_unmap_kernel(struct dma_buf *dma_buf)
 {
 	int rc = 0;
-	void *vaddr = NULL;
+	struct iosys_map *map = NULL;
 	struct msm_audio_alloc_data *alloc_data = NULL;
 	struct device *cb_dev = msm_audio_ion_data.cb_dev;
 
@@ -282,12 +282,12 @@ static int msm_audio_ion_unmap_kernel(struct dma_buf *dma_buf)
 	list_for_each_entry(alloc_data, &(msm_audio_ion_data.alloc_list),
 			    list) {
 		if (alloc_data->dma_buf == dma_buf) {
-			vaddr = alloc_data->vaddr;
+			map = &alloc_data->map;
 			break;
 		}
 	}
 
-	if (!vaddr) {
+	if (!map || iosys_map_is_null(map)) {
 		dev_err(cb_dev,
 			"%s: cannot find allocation for dma_buf %pK",
 			__func__, dma_buf);
@@ -295,7 +295,8 @@ static int msm_audio_ion_unmap_kernel(struct dma_buf *dma_buf)
 		goto err;
 	}
 
-	dma_buf_vunmap(dma_buf, vaddr);
+	dma_buf_vunmap_unlocked(dma_buf, map);
+	iosys_map_clear(map);
 
 	rc = dma_buf_end_cpu_access(dma_buf, DMA_BIDIRECTIONAL);
 	if (rc) {
