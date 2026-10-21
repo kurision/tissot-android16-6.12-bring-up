@@ -3052,9 +3052,17 @@ static int msm8952_populate_dai_link_component_of_node(
 			dai_link[i].num_codecs = 1;
 		}
 
-		if ((dai_link[i].id == MSM_BACKEND_DAI_PRI_MI2S_RX) ||
-		(dai_link[i].id == MSM_BACKEND_DAI_TERTIARY_MI2S_TX) ||
-		(dai_link[i].id == MSM_BACKEND_DAI_SENARY_MI2S_TX)) {
+		/*
+		 * Front-end and back-end ids are separate enum spaces and
+		 * collide numerically: MSM_FRONTEND_DAI_VOICEMMODE1 and
+		 * MSM_BACKEND_DAI_TERTIARY_MI2S_TX are both 46. Restrict the
+		 * lookup to backends, or it rewrites a front-end dummy codec
+		 * and writes codecs[ANA_CDC] past a one-element array.
+		 */
+		if (dai_link[i].no_pcm &&
+		    (dai_link[i].id == MSM_BACKEND_DAI_PRI_MI2S_RX ||
+		     dai_link[i].id == MSM_BACKEND_DAI_TERTIARY_MI2S_TX ||
+		     dai_link[i].id == MSM_BACKEND_DAI_SENARY_MI2S_TX)) {
 			if (pdata->snd_card_val == INT_SND_CARD) {
 				index = of_property_match_string(
 						cdev->of_node,
@@ -3119,9 +3127,10 @@ static int msm8952_populate_dai_link_component_of_node(
 				dai_link[i].codecs[DIG_CDC].of_node = phandle;
 			}
 		}
-		if ((dai_link[i].id == MSM_BACKEND_DAI_QUATERNARY_MI2S_RX) &&
-			(of_property_read_bool(
-			cdev->of_node, "ext_pa_tfa98xx"))) {
+		if (dai_link[i].no_pcm &&
+		    dai_link[i].id == MSM_BACKEND_DAI_QUATERNARY_MI2S_RX &&
+		    of_property_read_bool(cdev->of_node,
+					  "ext_pa_tfa98xx")) {
 			index = of_property_match_string(
 					cdev->of_node,
 					"asoc-codec-names",
