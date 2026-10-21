@@ -463,6 +463,26 @@
 			status = "disabled";
 		};
 
+		/*
+		 * The NoC fabrics of the SoC. They are the providers of the
+		 * interconnect framework: every consumer that reads or writes
+		 * memory through one of them votes its bandwidth on the path
+		 * between its master and the memory slave.
+		 *
+		 * The nodes are the ones upstream mainline uses for this
+		 * SoC (arch/arm64/boot/dts/qcom/msm8953.dtsi), with the
+		 * register windows of the vendor device tree
+		 * (porting/artifacts/tissot-live.dts:1141-1180): bimc at
+		 * 0x400000, pcnoc at 0x500000 and snoc at 0x580000, the last
+		 * one with the multimedia NoC as its child.
+		 */
+		bimc: interconnect@400000 {
+			compatible = "qcom,msm8953-bimc";
+			reg = <0x00400000 0x5a000>;
+
+			#interconnect-cells = <2>;
+		};
+
 		rng@e3000 {
 			compatible = "qcom,prng";
 			reg = <0x000e3000 0x1000>;
@@ -484,6 +504,29 @@
 		restart@4ab000 {
 			compatible = "qcom,pshold";
 			reg = <0x004ab000 0x4>;
+		};
+
+		pcnoc: interconnect@500000 {
+			compatible = "qcom,msm8953-pcnoc";
+			reg = <0x00500000 0x12080>;
+
+			clocks = <&gcc GCC_PCNOC_USB3_AXI_CLK>;
+			clock-names = "pcnoc_usb3_axi";
+
+			#interconnect-cells = <2>;
+		};
+
+		snoc: interconnect@580000 {
+			compatible = "qcom,msm8953-snoc";
+			reg = <0x00580000 0x16080>;
+
+			#interconnect-cells = <2>;
+
+			snoc_mm: interconnect-snoc {
+				compatible = "qcom,msm8953-snoc-mm";
+
+				#interconnect-cells = <2>;
+			};
 		};
 
 		tlmm: pinctrl@1000000 {
