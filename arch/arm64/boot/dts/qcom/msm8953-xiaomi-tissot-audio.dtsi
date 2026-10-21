@@ -17,7 +17,59 @@
 
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 
+/*
+ * The ADSP's buffer stream (SID 0x2401) is the adsp_io context bank at
+ * 0x1e2f000 (downstream msm-arm-smmu-8953.dtsi), which is bank 0xf of this
+ * IOMMU: the existing VFE, MDP_0 and VENUS_NS banks at 0x14, 0x15 and 0x16
+ * are that file's 0x1e34000, 0x1e35000 and 0x1e36000. Non-secure.
+ */
+&apps_iommu {
+	/* ADSP_IO */
+	iommu-ctx@f000 {
+		compatible = "qcom,msm-iommu-v1-ns";
+		reg = <0xf000 0x1000>;
+		interrupts = <GIC_SPI 104 IRQ_TYPE_LEVEL_HIGH>;
+	};
+};
+
 &soc {
+	/*
+	 * APR, the transport to the ADSP, and its two children: the DSP
+	 * library's core service and the memory the DSP's buffers come
+	 * from. The donor's node is msm-audio-lpass.dtsi's, with
+	 * msm8953-audio.dtsi's q6core child and IOMMU. Its iommus cell was
+	 * the stream ID; here it is the context bank, and the stream ID the
+	 * ADSP sees is qcom,smmu-sid, masked to 1 exactly as the donor's
+	 * 0x2401 & 0xf.
+	 */
+	audio_apr: qcom,msm-audio-apr {
+		compatible = "qcom,msm-audio-apr";
+		qcom,subsys-name = "apr_adsp";
+
+		msm_audio_ion: qcom,msm-audio-ion {
+			compatible = "qcom,msm-audio-ion";
+			qcom,smmu-version = <2>;
+			qcom,smmu-enabled;
+			iommus = <&apps_iommu 0xf>;
+			qcom,smmu-sid = /bits/ 64 <0x2401>;
+			qcom,smmu-sid-mask = /bits/ 64 <0xf>;
+		};
+
+		/* Unlabelled: msm8953.dtsi's upstream APR already has q6core. */
+		q6core {
+			compatible = "qcom,q6core-audio";
+		};
+	};
+
+	/* The audio timer, as the donor's msm8953-audio.dtsi. */
+	qcom,avtimer@c0a300c {
+		compatible = "qcom,avtimer";
+		reg = <0x0c0a300c 0x4>,
+		      <0x0c0a3010 0x4>;
+		reg-names = "avtimer_lsb_addr", "avtimer_msb_addr";
+		qcom,clk-div = <27>;
+	};
+
 	/*
 	 * The sound card. The four registers are the CSR GPIO muxes the
 	 * driver maps, not a device.
