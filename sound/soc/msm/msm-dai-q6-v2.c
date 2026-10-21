@@ -7116,6 +7116,15 @@ static void msm_dai_q6_meta_mi2s_dev_remove(struct platform_device *pdev)
 
 static const struct snd_soc_component_driver msm_dai_q6_component = {
 	.name		= "msm-dai-q6-dev",
+	/*
+	 * The DAIs registered through this component (slimbus, BT SCO, FM,
+	 * AFE, voice, proxy, USB) have no .name of their own and rely on the
+	 * legacy single-name scheme. 4.19 used that scheme unless
+	 * non_legacy_dai_naming was set; 6.12 made it opt-in, so without this
+	 * flag fmt_multiple_name() rejects the nameless DAIs and every
+	 * single-DAI registration fails with -ENOMEM.
+	 */
+	.legacy_dai_naming = 1,
 };
 
 static int msm_dai_q6_dev_probe(struct platform_device *pdev)
