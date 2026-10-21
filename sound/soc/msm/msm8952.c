@@ -3040,6 +3040,18 @@ static int msm8952_populate_dai_link_component_of_node(
 			cpu->dai_name = NULL;
 		}
 
+		/*
+		 * The vendor machine driver named a codec on every link: the
+		 * stub codec on the DSP backends, the dummy codec on the front
+		 * ends. This tree has no stub codec, and 6.12's channel-map
+		 * check rejects a link with no codec at all, so give the
+		 * backends the dummy codec the front ends already use.
+		 */
+		if (!dai_link[i].num_codecs) {
+			dai_link[i].codecs = &snd_soc_dummy_dlc;
+			dai_link[i].num_codecs = 1;
+		}
+
 		if ((dai_link[i].id == MSM_BACKEND_DAI_PRI_MI2S_RX) ||
 		(dai_link[i].id == MSM_BACKEND_DAI_TERTIARY_MI2S_TX) ||
 		(dai_link[i].id == MSM_BACKEND_DAI_SENARY_MI2S_TX)) {
