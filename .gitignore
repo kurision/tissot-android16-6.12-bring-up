@@ -193,6 +193,7 @@ porting/artifacts/**/*.img
 porting/artifacts/firmware-wcnss/
 porting/artifacts/**/*.gz-dtb
 porting/artifacts/**/kdir-*/
+porting/artifacts/**/modules-*/
 porting/artifacts/snapshot*/*.gz
 porting/artifacts/snapshot*/base-ramdisk
 porting/artifacts/snapshot*/Image.gz
@@ -299,6 +300,7 @@ porting/artifacts/**/run*-user-capture/
 porting/artifacts/**/root-audit-*/
 porting/artifacts/**/stale-*/
 porting/artifacts/**/kdir-*/
+porting/artifacts/**/modules-*/
 
 # Bulk file types: boot images, logdumps, ramdisk and kernel blobs,
 # screenshots and the raw capture streams.

@@ -5,7 +5,10 @@ Only the cpio record named "init" is replaced; every other ramdisk record and
 every header byte except kernel_size, ramdisk_size, cmdline and id must stay
 identical, which this script asserts before writing anything. Two opt-in
 extensions: --firmware-dir stages files as lib/firmware/<relpath> (with
-explicit dir records), --debuggable forces ro.secure=0 ro.debuggable=1.
+explicit dir records), --modules-dir stages files as ack-modules/<relpath>
+(the diag init loads them; not lib/modules, which Android's first-stage init
+scans itself and fails the boot over), --debuggable forces ro.secure=0
+ro.debuggable=1.
 """
 
 import argparse
@@ -305,6 +308,10 @@ def main():
     ap.add_argument("--init", required=True)
     ap.add_argument("--firmware-dir", default=None,
                     help="stage every file under DIR as lib/firmware/<relpath>")
+    ap.add_argument("--modules-dir", default=None,
+                    help="stage every file under DIR as ack-modules/<relpath>: "
+                         "the kernel modules and their load-order list, which "
+                         "the diag init loads")
     ap.add_argument("--debuggable", action="store_true",
                     help="force ro.secure=0 ro.debuggable=1 in prop.default")
     ap.add_argument("--keep-stock-console", action="store_true",
@@ -351,6 +358,16 @@ def main():
                     fw_entries.append(("lib/firmware/" + arc, f.read()))
         if not fw_entries:
             die(f"no files under {args.firmware_dir}")
+    mod_entries = []
+    if args.modules_dir:
+        for root, _dirs, files in os.walk(args.modules_dir):
+            for fn in sorted(files):
+                full = os.path.join(root, fn)
+                arc = os.path.relpath(full, args.modules_dir).replace(os.sep, "/")
+                with open(full, "rb") as f:
+                    mod_entries.append(("ack-modules/" + arc, f.read()))
+        if not mod_entries:
+            die(f"no files under {args.modules_dir}")
 
     if base[:8] != b"ANDROID!":
         die("base image magic is not ANDROID!")
@@ -365,7 +382,7 @@ def main():
         with open(args.policy_append, "rb") as f:
             policy_append = f.read()
     cpio, records = customize_ramdisk(gzip.decompress(base_ramdisk), init,
-                                      fw_entries, args.debuggable,
+                                      fw_entries + mod_entries, args.debuggable,
                                       policy_append)
     ramdisk = subprocess.run(["gzip", "-9", "-n"], input=cpio,
                              stdout=subprocess.PIPE, check=True).stdout
@@ -416,6 +433,7 @@ def main():
         "cpio_records": records,
         "init_sha256": sha256(init),
         "firmware": [name for name, _ in fw_entries],
+        "modules": {name: sha256(blob) for name, blob in mod_entries},
         "debuggable": args.debuggable,
         "policy_append_sha256": sha256(policy_append) if policy_append else None,
         "cmdline": cmdline,

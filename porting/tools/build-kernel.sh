@@ -177,7 +177,8 @@ echo "  $BASE_IMAGE"
 
 # --- the run's outputs ------------------------------------------------------
 mkdir -p "$SNAP" "$OUT_DIR"
-for path in "$SNAP/boot-$RUN.img" "$SNAP/kdir-$RUN" "$SNAP/package-$RUN.json"; do
+for path in "$SNAP/boot-$RUN.img" "$SNAP/kdir-$RUN" "$SNAP/package-$RUN.json" \
+	    "$SNAP/modules-$RUN" "$SNAP/modules-$RUN-install"; do
 	if [ -e "$path" ]; then
 		echo "error: $path already exists" >&2
 		echo "error: choose a new run name, or move that run's outputs aside" >&2
@@ -330,6 +331,52 @@ if [ "$headroom" -lt "$LK_HEADROOM_WARN" ]; then
 	echo "warning: only $headroom bytes left below the DTB" >&2
 fi
 
+# --- the modules ------------------------------------------------------------
+# What does not fit below the DTB is built as modules: the CAF audio stack
+# first. They are installed stripped into a staging tree, and the ones named
+# in porting/tools/ack-modules.load, with everything modules.dep says they
+# need ahead of them, go into the ramdisk's /ack-modules with a load-order
+# file. The diag init loads them before Android's init starts.
+MOD_LIST="$REPO/porting/tools/ack-modules.load"
+MOD_INSTALL="$SNAP/modules-$RUN-install"
+MOD_DIR="$SNAP/modules-$RUN"
+"${make_args[@]}" -j"$(nproc)" modules 2>&1 | tee -a "$LOG"
+"${make_args[@]}" INSTALL_MOD_PATH="$MOD_INSTALL" INSTALL_MOD_STRIP=1 \
+	modules_install 2>&1 | tee -a "$LOG"
+python3 - "$MOD_LIST" "$MOD_INSTALL" "$MOD_DIR" <<'PY'
+import os, pathlib, shutil, sys
+
+listing, install, out = (pathlib.Path(p) for p in sys.argv[1:])
+releases = list((install / 'lib' / 'modules').iterdir())
+assert len(releases) == 1, f'expected one kernel release, found {releases}'
+release = releases[0]
+deps = {}
+for line in (release / 'modules.dep').read_text().splitlines():
+    module, _, needs = line.partition(':')
+    deps[os.path.basename(module)] = (module, [os.path.basename(n) for n in needs.split()])
+wanted = [l.strip() for l in listing.read_text().splitlines()
+          if l.strip() and not l.lstrip().startswith('#')]
+missing = [m for m in wanted if m not in deps]
+assert not missing, f'not built: {missing}'
+order = []
+def add(name, path=()):
+    assert name not in path, f'dependency cycle: {path + (name,)}'
+    if name in order:
+        return
+    # modules.dep lists every dependency, nearest first; load the far ones
+    # first.
+    for need in reversed(deps[name][1]):
+        add(need, path + (name,))
+    order.append(name)
+for name in wanted:
+    add(name)
+out.mkdir()
+for name in order:
+    shutil.copy2(release / deps[name][0], out / name)
+(out / 'load-order').write_text(''.join(n + '\n' for n in order))
+print('modules:', ' '.join(order))
+PY
+
 "${make_args[@]}" dt_binding_check DT_SCHEMA_FILES=clock/qcom,apcc-msm8953.yaml
 "${make_args[@]}" CHECK_DTBS=y qcom/msm8953-xiaomi-tissot.dtb
 BOOT="$OUT_DIR/arch/arm64/boot"
@@ -387,7 +434,7 @@ done
 python3 -B porting/logging/package-diag-boot.py --base-image "$BASE_IMAGE" \
  --kernel-dir "$SNAP/kdir-$RUN" --stage-kernel "$BOOT" --init "$SNAP/init-$RUN" \
  --keep-stock-console --policy-append "$REPO/porting/policy/port-genfs-kgsl.cil" \
- "${fw_args[@]}" "${drop_args[@]}" \
+ --modules-dir "$MOD_DIR" "${fw_args[@]}" "${drop_args[@]}" \
  --out "$SNAP/boot-$RUN.img" --report "$SNAP/package-$RUN.json"
 scripts/extract-ikconfig "$SNAP/kdir-$RUN/Image.gz" > "$SNAP/$RUN-embedded.config"
 
@@ -415,7 +462,15 @@ cmdline_tokens=new['cmdline'].split()
 assert 'earlycon' not in cmdline_tokens, 'the UART early console is still in the command line'
 assert 'console=ttyMSM0,115200' not in cmdline_tokens, \
     'the UART console is still in the command line'
+# Every module in the load order, and the load order itself, is in the
+# ramdisk.
+order=(s/f'modules-{run}'/'load-order').read_text().split()
+shipped=new['modules']
+assert 'ack-modules/load-order' in shipped, 'the module load order is not in the ramdisk'
+for name in order:
+    assert f'ack-modules/{name}' in shipped, f'{name} is not in the ramdisk'
 print('The diagnostic symbols and the shipped config are as expected.')
+print('modules shipped, in load order:', ' '.join(order))
 print(json.dumps(new,indent=2))
 for m in re.finditer(rb'Linux version [^\0\n]+',gzip.decompress((s/f'kdir-{run}/Image.gz').read_bytes())):
     print('EMBEDDED BANNER:',m.group().decode())

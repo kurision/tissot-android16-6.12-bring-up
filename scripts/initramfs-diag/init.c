@@ -29,6 +29,7 @@
 #include <sys/statvfs.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/sysmacros.h>
 #include <sys/xattr.h>
 #include <termios.h>
@@ -2862,6 +2863,58 @@ static void boot_deadline(int kin, int klog)
 	_exit(1);
 }
 
+/*
+ * Load the port's kernel modules from the ramdisk, in the order the build
+ * wrote to /ack-modules/load-order. Built in, the CAF audio stack takes the
+ * kernel's image_size past the DTB the bootloader places at 0x13400000 and
+ * the phone does not boot, so it is modules
+ * (porting/findings/2026-10-21-kernel-overruns-the-dtb.md).
+ *
+ * They are not in /lib/modules on purpose: Android's first-stage init loads
+ * that directory itself and aborts the boot if any module fails. Here a
+ * module that does not load costs its own function, not the boot. Each
+ * result goes to the kernel log. Drivers that load before their devices
+ * exist (the APR channel appears only once the ADSP is up) probe later, as
+ * they would built in.
+ */
+static void load_ack_modules(int log)
+{
+	FILE *list = fopen("/ack-modules/load-order", "re");
+	char name[256], path[320], message[384];
+	unsigned int loaded = 0, failed = 0;
+
+	if (!list) {
+		say(log, "DIAG: no /ack-modules/load-order; no modules loaded\n");
+		return;
+	}
+	while (fgets(name, sizeof name, list)) {
+		int fd, error = 0;
+
+		name[strcspn(name, "\r\n")] = '\0';
+		if (!name[0] || name[0] == '#')
+			continue;
+		snprintf(path, sizeof path, "/ack-modules/%s", name);
+		fd = open(path, O_RDONLY | O_CLOEXEC);
+		if (fd < 0 || syscall(SYS_finit_module, fd, "", 0))
+			error = errno;
+		if (fd >= 0)
+			close(fd);
+		/* EEXIST: already in the kernel, which is what was wanted. */
+		if (error && error != EEXIST)
+			failed++;
+		else
+			loaded++;
+		snprintf(message, sizeof message, "DIAG: module %s %s errno=%d\n",
+			 name, error && error != EEXIST ? "failed" : "loaded",
+			 error);
+		say(log, message);
+	}
+	fclose(list);
+	snprintf(message, sizeof message,
+		 "DIAG: modules loaded=%u failed=%u\n", loaded, failed);
+	say(log, message);
+}
+
 static int launch_android(char **argv)
 {
 	int ready[2] = { -1, -1 };
@@ -2901,6 +2954,8 @@ static int launch_android(char **argv)
 		klog = open("/dev/kmsg", O_WRONLY);
 		if (klog < 0)
 			kerr = errno;
+		/* Before the handshake: Android's init starts with them in. */
+		load_ack_modules(klog);
 		for (n = 0; n < POLL_TRIES; n++) {
 			out = open_logdump();
 			if (out >= 0)
