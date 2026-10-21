@@ -772,13 +772,25 @@ static int msm_audio_ion_probe(struct platform_device *pdev)
 		smmu_sid_mask = 0xFFFFFFFFFFFFFFFF;
 	}
 
-	rc = of_parse_phandle_with_args(dev->of_node, "iommus",
-					"#iommu-cells", 0, &iommuspec);
-	if (rc)
-		dev_err(dev, "%s: could not get smmu SID, ret = %d\n",
-			__func__, rc);
-	else
-		smmu_sid = (iommuspec.args[0] & smmu_sid_mask);
+	/*
+	 * The SID bits tell the ADSP which stream its buffers belong to. CAF
+	 * takes them from the iommus cell, which is the stream ID on an ARM
+	 * SMMU. On qcom,msm-iommu-v1 the cell is the context bank instead
+	 * (msm8953's audio stream 0x2401 is bank 0xf), so the stream ID is
+	 * given separately in qcom,smmu-sid.
+	 */
+	if (!of_property_read_u64(dev->of_node, "qcom,smmu-sid", &smmu_sid)) {
+		smmu_sid &= smmu_sid_mask;
+		rc = 0;
+	} else {
+		rc = of_parse_phandle_with_args(dev->of_node, "iommus",
+						"#iommu-cells", 0, &iommuspec);
+		if (rc)
+			dev_err(dev, "%s: could not get smmu SID, ret = %d\n",
+				__func__, rc);
+		else
+			smmu_sid = (iommuspec.args[0] & smmu_sid_mask);
+	}
 
 	msm_audio_ion_data.smmu_sid_bits =
 		smmu_sid << MSM_AUDIO_SMMU_SID_OFFSET;
