@@ -1,4 +1,4 @@
-# Current state of the tissot port — 2026-10-20
+# Current state of the tissot port — 2026-10-21
 
 This is the authoritative statement of what the port does today. Every other
 document in `porting/` is either evidence for a claim made here or the
@@ -58,7 +58,8 @@ root feature is unaffected.
 | The checkpoint reboot loop | In run302, not verified | the wakeup statistics relabel fix is in `init-run302`; the previous boot still reports `sys.boot.reason=reboot,checkpoint_commit_failed` and the early relabel diagnostics show `labels=0 skipped=1`, so the result is not closed |
 | The `adsprpcd` CAF ioctl layer | In the kernel, one command missing | the port decodes CAF's ioctl numbering; on the phone the daemon now fails on exactly one command, `GETINFO`, whose handler is committed but not in the flashed image |
 | Wi-Fi | Working on run304, persistent fix not yet booted | the NV blob was staged at `/data/vendor/wifi/firmware` and the interface associated; `CONFIG_EXTRA_FIRMWARE` in `7c1515865` makes that a kernel built-in for the next run |
-| Cellular, cameras, Bluetooth | Failing | see `FAILING-COMPONENTS.md`; unchanged by this session's work |
+| Cellular, Bluetooth | Bluetooth working on run334; modem offline | the `smd_pkt` driver, the WCNSS device tree node, the config change and the initramfs MSS start are in the run334 image; `/dev/smd2`/`/dev/smd3` and the QTI HAL are up and the controller is `ON`. The modem is still `offline` (`remoteproc0`, `mba.mbn`), `gsm.sim.state` is empty; the initramfs `firmware_class.path` write failed with `errno=13` so the MSS start was never reached, and the reset cause is unverified. See [findings/2026-10-21-bt-modem-bringup.md](findings/2026-10-21-bt-modem-bringup.md) |
+| Cameras | Failing | see `FAILING-COMPONENTS.md` |
 
 ## What is open, and what is known about it
 
@@ -339,6 +340,49 @@ check and the post-fix checks are in
 the design rationale and the pre-fix evidence remain in
 [findings/qrtr-ns-and-crash-loops-20261020.md](findings/qrtr-ns-and-crash-loops-20261020.md).
 
+### 8. Bluetooth and modem: the missing interfaces are implemented
+
+The run334 image (#41, `6.12.93-4k-g9ca2c978871f-dirty`) carries both. On
+hardware, Bluetooth is working: `/dev/smd2`/`/dev/smd3` exist under the
+`smdpkt` class, the QTI HAL and `com.android.bluetooth` are running,
+`dumpsys bluetooth_manager` reports `State: ON`, and the user confirmed the
+controller works. The modem is still `offline`: `remoteproc0` is `offline`
+with `firmware=mba.mbn` and `gsm.sim.state` is empty. The raw logdump shows
+the initramfs child ran: it waited for the modem mount, which appeared at
+40.8 s, then failed to set `firmware_class.path` with `errno=13`
+(`custom path set=0 errno=13`) and exited before the ADSP/WCNSS rebinds and
+the MSS `start`. The modem is offline because the start was never reached.
+The phone reset during the first boots; the MSS start never ran, so the
+reset is not explained by it, and the cause is unverified. The runtime
+diagnosis, the full change list and the run334 evidence are in
+[findings/2026-10-21-bt-modem-bringup.md](findings/2026-10-21-bt-modem-bringup.md).
+
+- **Bluetooth** failed because the QTI HAL opens `/dev/smd2` and `/dev/smd3`
+  directly, and this port had no `smd_pkt` character driver. The mainline
+  `btqcomsmd` path creates `hci0`, which the QTI HAL ignores. The port now
+  carries the donor `msm_smd_pkt` driver, the two WCNSS children under a
+  `qcom,smdpkt` node, `CONFIG_MSM_SMD_PKT=y`, and `CONFIG_BT_QCOMSMD` forced
+  off so the two cannot claim the same channels. The donor's rpmsg signal
+  API does not exist upstream; the local TIOCM state and the reset
+  notification are preserved.
+- **Modem** failed because the MSS (`remoteproc0`) is `auto_boot = false`
+  and nothing started it. `harvest_modem_child()` now writes `start` to the
+  remoteproc whose firmware is `mba.mbn`, after the existing ADSP/WCNSS
+  rebinds and after `firmware_class.path` points at
+  `/vendor/firmware_mnt/image`.
+- **Policy:** the QTI HAL's observed `qipcrtr_socket` `create` denial is
+  allowed. Only `create` is granted; the next AVC names any remaining
+  `connect`/`send`/`recv` rule. The `/data/vendor/ssmdump` denial is not
+  fixed because no AVC with its types was captured.
+
+The Bluetooth half is now met. The modem half is not: `remoteproc0` is
+still `offline`, the MSS QRTR node is absent, `gsm.sim.state` is empty and
+there are no `rmnet_data*` interfaces. The initramfs child gets as far as
+the modem mount but cannot set `firmware_class.path` (`errno=13`), so the
+ADSP/WCNSS rebind and `start` never run. The next step is the firmware-path
+credential/permission problem; only after `custom path set=1` can the start
+be tested.
+
 ## The repository
 
 * The repository holds the documentation and the tooling. The per-run
@@ -352,12 +396,15 @@ the design rationale and the pre-fix evidence remain in
   repository itself, uses `porting/tools/kernel.config` as the
   configuration, and writes to `out/` in the repository, reused, and
   emptied for a clean rebuild.
-* The image on the phone is **run304** (built and booted at 19:55 on
-  2026-10-20). Its kernel is `6.12.93-4k-gc6104317ff23-dirty`; it carries
-  the navigation keys, the CAF `GETINFO` ioctl, `CONFIG_ZRAM=y`, the
-  TSENS zones and the 480-2784 MHz CPU / 725 MHz GPU overclock.  Wi-Fi is
-  working on this boot through the runtime `/data` staging described in
-  section 9; the built-in NV fix is not in this image.
+* The image on the phone is the run334 Bluetooth/modem build (`#41`,
+  `6.12.93-4k-g9ca2c978871f-dirty`), built from the `9ca2c9788` tree plus
+  the Bluetooth/modem change before that change was committed. It carries
+  the navigation keys, the CAF `GETINFO` ioctl, `CONFIG_ZRAM=y`, the TSENS
+  zones, the 480-2784 MHz CPU / 725 MHz GPU overclock, the DT2W feature and
+  the Bluetooth/modem code. Wi-Fi is working through the runtime `/data`
+  staging described in section 9; the built-in NV fix is not in this image.
+  Bluetooth is working; the modem is still offline. The previous #40 image
+  is preserved as `boot-run335.img`.
   The earlier run294 image was built before the ZRAM fix, so
   `CONFIG_ZRAM` was a module there and `/sys/block/zram0` did not exist on
   the device. The ROM's `init.rc` chowns and chmods

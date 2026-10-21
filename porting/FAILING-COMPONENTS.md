@@ -10,6 +10,26 @@
 > git-ignored and disposable, and the boot images are in
 > ../ack-kgsl-artifacts.
 
+**2026-10-21 Bluetooth/modem bring-up code (run334, built and booted):** the
+missing kernel interfaces are implemented and in the run334 image (#41).
+Bluetooth gets the donor `msm_smd_pkt` character driver, the two WCNSS
+children under a `qcom,smdpkt` node, `CONFIG_MSM_SMD_PKT=y`,
+`CONFIG_BT_QCOMSMD` off, and the observed `hal_bluetooth_qti`
+`qipcrtr_socket` `create` allow. The modem gets an explicit `start` for the
+`mba.mbn` remoteproc in `harvest_modem_child()`, after the firmware path is
+set and ADSP/WCNSS are rebound. **Bluetooth is working on hardware**:
+`/dev/smd2`/`/dev/smd3` exist, the QTI HAL and `com.android.bluetooth` run,
+and the controller is `ON`; the user confirmed it works. **The modem is
+still offline**: `remoteproc0` is `offline` (`firmware=mba.mbn`) and
+`gsm.sim.state` is empty. The raw logdump shows the initramfs child waited
+for the modem mount (40.8 s) and then failed the `firmware_class.path`
+write with `errno=13` (`custom path set=0 errno=13`), exiting before the
+ADSP/WCNSS rebinds and the MSS `start`; the start was never reached. The
+phone reset during the first boots; the start never ran, so the reset is
+not explained by it, and the cause is unverified. The root causes, the API
+conversions and the run334 evidence are in
+[findings/2026-10-21-bt-modem-bringup.md](findings/2026-10-21-bt-modem-bringup.md).
+
 **After-run258 source repair:** approved mailbox/MMIO ownership, MX-AO PLL vote,
 safe APCC split-boot handoff and lifetime power-pin changes are implemented;
 pstore no longer writes CPU clocks. Host tests (349 MMIO fault positions),
@@ -35,7 +55,7 @@ SELinux denials. Accelerometer/light data and battery telemetry work. Older
 hardware tables below are historical, not a current all-components verdict.
 
 Living list. Every entry names its evidence. Updated as work lands.
-Last update: 2026-10-18, after run234.
+Last update: 2026-10-21, Bluetooth/modem bring-up code added (unbuilt).
 
 **GPU 3D row: RESOLVED at run234. The port drives the GPU. The "~89 s reset"
 was never a reset.**
