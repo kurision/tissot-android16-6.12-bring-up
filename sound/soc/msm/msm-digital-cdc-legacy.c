@@ -112,9 +112,22 @@ static int msm_digcdc_clock_control(bool flag)
 {
 	int ret = -EINVAL;
 	struct msm_asoc_mach_data *pdata = NULL;
-	struct msm_dig_priv *msm_dig_cdc =
-			snd_soc_component_get_drvdata(registered_digcodec);
+	struct msm_dig_priv *msm_dig_cdc;
 
+	/*
+	 * This is the regmap's lock callback, and since 6.12's regcache_init()
+	 * takes the regmap lock around the cache's creation (upstream
+	 * fd4ebc07b4df), it runs from devm_regmap_init_mmio_clk() in probe,
+	 * before the component probe has set registered_digcodec and before
+	 * there is a card to take the clock from. Building the flat cache
+	 * from defaults touches no register, so no clock is needed: do
+	 * nothing until the codec is on a card. On 4.19 the cache was
+	 * created unlocked and this never ran that early.
+	 */
+	if (!registered_digcodec || !registered_digcodec->card)
+		return 0;
+
+	msm_dig_cdc = snd_soc_component_get_drvdata(registered_digcodec);
 	pdata = snd_soc_card_get_drvdata(registered_digcodec->card);
 
 	if (flag) {
