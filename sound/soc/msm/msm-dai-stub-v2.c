@@ -286,6 +286,7 @@ MODULE_DEVICE_TABLE(of, msm_dai_stub_dev_dt_match);
 
 static struct platform_driver msm_dai_stub_dev = {
 	.probe  = msm_dai_stub_dev_probe,
+	.remove = msm_dai_stub_dev_remove,
 	.driver = {
 		.name = "msm-dai-stub-dev",
 		.owner = THIS_MODULE,
@@ -326,6 +327,7 @@ MODULE_DEVICE_TABLE(of, msm_dai_stub_dt_match);
 
 static struct platform_driver msm_dai_stub_driver = {
 	.probe  = msm_dai_stub_probe,
+	.remove = msm_dai_stub_remove,
 	.driver = {
 		.name = "msm-dai-stub",
 		.owner = THIS_MODULE,
