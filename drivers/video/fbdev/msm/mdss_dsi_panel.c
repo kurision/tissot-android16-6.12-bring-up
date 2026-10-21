@@ -8,8 +8,11 @@
 #include <linux/gpio.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
-#include <linux/backlight.h>
+#ifndef CONFIG_BACKLIGHT_QCOM_SPMI_WLED
 #include <linux/leds.h>
+#else
+#include <linux/backlight.h>
+#endif
 #include <linux/pwm.h>
 #include <linux/err.h>
 #include <linux/string.h>
@@ -33,7 +36,7 @@ bool is_display_on(void)
 	return display_on;
 }
 
-#ifndef MDSS_DSI_WLED_BACKLIGHT_CLASS
+#ifndef CONFIG_BACKLIGHT_QCOM_SPMI_WLED
 DEFINE_LED_TRIGGER(bl_led_trigger);
 #endif
 
@@ -874,32 +877,6 @@ static void mdss_dsi_panel_switch_mode(struct mdss_panel_data *pdata,
 		mdss_dsi_panel_dsc_pps_send(ctrl_pdata, &pdata->panel_info);
 }
 
-#ifdef MDSS_DSI_WLED_BACKLIGHT_CLASS
-/*
- * The WLED is a BACKLIGHT_RAW backlight-class device owned by its own
- * platform driver, which probes independently of the DSI controller. Look it
- * up on every update so the panel works whichever probes first; a missing
- * device only means the WLED has not bound yet.
- */
-static void mdss_dsi_panel_bl_set_wled(u32 bl_level)
-{
-	struct backlight_device *bd;
-	int rc;
-
-	bd = backlight_device_get_by_type(BACKLIGHT_RAW);
-	if (!bd) {
-		pr_warn_once("%s: no RAW backlight device, level %u dropped\n",
-			     __func__, bl_level);
-		return;
-	}
-
-	rc = backlight_device_set_brightness(bd, bl_level);
-	if (rc)
-		pr_warn_ratelimited("%s: cannot set level %u: %d\n",
-				    __func__, bl_level, rc);
-}
-#endif
-
 static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 							u32 bl_level)
 {
@@ -933,10 +910,10 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 
 	switch (ctrl_pdata->bklt_ctrl) {
 	case BL_WLED:
-#ifdef MDSS_DSI_WLED_BACKLIGHT_CLASS
-		mdss_dsi_panel_bl_set_wled(bl_level);
-#else
+#ifndef CONFIG_BACKLIGHT_QCOM_SPMI_WLED
 		led_trigger_event(bl_led_trigger, bl_level);
+#else
+		backlight_device_set_brightness(ctrl_pdata->raw_bd, bl_level);
 #endif
 		break;
 	case BL_PWM:
@@ -2510,6 +2487,22 @@ dynamic_bitclk:
 	pinfo->dynamic_bitclk = true;
 }
 
+#ifdef CONFIG_BACKLIGHT_QCOM_SPMI_WLED
+static int dsi_panel_wled_register(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
+{
+	int rc = 0;
+	struct backlight_device *bd;
+
+	bd = backlight_device_get_by_type(BACKLIGHT_RAW);
+	if (!bd) {
+		pr_err("fail raw backlight register\n");
+		rc = -EINVAL;
+	}
+	ctrl_pdata->raw_bd = bd;
+	return rc;
+}
+#endif
+
 int mdss_panel_parse_bl_settings(struct device_node *np,
 			struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
@@ -2521,9 +2514,13 @@ int mdss_panel_parse_bl_settings(struct device_node *np,
 	data = of_get_property(np, "qcom,mdss-dsi-bl-pmic-control-type", NULL);
 	if (data) {
 		if (!strcmp(data, "bl_ctrl_wled")) {
-#ifndef MDSS_DSI_WLED_BACKLIGHT_CLASS
+#ifndef CONFIG_BACKLIGHT_QCOM_SPMI_WLED
 			led_trigger_register_simple("bkl-trigger",
 				&bl_led_trigger);
+#else
+			rc = dsi_panel_wled_register(ctrl_pdata);
+			if (rc)
+				return rc;
 #endif
 			pr_debug("%s: SUCCESS-> WLED TRIGGER register\n",
 				__func__);
@@ -2624,7 +2621,7 @@ int mdss_dsi_panel_timing_switch(struct mdss_dsi_ctrl_pdata *ctrl,
 	return 0;
 }
 
-#ifndef MDSS_DSI_WLED_BACKLIGHT_CLASS
+#ifndef CONFIG_BACKLIGHT_QCOM_SPMI_WLED
 void mdss_dsi_unregister_bl_settings(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
 	if (ctrl_pdata->bklt_ctrl == BL_WLED)

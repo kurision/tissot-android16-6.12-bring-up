@@ -9,17 +9,8 @@
 #include <linux/irqreturn.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/gpio.h>
-/*
- * A WLED backlight driver (upstream qcom-wled, or the CAF qcom-spmi-wled)
- * exposes the PMIC WLED as a BACKLIGHT_RAW backlight-class device. When one
- * is built in, the panel drives that device directly. Otherwise the panel
- * falls back to the CAF "bkl-trigger" LED trigger, which only reaches a
- * LED-class WLED driver such as the techpack leds-qpnp-wled one.
- */
-#if defined(CONFIG_BACKLIGHT_QCOM_WLED) || \
-	defined(CONFIG_BACKLIGHT_QCOM_SPMI_WLED)
+#ifdef CONFIG_BACKLIGHT_QCOM_SPMI_WLED
 #include <linux/backlight.h>
-#define MDSS_DSI_WLED_BACKLIGHT_CLASS
 #endif
 
 #include "mdss_panel.h"
@@ -496,6 +487,9 @@ struct mdss_dsi_ctrl_pdata {
 	struct mdss_rect roi;
 	struct mdss_dsi_dual_pu_roi dual_roi;
 	struct pwm_device *pwm_bl;
+#ifdef CONFIG_BACKLIGHT_QCOM_SPMI_WLED
+	struct backlight_device *raw_bd;
+#endif
 	u32 pclk_rate;
 	u32 byte_clk_rate;
 	u32 pclk_rate_bkp;
@@ -725,7 +719,7 @@ int mdss_panel_get_dst_fmt(u32 bpp, char mipi_mode, u32 pixel_packing,
 
 int mdss_dsi_register_recovery_handler(struct mdss_dsi_ctrl_pdata *ctrl,
 		struct mdss_intf_recovery *recovery);
-#ifndef MDSS_DSI_WLED_BACKLIGHT_CLASS
+#ifndef CONFIG_BACKLIGHT_QCOM_SPMI_WLED
 void mdss_dsi_unregister_bl_settings(struct mdss_dsi_ctrl_pdata *ctrl_pdata);
 #endif
 void mdss_dsi_panel_dsc_pps_send(struct mdss_dsi_ctrl_pdata *ctrl,
