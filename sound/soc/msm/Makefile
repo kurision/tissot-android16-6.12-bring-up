@@ -91,7 +91,7 @@ obj-$(CONFIG_SND_SOC_DIGITAL_CDC_LEGACY) += digital_cdc_dlkm.o
 # The microphone bias and headset control helper is built: it is not
 # the codec but the headset detect and bias regulator handling, and the
 # analog CDC uses it.
-mbhc_dlkm-y := wcd-mbhc-v2.o wcd-mbhc-adc.o wcd-clsh.o
+mbhc_dlkm-y := wcd-mbhc-v2.o wcd-mbhc-adc.o wcd-mbhc-legacy.o wcd-clsh.o
 obj-$(CONFIG_SND_SOC_MSM_WCD_MBHC) += mbhc_dlkm.o
 
 #

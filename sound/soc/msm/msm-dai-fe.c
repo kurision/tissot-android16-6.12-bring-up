@@ -78,6 +78,11 @@ static int fe_dai_probe(struct snd_soc_dai *dai)
 static struct snd_soc_dai_ops msm_fe_Multimedia_dai_ops = {
 	.startup	= multimedia_startup,
 	.probe		= fe_dai_probe,
+};
+
+static const struct snd_soc_dai_ops msm_fe_compress_dai_ops = {
+	.startup	= multimedia_startup,
+	.probe		= fe_dai_probe,
 	.compress_new	= snd_soc_new_compress,
 };
 
@@ -223,7 +228,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =	8000,
 			.rate_max = 384000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia4",
 	},
 	{
@@ -305,7 +310,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =	8000,
 			.rate_max = 384000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia7",
 	},
 	{
@@ -2284,7 +2289,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =	8000,
 			.rate_max = 384000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia11",
 	},
 	{
@@ -2302,7 +2307,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =	8000,
 			.rate_max = 384000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia12",
 	},
 	{
@@ -2320,7 +2325,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =	8000,
 			.rate_max = 384000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia13",
 	},
 	{
@@ -2338,7 +2343,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =	8000,
 			.rate_max = 384000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia14",
 	},
 	{
@@ -2356,7 +2361,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =	8000,
 			.rate_max = 384000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia15",
 	},
 	{
@@ -2453,7 +2458,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =     8000,
 			.rate_max =     192000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia17",
 	},
 	{
@@ -2470,7 +2475,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =     8000,
 			.rate_max =     192000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia18",
 	},
 	{
@@ -2487,7 +2492,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =     8000,
 			.rate_max =     192000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia19",
 	},
 	{
@@ -2697,7 +2702,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min = 8000,
 			.rate_max = 384000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia26",
 	},
 	{
@@ -2714,7 +2719,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min = 8000,
 			.rate_max = 192000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia27",
 	},
 	{
@@ -2731,7 +2736,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 		.rate_min =     8000,
 		.rate_max =     192000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia28",
 	},
 	{
@@ -2748,7 +2753,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =     8000,
 			.rate_max =     192000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia29",
 	},
 	{
@@ -2765,7 +2770,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =     8000,
 			.rate_max =     192000,
 		},
-		.ops = &msm_fe_Multimedia_dai_ops,
+		.ops = &msm_fe_compress_dai_ops,
 		.name = "MultiMedia30",
 	},
 };

@@ -4278,8 +4278,10 @@ static int msm_anlg_cdc_soc_probe(struct snd_soc_component *component)
 		return ret;
 	}
 
-	wcd_mbhc_init(&sdm660_cdc->mbhc, component, &mbhc_cb, &intr_ids,
-		      wcd_mbhc_registers, true);
+	ret = wcd_mbhc_init(&sdm660_cdc->mbhc, component, &mbhc_cb, &intr_ids,
+			    wcd_mbhc_registers, true);
+	if (ret)
+		return ret;
 
 	sdm660_cdc->int_mclk0_enabled = false;
 	/*Update speaker boost configuration*/

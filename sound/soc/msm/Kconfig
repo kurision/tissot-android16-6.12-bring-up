@@ -23,6 +23,7 @@ config SND_SOC_MSM_WCD_MBHC
 	depends on SND_SOC
 	select WCD9XXX_CODEC_CORE
 	select SND_SOC_WCD_MBHC_ADC
+	select SND_SOC_WCD_MBHC_LEGACY
 	help
 	  Microphone bias and headset detection helpers for the WCD family.
 
@@ -56,6 +57,7 @@ config SND_SOC_SDM660_CDC
 
 config SND_SOC_ANALOG_CDC
 	tristate
+	select SND_SOC_MSM_WCD_MBHC
 
 config SND_SOC_DIGITAL_CDC_LEGACY
 	tristate

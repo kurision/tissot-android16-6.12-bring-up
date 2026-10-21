@@ -2123,7 +2123,7 @@ int wcd_mbhc_init(struct wcd_mbhc *mbhc, struct snd_soc_component *component,
 		if (ret) {
 			pr_err("%s: Failed to register notifier %d\n",
 				__func__, ret);
-			return ret;
+			goto err_hph_pa_locks;
 		}
 	}
 
@@ -2149,6 +2149,7 @@ int wcd_mbhc_init(struct wcd_mbhc *mbhc, struct snd_soc_component *component,
 	    !mbhc->mbhc_fn->wcd_mbhc_detect_plug_type ||
 	    !mbhc->mbhc_fn->wcd_cancel_hs_detect_plug) {
 		pr_err("%s: mbhc function pointer is NULL\n", __func__);
+		ret = -EINVAL;
 		goto err_mbhc_sw_irq;
 	}
 	ret = mbhc->mbhc_cb->request_irq(component,
@@ -2252,6 +2253,9 @@ err_mbhc_sw_irq:
 	if (mbhc->mbhc_cb->register_notifier)
 		mbhc->mbhc_cb->register_notifier(mbhc, &mbhc->nblock, false);
 	mutex_destroy(&mbhc->codec_resource_lock);
+err_hph_pa_locks:
+	mutex_destroy(&mbhc->hphl_pa_lock);
+	mutex_destroy(&mbhc->hphr_pa_lock);
 err:
 	pr_debug("%s: leave ret %d\n", __func__, ret);
 	return ret;
