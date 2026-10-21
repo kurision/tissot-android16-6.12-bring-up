@@ -242,6 +242,7 @@
 
 &pmi8950_wled {
 	qcom,num-strings = <2>;
+	qcom,current-limit-microamp = <20000>;
 	qcom,external-pfet;
 	qcom,cabc;
 
