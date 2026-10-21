@@ -143,7 +143,38 @@ def hex_upper(records):
 POLICY_CIL_RECORD = "userdebug_plat_sepolicy.cil"
 
 
-def customize_ramdisk(cpio, init, fw_entries, debuggable, policy_append):
+def readable_modem_fstab(data):
+    """Change only the read masks of the existing read-only modem mount."""
+    lines = data.splitlines(keepends=True)
+    hits = 0
+    for i, line in enumerate(lines):
+        fields = line.split(b"#", 1)[0].split()
+        if len(fields) < 2 or fields[1] != b"/vendor/firmware_mnt":
+            continue
+        if (len(fields) != 5 or
+                fields[0] != b"/dev/block/bootdevice/by-name/modem" or
+                fields[2] != b"vfat"):
+            die("unexpected protected modem fstab entry")
+        options = fields[3].split(b",")
+        required = {b"ro", b"uid=1000", b"gid=1000",
+                    b"context=u:object_r:firmware_file:s0"}
+        if not required.issubset(options) or b"rw" in options:
+            die("modem mount must remain read-only with its existing label/owner")
+        for key, old, new in ((b"dmask=", b"227", b"222"),
+                              (b"fmask=", b"337", b"333")):
+            masks = [o for o in options if o.startswith(key)]
+            if len(masks) != 1 or masks[0] not in (key + old, key + new):
+                die(f"unexpected modem mount mask: {masks!r}")
+            options[options.index(masks[0])] = key + new
+        lines[i] = line.replace(fields[3], b",".join(options), 1)
+        hits += 1
+    if hits != 1:
+        die(f"expected one protected modem mount, found {hits}")
+    return b"".join(lines)
+
+
+def customize_ramdisk(cpio, init, fw_entries, debuggable, policy_append,
+                      modem_firmware_readable=False):
     """Replace /init; optionally inject lib/firmware files, debuggable props,
     and extra sepolicy CIL text (harness-only policy deltas)."""
     records, tail = parse_cpio(cpio)
@@ -155,6 +186,13 @@ def customize_ramdisk(cpio, init, fw_entries, debuggable, policy_append):
     new = [dict(r, fields=list(r["fields"])) for r in records]
     new[hits[0]]["fields"][FILESIZE_FIELD] = fmt % len(init)
     new[hits[0]]["data"] = init
+    if modem_firmware_readable:
+        fstab = [r for r in new if r["name"] == "ack-protected-fstab.qcom"
+                 and int(r["fields"][1], 16) & S_IFMT == S_IFREG]
+        if len(fstab) != 1:
+            die("expected exactly one regular protected fstab record")
+        fstab[0]["data"] = readable_modem_fstab(fstab[0]["data"])
+        fstab[0]["fields"][FILESIZE_FIELD] = fmt % len(fstab[0]["data"])
     patched_prop = None
     if debuggable:
         props = [i for i, r in enumerate(new) if r["name"] == "prop.default"]
@@ -333,7 +371,10 @@ def main():
     ap.add_argument("--policy-append", default=None, metavar="FILE",
                     help="append FILE's bytes to the ramdisk sepolicy CIL "
                          "record (harness-only policy deltas, e.g. to allow "
-                         "a HAL past a generic-label denial)")
+                          "a HAL past a generic-label denial)")
+    ap.add_argument("--modem-firmware-readable", action="store_true",
+                    help="set only the protected modem fstab masks to "
+                         "0444 files/0555 directories, retaining ro and label")
     ap.add_argument("--out", required=True)
     ap.add_argument("--report", required=True)
     args = ap.parse_args()
@@ -391,7 +432,7 @@ def main():
             policy_append = f.read()
     cpio, records = customize_ramdisk(gzip.decompress(base_ramdisk), init,
                                       fw_entries + mod_entries, args.debuggable,
-                                      policy_append)
+                                      policy_append, args.modem_firmware_readable)
     ramdisk = subprocess.run(["gzip", "-9", "-n"], input=cpio,
                              stdout=subprocess.PIPE, check=True).stdout
 
@@ -444,6 +485,7 @@ def main():
         "modules": {name: sha256(blob) for name, blob in mod_entries},
         "debuggable": args.debuggable,
         "policy_append_sha256": sha256(policy_append) if policy_append else None,
+        "modem_firmware_readable": args.modem_firmware_readable,
         "cmdline": cmdline,
         "base_image": args.base_image,
     }

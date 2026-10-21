@@ -64,3 +64,24 @@
 ;; observed permission is granted; if the HAL goes on to connect and send,
 ;; the next boot's AVC will name the peer type and the remaining rules.
 (allow hal_bluetooth_qti self (qipcrtr_socket (create)))
+
+;; ---------------
+;; The initramfs diag init still runs in the kernel domain: the Android init
+;; exec (and the transition to init) happens after the modem harvest child is
+;; forked.  That child writes firmware_class.path and the remoteproc
+;; state file to start the MSS. Run336 showed EACCES on firmware_class.path;
+;; run338 confirmed the child is kernel:s0 and its write succeeds here.
+;; Allow the generic sysfs access the early child needs; the Android init
+;; (u:r:init:s0) takes over after the exec.
+(allow kernel sysfs (file (open read write getattr)))
+(allow kernel sysfs (dir (search getattr open read)))
+(allow kernel sysfs (lnk_file (read getattr)))
+
+;; The MSS firmware is /vendor/firmware_mnt/image/{mba.mbn,modem.mdt,...},
+;; labelled firmware_file and 0440 system:system.  The initramfs child writes
+;; the remoteproc state; request_firmware() overrides the caller credentials
+;; with init_task credentials (drivers/base/firmware_loader/main.c).
+;; Allow the firmware type read. This is not sufficient for the mount's
+;; 0440/0550 system-owned modes: run339 also records a DAC denial. Do not
+;; grant kernel DAC bypass capabilities; fix the firmware mount permissions.
+(allow kernel firmware_file (file (open read getattr)))

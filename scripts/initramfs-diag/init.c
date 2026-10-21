@@ -1603,15 +1603,9 @@ static void guard_firmware(int log)
 	}
 }
 /*
- * Late firmware bind for ADSP + WCNSS. Their blobs live on the modem
- * partition (/vendor/firmware_mnt/image, via /firmware), which mounts
- * around 66-84s — long after both drivers probe and fail fast (-2).
- * Copying is out (this context is DAC-denied on those files, and serial
- * exfil caps at 128 KiB against MiB blobs), so instead: point the kernel
- * firmware loader's custom search path (higher priority than
- * /lib/firmware) at the modem image dir, then unbind/bind the two
- * remoteproc devices so their direct loads hit. Detached fork, never
- * blocks the guard or boot.
+ * Wait for the modem partition, retain the working GPU firmware search
+ * directories, and start the autoboot-disabled MSS. Leave the already
+ * running ADSP and WCNSS alone. Detached fork, never blocks the guard or boot.
  */
 static int read_file(const char *path, char *buf, size_t len)
 {
@@ -1649,61 +1643,6 @@ static int mounts_contain(const char *word)
 	close(fd);
 	buf[total] = '\0';
 	return strstr(buf, word) != NULL;
-}
-
-static void rebind_remoteproc(const char *match, int log)
-{
-	char message[256], dirpath[128], name[64], link[256], dev[64];
-	const char *base;
-	DIR *rp;
-	struct dirent *entry;
-	ssize_t n;
-
-	rp = opendir("/sys/class/remoteproc");
-	if (!rp) {
-		snprintf(message, sizeof(message),
-			 "DIAG: fwlate %s: remoteproc class errno=%d\n",
-			 match, errno);
-		say(log, message);
-		return;
-	}
-	while ((entry = readdir(rp))) {
-		if (strncmp(entry->d_name, "remoteproc", 10))
-			continue;
-		snprintf(dirpath, sizeof(dirpath),
-			 "/sys/class/remoteproc/%s/firmware", entry->d_name);
-		if (read_file(dirpath, name, sizeof(name)))
-			continue;
-		if (!strstr(name, match))
-			continue;
-		snprintf(dirpath, sizeof(dirpath),
-			 "/sys/class/remoteproc/%s/device", entry->d_name);
-		n = readlink(dirpath, link, sizeof(link) - 1);
-		if (n <= 0)
-			continue;
-		link[n] = '\0';
-		base = strrchr(link, '/');
-		base = base ? base + 1 : link;
-		snprintf(dev, sizeof(dev), "%s", base);
-		snprintf(dirpath, sizeof(dirpath),
-			 "/sys/class/remoteproc/%s/device/driver/unbind",
-			 entry->d_name);
-		n = attribute(dirpath, dev);
-		snprintf(message, sizeof(message),
-			 "DIAG: fwlate %s unbind %s ret=%d errno=%d\n",
-			 match, dev, (int)n, n ? errno : 0);
-		say(log, message);
-		sleep(2);
-		snprintf(dirpath, sizeof(dirpath),
-			 "/sys/class/remoteproc/%s/device/driver/bind",
-			 entry->d_name);
-		n = attribute(dirpath, dev);
-		snprintf(message, sizeof(message),
-			 "DIAG: fwlate %s bind %s ret=%d errno=%d\n",
-			 match, dev, (int)n, n ? errno : 0);
-		say(log, message);
-	}
-	closedir(rp);
 }
 
 /*
@@ -1768,6 +1707,7 @@ static void harvest_modem_child(int log)
 	time_t deadline = monotonic_seconds() + 240;
 	char message[256];
 	int pathset = 0;
+	int patherr = 0;
 	/*
 	 * Whole-partition harvest first: needs no mounts (devtmpfs block
 	 * nodes exist from boot) and sidesteps all file-level DAC issues.
@@ -1807,18 +1747,49 @@ static void harvest_modem_child(int log)
 		}
 		sleep(2);
 	}
-	if (!attribute("/sys/module/firmware_class/parameters/path",
-		       "/vendor/firmware_mnt/image"))
-		pathset = 1;
-	snprintf(message, sizeof(message),
-		 "DIAG: fwlate: custom path set=%d errno=%d\n",
-		 pathset, pathset ? 0 : errno);
-	say(log, message);
+	/*
+	 * The diag init still runs in the kernel domain here: the Android
+	 * init exec (and the transition to init) happens after this child is
+	 * forked.  The kernel domain may be denied the generic sysfs write,
+	 * and the boot command line already carries the image path, so treat
+	 * an already-correct path as success.  Log uid/euid/context and the
+	 * exact errno: run336 showed EACCES even though a root su shell can
+	 * rewrite the same file.
+	 */
+	{
+		char current[256] = "";
+		char context[64] = "";
+
+		if (read_file("/proc/self/attr/current", context, sizeof(context)))
+			context[0] = '\0';
+		context[strcspn(context, "\r\n")] = '\0';
+		if (attribute("/sys/module/firmware_class/parameters/path",
+			       "/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image"))
+			patherr = errno;
+		if (read_file("/sys/module/firmware_class/parameters/path",
+			      current, sizeof(current)))
+			current[0] = '\0';
+		current[strcspn(current, "\r\n")] = '\0';
+		pathset = !patherr;
+		if (!pathset && !strcmp(current,
+			"/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image"))
+			pathset = 2;
+		snprintf(message, sizeof(message),
+			 "DIAG: fwlate: custom path set=%d errno=%d uid=%d euid=%d ctx=%s path=%s\n",
+			 pathset, patherr, (int)getuid(), (int)geteuid(),
+			 context[0] ? context : "?", current[0] ? current : "?");
+		say(log, message);
+	}
 	if (!pathset)
 		_exit(0);
 	sleep(2);
-	rebind_remoteproc("adsp", log);
-	rebind_remoteproc("wcnss", log);
+	/*
+	 * adsp and wcnss are already up: the boot loaded adsp.mdt and
+	 * wcnss.mdt.  Rebinding them here unbound them and then failed to
+	 * bind again because the device/driver symlink disappears with the
+	 * unbind.  Only the
+	 * MSS is autoboot-disabled in this port.
+	 */
 	start_remoteproc("mba", log);
 	say(log, "DIAG: fwlate done\n");
 	_exit(0);

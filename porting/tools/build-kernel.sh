@@ -455,15 +455,13 @@ drop_args=()
 for token in "${drop_cmdline[@]}"; do
 	drop_args+=(--drop-cmdline "$token")
 done
-# The modem/ADSP images live in /vendor/firmware_mnt/image, mounted after
-# first stage. Put that path on the command line so the initramfs child does
-# not have to write firmware_class.path from the kernel domain (run337 had
-# EACCES with no AVC there). The base token is dropped above; the last
-# firmware_class.path value wins in the kernel parameter parser.
-append_args=(--append-cmdline "firmware_class.path=/vendor/firmware_mnt/image")
+# Preserve the working GPU firmware path and append the modem image path.
+# Replacing the list with firmware_mnt alone breaks a530_pm4.fw loading.
+append_args=(--append-cmdline "firmware_class.path=/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image")
 python3 -B porting/logging/package-diag-boot.py --base-image "$BASE_IMAGE" \
  --kernel-dir "$SNAP/kdir-$RUN" --stage-kernel "$BOOT" --init "$SNAP/init-$RUN" \
  --keep-stock-console --policy-append "$REPO/porting/policy/port-genfs-kgsl.cil" \
+ --modem-firmware-readable \
  --modules-dir "$MOD_DIR" "${fw_args[@]}" "${drop_args[@]}" \
  "${append_args[@]}" \
  --out "$SNAP/boot-$RUN.img" --report "$SNAP/package-$RUN.json"
@@ -476,6 +474,7 @@ import hashlib, os, pathlib, json, gzip, re, subprocess
 s=pathlib.Path(os.environ['SNAP'])
 run=os.environ['RUN']
 new=json.loads((s/f'package-{run}.json').read_text())
+assert new['modem_firmware_readable'], 'the modem mount read masks were not patched'
 fragment=pathlib.Path('porting/policy/port-genfs-kgsl.cil').read_bytes()
 assert new['policy_append_sha256'] == hashlib.sha256(fragment).hexdigest(), \
     'the kgsl genfs fragment was not appended to the ramdisk policy'
@@ -493,8 +492,8 @@ cmdline_tokens=new['cmdline'].split()
 assert 'earlycon' not in cmdline_tokens, 'the UART early console is still in the command line'
 assert 'console=ttyMSM0,115200' not in cmdline_tokens, \
     'the UART console is still in the command line'
-assert 'firmware_class.path=/vendor/firmware_mnt/image' in cmdline_tokens, \
-    'the modem firmware path is not in the command line'
+assert 'firmware_class.path=/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image' in cmdline_tokens, \
+    'the GPU and modem firmware search paths are not in the command line'
 assert 'firmware_class.path=/lib/firmware,/vendor/firmware' not in cmdline_tokens, \
     'the base firmware path was not replaced'
 # Every module in the load order, and the load order itself, is in the
