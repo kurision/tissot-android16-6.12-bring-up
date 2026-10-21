@@ -424,8 +424,16 @@
 		compatible = "qcom,msm-auxpcm-dev";
 		qcom,msm-dai-q6-dev-id = <1>;
 	};
+};
 
+&{/soc@0/spmi@200f000/pmic@1} {
 	/*
+	 * The analog CDC is a peripheral of the PM8953's second SPMI slave
+	 * (SID 1), as in the donor's &pm8953_1: its reg is the PMIC address
+	 * and the driver takes the PMIC's regmap from its parent. Under &soc
+	 * it had no regmap and failed to probe with -EINVAL. mainline's
+	 * pmic@1 has no label, so it is reached by path.
+	 *
 	 * The analog CDC: the codec the sound card talks to. It carries
 	 * the microphone bias, the headphone amplifier and the speaker
 	 * path of the machine.
@@ -433,7 +441,7 @@
 	pmic_analog_codec: anlg-cdc@f000 {
 		status = "okay";
 		compatible = "qcom,pmic-analog-codec";
-		reg = <0xf000 0x200>;
+		reg = <0xf000>;
 		#address-cells = <2>;
 		#size-cells = <0>;
 		interrupt-parent = <&spmi_bus>;
