@@ -3053,16 +3053,17 @@ static int msm8952_populate_dai_link_component_of_node(
 		}
 
 		/*
-		 * Front-end and back-end ids are separate enum spaces and
-		 * collide numerically: MSM_FRONTEND_DAI_VOICEMMODE1 and
-		 * MSM_BACKEND_DAI_TERTIARY_MI2S_TX are both 46. Restrict the
-		 * lookup to backends, or it rewrites a front-end dummy codec
-		 * and writes codecs[ANA_CDC] past a one-element array.
+		 * Match the codec array, not the numeric id: front-end and
+		 * back-end ids are separate enum spaces and collide
+		 * (MSM_FRONTEND_DAI_VOICEMMODE1 and
+		 * MSM_BACKEND_DAI_TERTIARY_MI2S_TX are both 46), which rewrote
+		 * a front-end dummy codec and wrote codecs[ANA_CDC] past its
+		 * one-element array. The senary link is a hostless capture
+		 * link without no_pcm, so it must not be filtered on that.
 		 */
-		if (dai_link[i].no_pcm &&
-		    (dai_link[i].id == MSM_BACKEND_DAI_PRI_MI2S_RX ||
-		     dai_link[i].id == MSM_BACKEND_DAI_TERTIARY_MI2S_TX ||
-		     dai_link[i].id == MSM_BACKEND_DAI_SENARY_MI2S_TX)) {
+		if (dai_link[i].codecs == dlc_rx1 ||
+		    dai_link[i].codecs == dlc_tx1 ||
+		    dai_link[i].codecs == dlc_vifeed) {
 			if (pdata->snd_card_val == INT_SND_CARD) {
 				index = of_property_match_string(
 						cdev->of_node,
