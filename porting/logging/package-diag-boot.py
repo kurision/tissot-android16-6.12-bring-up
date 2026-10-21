@@ -306,8 +306,9 @@ def main():
     ap.add_argument("--base-image", required=True)
     ap.add_argument("--kernel-dir", required=True)
     ap.add_argument("--init", required=True)
-    ap.add_argument("--firmware-dir", default=None,
-                    help="stage every file under DIR as lib/firmware/<relpath>")
+    ap.add_argument("--firmware-dir", default=None, action="append",
+                    help="stage every file under DIR as lib/firmware/<relpath>; "
+                         "may be given more than once")
     ap.add_argument("--modules-dir", default=None,
                     help="stage every file under DIR as ack-modules/<relpath>: "
                          "the kernel modules and their load-order list, which "
@@ -349,15 +350,22 @@ def main():
     with open(args.base_image, "rb") as f:
         base = f.read()
     fw_entries = []
-    if args.firmware_dir:
-        for root, _dirs, files in os.walk(args.firmware_dir):
+    for fw_dir in (args.firmware_dir or []):
+        dir_entries = []
+        for root, _dirs, files in os.walk(fw_dir):
             for fn in sorted(files):
                 full = os.path.join(root, fn)
-                arc = os.path.relpath(full, args.firmware_dir).replace(os.sep, "/")
+                arc = os.path.relpath(full, fw_dir).replace(os.sep, "/")
                 with open(full, "rb") as f:
-                    fw_entries.append(("lib/firmware/" + arc, f.read()))
-        if not fw_entries:
-            die(f"no files under {args.firmware_dir}")
+                    dir_entries.append(("lib/firmware/" + arc, f.read()))
+        if not dir_entries:
+            die(f"no files under {fw_dir}")
+        seen = {name for name, _ in fw_entries}
+        for name, blob in dir_entries:
+            if name in seen:
+                die(f"firmware file {name} staged twice (two --firmware-dir trees)")
+            seen.add(name)
+        fw_entries += dir_entries
     mod_entries = []
     if args.modules_dir:
         for root, _dirs, files in os.walk(args.modules_dir):

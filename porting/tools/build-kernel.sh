@@ -51,6 +51,9 @@
 #   ACK_WCNSS_FIRMWARE_DIR the staged wcnss.* + WCNSS_qcom_wlan_nv.bin
 #                          tree (default: porting/artifacts/firmware-wcnss;
 #                          populate it with pull-wcnss-firmware.sh)
+#   ACK_VENUS_FIRMWARE_DIR the staged venus.mdt + venus.bNN tree (default:
+#                          porting/artifacts/firmware-venus; populate it
+#                          with pull-venus-firmware.sh)
 #   RUST_TOOLCHAIN         the rustup toolchain directory
 #   RUSTC, HOSTRUSTC       the Rust compiler and the host compiler
 #   BINDGEN                the bindgen binary
@@ -81,6 +84,10 @@ CONFIG="$REPO/porting/tools/kernel.config"
 # the built-in firmware block in "the configuration" below.
 FW_DIR=${ACK_WCNSS_FIRMWARE_DIR:-$REPO/porting/artifacts/firmware-wcnss}
 NV_FIRMWARE="$FW_DIR/wlan/prima/WCNSS_qcom_wlan_nv.bin"
+# The Venus video codec firmware (venus.mdt + venus.b00..b04) is requested
+# by the Venus driver at probe time, before the vendor partition is mounted,
+# so it is packaged into the ramdisk the same way the WCNSS blobs are.
+VENUS_FW_DIR=${ACK_VENUS_FIRMWARE_DIR:-$REPO/porting/artifacts/firmware-venus}
 
 # --- the base image ---------------------------------------------------------
 # A real, SHA-verified image. Not redistributable, so it is not in the
@@ -418,6 +425,14 @@ if [ -d "$FW_DIR" ]; then
 else
 	echo "warning: no WCNSS firmware in $FW_DIR; WLAN will not load" >&2
 fi
+if [ -d "$VENUS_FW_DIR" ]; then
+	test -f "$VENUS_FW_DIR/venus.mdt" || {
+		echo "error: $VENUS_FW_DIR exists but has no venus.mdt" >&2; exit 1; }
+	fw_args+=(--firmware-dir "$VENUS_FW_DIR")
+else
+	echo "warning: no Venus firmware in $VENUS_FW_DIR;" \
+	     "the video codec will not load its firmware" >&2
+fi
 sha256sum "$BASE_IMAGE" > "$SNAP/$RUN-base.sha256"
 # The command line is inherited from the base image, so it carries whatever
 # console the base was built with. Drop the UART console: see the comment
@@ -430,7 +445,8 @@ CMDLINE_OFF, CMDLINE_LEN = 64, 512
 with open(sys.argv[1], 'rb') as image:
     head = image.read(CMDLINE_OFF + CMDLINE_LEN)
 present = set(head[CMDLINE_OFF:].split(b'\0', 1)[0].decode().split())
-for token in ('earlycon', 'console=ttyMSM0,115200'):
+for token in ('earlycon', 'console=ttyMSM0,115200',
+              'firmware_class.path=/lib/firmware,/vendor/firmware'):
     if token in present:
         print(token)
 PY
@@ -439,10 +455,17 @@ drop_args=()
 for token in "${drop_cmdline[@]}"; do
 	drop_args+=(--drop-cmdline "$token")
 done
+# The modem/ADSP images live in /vendor/firmware_mnt/image, mounted after
+# first stage. Put that path on the command line so the initramfs child does
+# not have to write firmware_class.path from the kernel domain (run337 had
+# EACCES with no AVC there). The base token is dropped above; the last
+# firmware_class.path value wins in the kernel parameter parser.
+append_args=(--append-cmdline "firmware_class.path=/vendor/firmware_mnt/image")
 python3 -B porting/logging/package-diag-boot.py --base-image "$BASE_IMAGE" \
  --kernel-dir "$SNAP/kdir-$RUN" --stage-kernel "$BOOT" --init "$SNAP/init-$RUN" \
  --keep-stock-console --policy-append "$REPO/porting/policy/port-genfs-kgsl.cil" \
  --modules-dir "$MOD_DIR" "${fw_args[@]}" "${drop_args[@]}" \
+ "${append_args[@]}" \
  --out "$SNAP/boot-$RUN.img" --report "$SNAP/package-$RUN.json"
 scripts/extract-ikconfig "$SNAP/kdir-$RUN/Image.gz" > "$SNAP/$RUN-embedded.config"
 
@@ -470,6 +493,10 @@ cmdline_tokens=new['cmdline'].split()
 assert 'earlycon' not in cmdline_tokens, 'the UART early console is still in the command line'
 assert 'console=ttyMSM0,115200' not in cmdline_tokens, \
     'the UART console is still in the command line'
+assert 'firmware_class.path=/vendor/firmware_mnt/image' in cmdline_tokens, \
+    'the modem firmware path is not in the command line'
+assert 'firmware_class.path=/lib/firmware,/vendor/firmware' not in cmdline_tokens, \
+    'the base firmware path was not replaced'
 # Every module in the load order, and the load order itself, is in the
 # ramdisk.
 order=(s/f'modules-{run}'/'load-order').read_text().split()

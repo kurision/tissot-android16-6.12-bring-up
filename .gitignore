@@ -191,6 +191,9 @@ porting/artifacts/**/*.img
 # WCNSS firmware and device NV calibration pulled from the device by
 # porting/tools/pull-wcnss-firmware.sh; not redistributable.
 porting/artifacts/firmware-wcnss/
+# Venus video codec firmware pulled from the device by
+# porting/tools/pull-venus-firmware.sh; not redistributable.
+porting/artifacts/firmware-venus/
 porting/artifacts/**/*.gz-dtb
 porting/artifacts/**/kdir-*/
 porting/artifacts/**/modules-*/
