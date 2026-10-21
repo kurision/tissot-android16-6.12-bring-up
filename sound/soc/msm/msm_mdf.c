@@ -19,6 +19,7 @@
 #include <linux/platform_device.h>
 #include <linux/of_device.h>
 #include <linux/ion_kernel.h>
+#include <asm/cacheflush.h>
 #include <linux/msm_ion.h>
 #include <dsp/msm_audio_ion.h>
 #include <ipc/apr.h>
@@ -364,9 +365,17 @@ static int msm_mdf_assign_memory_to_subsys(struct msm_mdf_mem *mem)
 	scm_buffer->dest_info_size =
 		sizeof(struct msm_mdf_dest_vm_and_perm_info) * SUBSYS_MAX;
 
-	/* The SCM call takes the arguments by value, and this buffer is
-	 * an ordinary allocation, so there is nothing to flush for it.
+	/*
+	 * Flush the cache before the SCM call: the secure world reads
+	 * dest_info out of this buffer through the SMMU, which is not
+	 * coherent with the CPU's cache on this platform.  The donor
+	 * did this with dmac_flush_range(), which on CAF's arm64 is a
+	 * clean and invalidate to the PoC; dcache_clean_inval_poc()
+	 * is the 6.12 equivalent of that.
 	 */
+	dcache_clean_inval_poc((unsigned long)scm_buffer,
+			       (unsigned long)scm_buffer +
+			       sizeof(struct msm_mdf_protect_mem));
 
 	desc.args[0] = scm_buffer->dma_start_address;
 	desc.args[1] = scm_buffer->dma_end_address;

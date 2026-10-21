@@ -113,6 +113,14 @@ SYM_FUNC_START(__pi_dcache_clean_inval_poc)
 	ret
 SYM_FUNC_END(__pi_dcache_clean_inval_poc)
 SYM_FUNC_ALIAS(dcache_clean_inval_poc, __pi_dcache_clean_inval_poc)
+/*
+ * Exported for the vendor audio stack: its MDF driver hands a
+ * kernel buffer to the secure world through a non-coherent
+ * SMMU and has to clean it to the PoC first.  The donor
+ * exported __dma_flush_area for the same purpose
+ * (arch/arm64/kernel/arm64ksyms.c in the donor tree).
+ */
+EXPORT_SYMBOL(dcache_clean_inval_poc)
 
 /*
  *	dcache_clean_pou(start, end)
