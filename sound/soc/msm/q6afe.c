@@ -1625,6 +1625,25 @@ static int afe_apr_send_clk_pkt(void *data, wait_queue_head_t *wait)
 	return ret;
 }
 
+/*
+ * Copy the in-band parameter payload into the trailing parameter area of
+ * an APR packet.
+ *
+ * The payload member (param_data) is a zero-length array at the end of the
+ * packet structure, and every caller allocates the packet with room for
+ * the payload, so the copy is inside the allocation.  Handing the member
+ * itself to memcpy() makes the fortify check believe that the destination
+ * field is zero bytes long: gcc and clang report the size of an array at
+ * the end of an object as zero (gcc bug 101836), so the check warns about
+ * a field-spanning write that cannot happen ("memcpy: detected
+ * field-spanning write (size 20) of single field "&set_param->param_data"
+ * at sound/soc/msm/q6afe.c:1663 (size 0)", run344).  Copying through a
+ * byte pointer keeps the check's view of the destination honest.
+ */
+#define AFE_COPY_PARAM_DATA(packet, data, len)				\
+	memcpy((u8 *)(packet) + offsetof(typeof(*(packet)), param_data),	\
+	       (data), (len))
+
 /* This function shouldn't be called directly. Instead call q6afe_set_params. */
 static int q6afe_set_params_v2(u16 port_id, int index,
 			       struct mem_mapping_hdr *mem_hdr,
@@ -1659,8 +1678,8 @@ static int q6afe_set_params_v2(u16 port_id, int index,
 	if (mem_hdr != NULL) {
 		set_param->mem_hdr = *mem_hdr;
 	} else if (packed_param_data != NULL) {
-		memcpy(&set_param->param_data, packed_param_data,
-		       packed_data_size);
+		AFE_COPY_PARAM_DATA(set_param, packed_param_data,
+				    packed_data_size);
 	} else {
 		pr_err("%s: Both memory header and param data are NULL\n",
 		       __func__);
@@ -1702,8 +1721,8 @@ static int q6afe_set_params_v3(u16 port_id, int index,
 	if (mem_hdr != NULL) {
 		set_param->mem_hdr = *mem_hdr;
 	} else if (packed_param_data != NULL) {
-		memcpy(&set_param->param_data, packed_param_data,
-		       packed_data_size);
+		AFE_COPY_PARAM_DATA(set_param, packed_param_data,
+				    packed_data_size);
 	} else {
 		pr_err("%s: Both memory header and param data are NULL\n",
 		       __func__);
@@ -1958,8 +1977,8 @@ static int q6afe_svc_set_params_v1(int index, struct mem_mapping_hdr *mem_hdr,
 		svc_set_param->mem_hdr = *mem_hdr;
 	} else if (packed_param_data != NULL) {
 		/* In band case. */
-		memcpy(&svc_set_param->param_data, packed_param_data,
-		       packed_data_size);
+		AFE_COPY_PARAM_DATA(svc_set_param, packed_param_data,
+				    packed_data_size);
 	} else {
 		pr_err("%s: Both memory header and param data are NULL\n",
 		       __func__);
@@ -2005,8 +2024,8 @@ static int q6afe_svc_set_params_v2(int index, struct mem_mapping_hdr *mem_hdr,
 		svc_set_param->mem_hdr = *mem_hdr;
 	} else if (packed_param_data != NULL) {
 		/* In band case. */
-		memcpy(&svc_set_param->param_data, packed_param_data,
-		       packed_data_size);
+		AFE_COPY_PARAM_DATA(svc_set_param, packed_param_data,
+				    packed_data_size);
 	} else {
 		pr_err("%s: Both memory header and param data are NULL\n",
 		       __func__);
@@ -2052,8 +2071,8 @@ static int q6afe_clk_set_params_v1(int index, struct mem_mapping_hdr *mem_hdr,
 		svc_set_param->mem_hdr = *mem_hdr;
 	} else if (packed_param_data != NULL) {
 		/* In band case. */
-		memcpy(&svc_set_param->param_data, packed_param_data,
-		       packed_data_size);
+		AFE_COPY_PARAM_DATA(svc_set_param, packed_param_data,
+				    packed_data_size);
 	} else {
 		pr_err("%s: Both memory header and param data are NULL\n",
 		       __func__);
@@ -2099,8 +2118,8 @@ static int q6afe_clk_set_params_v2(int index, struct mem_mapping_hdr *mem_hdr,
 		svc_set_param->mem_hdr = *mem_hdr;
 	} else if (packed_param_data != NULL) {
 		/* In band case. */
-		memcpy(&svc_set_param->param_data, packed_param_data,
-		       packed_data_size);
+		AFE_COPY_PARAM_DATA(svc_set_param, packed_param_data,
+				    packed_data_size);
 	} else {
 		pr_err("%s: Both memory header and param data are NULL\n",
 		       __func__);
