@@ -4652,8 +4652,17 @@ err:
 	return;
 }
 
+static bool msm_cdc_off;
+module_param(msm_cdc_off, bool, 0644);
+MODULE_PARM_DESC(msm_cdc_off, "do not probe the analog CDC");
+
 static int msm_anlg_cdc_probe(struct platform_device *pdev)
 {
+	if (msm_cdc_off) {
+		dev_info(&pdev->dev, "the CDC is off by the command line\n");
+		return -ENODEV;
+	}
+
 	int ret = 0;
 	struct sdm660_cdc_priv *sdm660_cdc = NULL;
 	struct sdm660_cdc_pdata *pdata;

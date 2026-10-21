@@ -629,9 +629,16 @@ static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
 #define RAMOOPS_SNAP_PAYLOAD_OFFSET	(RAMOOPS_SNAP_OFFSET + PAGE_SIZE)
 #define RAMOOPS_SNAP_SLOT_STRIDE	(PAGE_SIZE + SZ_1M)
 #define RAMOOPS_SNAP_SLOTS		2
-#define RAMOOPS_SNAP_INTERVAL_MS	2000
-/* Legacy bring-up polling is off; panic and orderly-reset capture stay live. */
-#define RAMOOPS_PERIODIC_SNAPSHOTS	0
+#define RAMOOPS_SNAP_INTERVAL_MS	500
+/*
+ * The periodic snapshot is on again: the audio bring-up hangs before the
+ * userspace, and this is the only channel that survives a hang. It copies
+ * the live reservation to the "logdump" block device every two seconds
+ * without any process, so the console log of a boot that never reaches
+ * init is still there to be read. It is off again once the hang is
+ * understood.
+ */
+#define RAMOOPS_PERIODIC_SNAPSHOTS	1
 /*
  * run225: once the first KGSL stage record lands, shorten the cadence so the
  * last sample falls inside the pre-reset blind window (~150 ms wide). The
@@ -1282,6 +1289,14 @@ static int ramoops_snap_thread(void *unused)
 			if (ret <= 0 || kthread_should_stop())
 				continue;
 		}
+
+		/*
+		 * With periodic sampling the sample follows the logdump
+		 * partition as soon as it is there: the boot that has to be
+		 * caught can die before the first tick, and the sample that
+		 * matters is the one that holds the console log up to that
+		 * point.
+		 */
 
 		ret = ramoops_snap_take(s);
 		if (ret) {

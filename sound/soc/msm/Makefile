@@ -15,12 +15,19 @@ ccflags-y += -Wno-unused-but-set-variable -Wno-unused-variable \
 	     -Wno-unused-but-set-parameter -Wno-unused-parameter -Wno-unused-function -Wno-unused-const-variable
 
 #
-# The WCD9xxx codec stack is not built: tissot has no such codec. The
-# donor's Xiaomi boards delete the tasha (sound-9335) node and the
-# WSA881x nodes, and their audio is the analog CDC plus the MAX98927
-# speaker amplifier. The sources stay here because the machine driver
-# includes their headers, and the header's declarations are guarded by
-# the same symbols.
+# The WCD9xxx codec is not built: tissot has no such codec. The donor's
+# Xiaomi boards delete the tasha (sound-9335) node and the WSA881x
+# nodes, and their audio is the analog CDC plus the MAX98927 speaker
+# amplifier. The sources stay here because the machine driver includes
+# their headers, and the header's declarations are guarded by the same
+# symbols.
+#
+# The microphone bias and headset control helper is built: it is not
+# the codec but the headset detect and bias regulator handling, and the
+# analog CDC uses it.
+wcdmbhc-objs += wcd-mbhc-v2.o wcd-mbhc-adc.o wcd-clsh.o
+
+obj-$(CONFIG_SND_SOC_MSM_WCD_MBHC) += wcdmbhc.o
 
 #
 # The legacy pair is the CAF CDC the machine driver and the WCD9335 were
@@ -33,7 +40,7 @@ obj-$(CONFIG_SND_SOC_SDM660_CDC) += cdc.o
 
 # The slimbus codec machine is not built either: it is the machine for
 # the tasha codec, which this board does not have.
-msm8952-objs += msm8952.o msm8952-dai-links.o
+msm8952-objs += msm8952.o msm8952-dai-links.o msm8952-slimbus.o
 msm8952-objs += msm-pcm-afe-v2.o
 
 obj-$(CONFIG_SND_SOC_MSM8952) += msm8952.o
@@ -58,3 +65,24 @@ obj-$(CONFIG_SND_SOC_MSM8952) += msmplatform.o
 afedrv-objs += q6afe.o
 
 obj-$(CONFIG_WCD9XXX_CODEC_CORE) += afedrv.o
+
+#
+# CAF 4.19's DSP library. The machine driver and the PCM platforms above
+# are CAF 4.19's, and they reach the DSP through it: the ASM's cpu
+# buffer model for the data, the ASM's volume and calibration, the
+# voice service and the ADM. This kernel carries CAF's later AVD stack
+# instead, which is a different model and not a rename of this one, so
+# the library comes from the donor as well and the port is CAF 4.19
+# consistent from the machine down to the DSP.
+#
+# The tree's own sound/soc/qcom/qdsp6 stack has to be off: it defines
+# the same names (q6asm_cmd, q6asm_read, q6core_is_adsp_ready, ...) and
+# nothing in this port uses it.
+dsplib-objs += q6asm.o q6core.o q6adm.o q6voice.o q6audio-v2.o \
+	       q6common.o adsp_err.o rtac.o sp_params.o avtimer.o \
+	       audio_cal_utils.o audio_calibration.o msm_audio_ion.o \
+	       digital-cdc-rsc-mgr.o msm-dts-srs-tm-config.o \
+	       msm-audio-event-notify.o q6afecal-hwdep.o q6_init.o apr.o apr_v2.o apr_tal_rpmsg.o \
+	       msm_mdf.o q6lsm.o wcd-dsp-glink.o wcdcal-hwdep.o
+
+obj-$(CONFIG_SND_SOC_MSM8952) += dsplib.o

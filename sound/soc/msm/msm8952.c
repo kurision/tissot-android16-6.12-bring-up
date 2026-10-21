@@ -1836,7 +1836,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -1858,7 +1859,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -1880,34 +1882,13 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
 		/* this dainlink has playback support */
 		.id = MSM_FRONTEND_DAI_CS_VOICE,
-	},
-	{/* hw:x,3 */
-		.name = "MSM VoIP",
-		.stream_name = "VoIP",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "VoIP" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-voip-dsp"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_playback = 1,
-		.dpcm_capture = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.ignore_suspend = 1,
-		/* this dainlink has playback support */
-		.id = MSM_FRONTEND_DAI_VOIP,
 	},
 	{/* hw:x,4 */
 		.name = "MSM8X16 ULL",
@@ -1923,7 +1904,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -1945,7 +1927,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -1966,7 +1949,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2001,28 +1985,6 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.stream_name = "AFE-PROXY TX",
 		.ignore_suspend = 1,
 	},
-	{/* hw:x,9 */
-		.name = "MSM8952 Compress1",
-		.stream_name = "Compress1",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "MultiMedia4" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-compress-dsp"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_playback = 1,
-		.dpcm_capture = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.ignore_suspend = 1,
-		/* this dainlink has playback support */
-		.id = MSM_FRONTEND_DAI_MULTIMEDIA4,
-	},
 	{/* hw:x,10 */
 		.name = "AUXPCM Hostless",
 		.stream_name = "AUXPCM Hostless",
@@ -2038,7 +2000,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2058,7 +2021,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dynamic = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1, /* dai link has playback support */
@@ -2078,7 +2042,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2100,7 +2065,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2122,7 +2088,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2144,7 +2111,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2166,7 +2134,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2187,7 +2156,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2208,7 +2178,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2216,137 +2187,6 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.id = MSM_FRONTEND_DAI_MULTIMEDIA6,
 	},
 	/* LSM FE */
-	{/* hw:x,19 */
-		.name = "Listen 1 Audio Service",
-		.stream_name = "Listen 1 Audio Service",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "LSM1" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-lsm-client"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_capture = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			SND_SOC_DPCM_TRIGGER_POST },
-		.ignore_suspend = 1,
-		.id = MSM_FRONTEND_DAI_LSM1,
-	},
-	{/* hw:x,20 */
-		.name = "Listen 2 Audio Service",
-		.stream_name = "Listen 2 Audio Service",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "LSM2" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-lsm-client"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_capture = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			SND_SOC_DPCM_TRIGGER_POST },
-		.ignore_suspend = 1,
-		.id = MSM_FRONTEND_DAI_LSM2,
-	},
-	{/* hw:x,21 */
-		.name = "Listen 3 Audio Service",
-		.stream_name = "Listen 3 Audio Service",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "LSM3" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-lsm-client"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_capture = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			SND_SOC_DPCM_TRIGGER_POST },
-		.ignore_suspend = 1,
-		.id = MSM_FRONTEND_DAI_LSM3,
-	},
-	{/* hw:x,22 */
-		.name = "Listen 4 Audio Service",
-		.stream_name = "Listen 4 Audio Service",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "LSM4" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-lsm-client"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_capture = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			SND_SOC_DPCM_TRIGGER_POST },
-		.ignore_suspend = 1,
-		.id = MSM_FRONTEND_DAI_LSM4,
-	},
-	{/* hw:x,23 */
-		.name = "Listen 5 Audio Service",
-		.stream_name = "Listen 5 Audio Service",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "LSM5" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-lsm-client"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_capture = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			SND_SOC_DPCM_TRIGGER_POST },
-		.ignore_suspend = 1,
-		.id = MSM_FRONTEND_DAI_LSM5,
-	},
-	{ /* hw:x,24 */
-		.name = "MSM8X16 Compress2",
-		.stream_name = "Compress2",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "MultiMedia7" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-compress-dsp"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_playback = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.ignore_suspend = 1,
-		/* this dainlink has playback support */
-		.id = MSM_FRONTEND_DAI_MULTIMEDIA7,
-	},
 	{ /* hw:x,25 */
 		.name = "Quaternary MI2S_RX Hostless",
 		.stream_name = "Quaternary MI2S_RX Hostless",
@@ -2361,7 +2201,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2402,7 +2243,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
@@ -2410,121 +2252,6 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.ignore_suspend = 1,
 		 /* this dai link has playback support */
 		.id = MSM_FRONTEND_DAI_MULTIMEDIA10,
-	},
-	{/* hw:x,28 */
-		.name = "MSM8X16 Compress4",
-		.stream_name = "Compress4",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "MultiMedia11" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-compress-dsp"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_playback = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			 SND_SOC_DPCM_TRIGGER_POST},
-		.ignore_suspend = 1,
-		 /* this dai link has playback support */
-		.id = MSM_FRONTEND_DAI_MULTIMEDIA11,
-	},
-	{/* hw:x,29 */
-		.name = "MSM8X16 Compress5",
-		.stream_name = "Compress5",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "MultiMedia12" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-compress-dsp"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_playback = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			 SND_SOC_DPCM_TRIGGER_POST},
-		.ignore_suspend = 1,
-		 /* this dai link has playback support */
-		.id = MSM_FRONTEND_DAI_MULTIMEDIA12,
-	},
-	{/* hw:x,30 */
-		.name = "MSM8X16 Compress6",
-		.stream_name = "Compress6",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "MultiMedia13" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-compress-dsp"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_playback = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			 SND_SOC_DPCM_TRIGGER_POST},
-		.ignore_suspend = 1,
-		 /* this dai link has playback support */
-		.id = MSM_FRONTEND_DAI_MULTIMEDIA13,
-	},
-	{/* hw:x,31 */
-		.name = "MSM8X16 Compress7",
-		.stream_name = "Compress7",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "MultiMedia14" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-compress-dsp"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_playback = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			 SND_SOC_DPCM_TRIGGER_POST},
-		.ignore_suspend = 1,
-		 /* this dai link has playback support */
-		.id = MSM_FRONTEND_DAI_MULTIMEDIA14,
-	},
-	{/* hw:x,32 */
-		.name = "MSM8X16 Compress8",
-		.stream_name = "Compress8",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "MultiMedia15" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-compress-dsp"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_playback = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			 SND_SOC_DPCM_TRIGGER_POST},
-		.ignore_suspend = 1,
-		 /* this dai link has playback support */
-		.id = MSM_FRONTEND_DAI_MULTIMEDIA15,
 	},
 	{ /*hw:x,33 */
 		.name = "MSM8X16 Compress9",
@@ -2540,7 +2267,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dynamic = 1,
 		.dpcm_playback = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
@@ -2564,7 +2292,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2585,7 +2314,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2606,7 +2336,8 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
@@ -2628,78 +2359,13 @@ static struct snd_soc_dai_link msm8952_dai[] = {
 		.dpcm_playback = 1,
 		.dpcm_capture = 1,
 		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
+			{ .dai_name = "snd-soc-dummy-dai",
+			  .name = "snd-soc-dummy" },
 		},
 		.num_codecs = 1,
 		.ignore_suspend = 1,
 		/* this dai link has playback support */
 		.id = MSM_FRONTEND_DAI_QCHAT,
-	},
-	{/* hw:x,38 */
-		.name = "MSM8X16 Compress10",
-		.stream_name = "Compress10",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "MultiMedia17" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-compress-dsp"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_capture = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			 SND_SOC_DPCM_TRIGGER_POST},
-		.ignore_suspend = 1,
-		.id = MSM_FRONTEND_DAI_MULTIMEDIA17,
-	},
-	{/* hw:x,39 */
-		.name = "MSM8X16 Compress11",
-		.stream_name = "Compress11",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "MultiMedia18" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-compress-dsp"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_capture = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			 SND_SOC_DPCM_TRIGGER_POST},
-		.ignore_suspend = 1,
-		.id = MSM_FRONTEND_DAI_MULTIMEDIA18,
-	},
-	{/* hw:x,40 */
-		.name = "MSM8X16 Compress12",
-		.stream_name = "Compress12",
-		.cpus = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "MultiMedia19" },
-		},
-		.num_cpus = 1,
-		.platforms = (struct snd_soc_dai_link_component[]){
-			COMP_PLATFORM("msm-compress-dsp"),
-		},
-		.num_platforms = 1,
-		.dynamic = 1,
-		.dpcm_capture = 1,
-		.codecs = (struct snd_soc_dai_link_component[]){
-			{ .dai_name = "snd-soc-dummy-dai" },
-		},
-		.num_codecs = 1,
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			 SND_SOC_DPCM_TRIGGER_POST},
-		.ignore_suspend = 1,
-		.id = MSM_FRONTEND_DAI_MULTIMEDIA19,
 	},
 	{
 		.cpus = (struct snd_soc_dai_link_component[]){
@@ -3315,6 +2981,12 @@ static int msm8952_populate_dai_link_component_of_node(
 	 * matching them against asoc-platform-names, asoc-cpu-names and
 	 * asoc-codec-names. This tree's ASoC resolves the component names in
 	 * the cpus[] and codecs[] arrays itself, so that pass is left out.
+	 *
+	 * The codec of a link is the one thing it cannot do itself: a link
+	 * names the codec's DAI, and the codec's component is found by its
+	 * name or its device node. The two CDC codecs of the primary MI2S
+	 * links are therefore taken from the device tree here, by the name
+	 * the tree gives them.
 	 */
 	for (i = 0; i < card->num_links; i++) {
 		if ((dai_link[i].id == MSM_BACKEND_DAI_PRI_MI2S_RX) ||
@@ -3325,20 +2997,40 @@ static int msm8952_populate_dai_link_component_of_node(
 						cdev->of_node,
 						"asoc-codec-names",
 						MSM_INT_DIGITAL_CODEC);
+				if (index < 0) {
+					dev_err(cdev, "%s: no codec named %s\n",
+						__func__, MSM_INT_DIGITAL_CODEC);
+					return index;
+				}
 
 				phandle = of_parse_phandle(
 						cdev->of_node,
 						"asoc-codec", index);
+				if (!phandle) {
+					dev_err(cdev, "%s: no codec node for %s\n",
+						__func__, MSM_INT_DIGITAL_CODEC);
+					return -EINVAL;
+				}
 				dai_link[i].codecs[DIG_CDC].of_node = phandle;
 
 				index = of_property_match_string(
 						cdev->of_node,
 						"asoc-codec-names",
 						PMIC_INT_ANALOG_CODEC);
+				if (index < 0) {
+					dev_err(cdev, "%s: no codec named %s\n",
+						__func__, PMIC_INT_ANALOG_CODEC);
+					return index;
+				}
 
 				phandle = of_parse_phandle(
 						cdev->of_node,
 						"asoc-codec", index);
+				if (!phandle) {
+					dev_err(cdev, "%s: no codec node for %s\n",
+						__func__, PMIC_INT_ANALOG_CODEC);
+					return -EINVAL;
+				}
 				dai_link[i].codecs[ANA_CDC].of_node = phandle;
 			}
 			if (pdata->snd_card_val == INT_DIG_SND_CARD) {
@@ -3350,9 +3042,7 @@ static int msm8952_populate_dai_link_component_of_node(
 			 */
 				if (dai_link[i].id ==
 					MSM_BACKEND_DAI_SENARY_MI2S_TX) {
-					dai_link[i].codecs = NULL;
-					dai_link[i].num_codecs = 1;
-					dai_link[i].codecs[0].dai_name =
+					dai_link[i].codecs[ANA_CDC].dai_name =
 						"msm_dig_cdc_dai_vifeed";
 				}
 				index = of_property_match_string(
@@ -3363,7 +3053,7 @@ static int msm8952_populate_dai_link_component_of_node(
 				phandle = of_parse_phandle(
 						cdev->of_node,
 						"asoc-codec", index);
-				dai_link[i].codecs[0].of_node = phandle;
+				dai_link[i].codecs[DIG_CDC].of_node = phandle;
 			}
 		}
 		if ((dai_link[i].id == MSM_BACKEND_DAI_QUATERNARY_MI2S_RX) &&
@@ -3521,8 +3211,6 @@ static int msm8952_asoc_machine_probe(struct platform_device *pdev)
 	const char *hs_micbias_type = "qcom,msm-hs-micbias-type";
 	const char *ext_pa = "qcom,msm-ext-pa";
 	const char *mclk = "qcom,msm-mclk-freq";
-	const char *wsa = "asoc-wsa-codec-names";
-	const char *wsa_prefix = "asoc-wsa-codec-prefixes";
 	const char *type = NULL;
 	const char *ext_pa_str = NULL;
 	const char *wsa_str = NULL;
@@ -3627,75 +3315,12 @@ parse_mclk_freq:
 	}
 	pdata->mclk_freq = id;
 
-	/*reading the gpio configurations from dtsi file*/
-	num_strings = of_property_count_strings(pdev->dev.of_node,
-			wsa);
-
-	if (num_strings > 0) {
-		if (wsa881x_get_probing_count() < 2) {
-			ret = -EPROBE_DEFER;
-			goto err;
-		} else if (wsa881x_get_presence_count() == num_strings) {
-			bear_card.aux_dev = msm8952_aux_dev;
-			bear_card.num_aux_devs = num_strings;
-			bear_card.codec_conf = msm8952_codec_conf;
-			bear_card.num_configs = num_strings;
-
-			for (i = 0; i < num_strings; i++) {
-				ret = of_property_read_string_index(
-						pdev->dev.of_node, wsa,
-						i, &wsa_str);
-				if (ret) {
-					dev_err(&pdev->dev,
-						"%s:of read string %s i %d error %d\n",
-						__func__, wsa, i, ret);
-					goto err;
-				}
-				temp_str = kstrdup(wsa_str, GFP_KERNEL);
-				if (!temp_str) {
-					ret = -ENOMEM;
-					goto err;
-				}
-				msm8952_aux_dev[i].dlc.name = temp_str;
-				temp_str = NULL;
-
-				temp_str = kstrdup(wsa_str, GFP_KERNEL);
-				if (!temp_str) {
-					ret = -ENOMEM;
-					goto err;
-				}
-				msm8952_codec_conf[i].dlc.name = temp_str;
-				temp_str = NULL;
-
-				ret = of_property_read_string_index(
-						pdev->dev.of_node, wsa_prefix,
-						i, &wsa_prefix_str);
-				if (ret) {
-					dev_err(&pdev->dev,
-						"%s:of read string %s i %d error %d\n",
-						__func__, wsa_prefix, i, ret);
-					goto err;
-				}
-				temp_str = kstrdup(wsa_prefix_str, GFP_KERNEL);
-				if (!temp_str) {
-					ret = -ENOMEM;
-					goto err;
-				}
-				msm8952_codec_conf[i].name_prefix = temp_str;
-				temp_str = NULL;
-			}
-
-			ret = msm8952_init_wsa_switch_supply(pdev, pdata);
-			if (ret < 0) {
-				pr_err("%s: failed to init wsa_switch vdd supply %d\n",
-						__func__, ret);
-				goto err;
-			}
-			/* update the internal speaker boost usage */
-			msm_anlg_cdc_update_int_spk_boost(false);
-		}
-	}
-
+	/* The WSA881x headphone amplifier is not on this board: the
+	 * donor's Xiaomi audio deletes asoc-wsa-codec-names and the
+	 * wsa881x nodes, and the headset path is the analog CDC's. The
+	 * block that read them and set up the auxiliary codec is gone
+	 * with them.
+	 */
 	/* Check if voice probe done, defer otherwise */
 	ret = msm_voice_get_probe_status();
 	if (!ret) {
@@ -3916,8 +3541,23 @@ static struct platform_driver msm8952_asoc_machine_driver = {
 	.remove = msm8952_asoc_machine_remove,
 };
 
+/*
+ * Bring-up switches. The audio stack hangs the boot somewhere in it, and
+ * there is no console on this phone: the kernel log is lost when the
+ * boot stops before the logdump partition exists. These take the parts of
+ * the stack out one at a time from the command line, so that each step
+ * of the bisection is a reflash and not a rebuild.
+ */
+static bool msm_audio_off;
+module_param(msm_audio_off, bool, 0644);
+MODULE_PARM_DESC(msm_audio_off, "do not register the sound card machine driver");
+
 static int __init msm8952_machine_init(void)
 {
+	if (msm_audio_off) {
+		pr_info("DIAG: the machine driver is off by the command line\n");
+		return 0;
+	}
 	return platform_driver_register(&msm8952_asoc_machine_driver);
 }
 module_init(msm8952_machine_init);

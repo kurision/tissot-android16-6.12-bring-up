@@ -237,52 +237,14 @@ static inline struct snd_mask *param_to_mask(struct snd_pcm_hw_params *p, int n)
 	return &(p->masks[n - SNDRV_PCM_HW_PARAM_FIRST_MASK]);
 }
 
+/*
+ * There is no WSA881x headphone amplifier on this board: the donor's
+ * Xiaomi audio deletes the wsa881x nodes and the asoc-wsa-codec-names
+ * property, and the headset path is the analog CDC's. The machine asks
+ * for the amplifier's channel map when it brings the amplifier up.
+ */
 int msm895x_wsa881x_init(struct snd_soc_component *component)
 {
-	u8 spkleft_ports[WSA881X_MAX_SWR_PORTS] = {100, 101, 102, 106};
-	u8 spkright_ports[WSA881X_MAX_SWR_PORTS] = {103, 104, 105, 107};
-	unsigned int ch_rate[WSA881X_MAX_SWR_PORTS] = {2400, 600, 300, 1200};
-	unsigned int ch_mask[WSA881X_MAX_SWR_PORTS] = {0x1, 0xF, 0x3, 0x3};
-	struct msm8952_asoc_mach_data *pdata;
-	struct snd_soc_dapm_context *dapm;
-
-	if (!component) {
-		pr_err("%s component is NULL\n", __func__);
-		return -EINVAL;
-	}
-	dapm = snd_soc_component_get_dapm(component);
-
-	if (!strcmp(component->name_prefix, "SpkrLeft")) {
-		dev_dbg(component->dev, "%s: setting left ch map to codec %s\n",
-				__func__, component->name);
-		wsa881x_set_channel_map(component, &spkleft_ports[0],
-				WSA881X_MAX_SWR_PORTS, &ch_mask[0],
-				&ch_rate[0], NULL);
-		if (dapm->component) {
-			snd_soc_dapm_ignore_suspend(dapm, "SpkrLeft IN");
-			snd_soc_dapm_ignore_suspend(dapm, "SpkrLeft SPKR");
-		}
-	} else if (!strcmp(component->name_prefix, "SpkrRight")) {
-		dev_dbg(component->dev, "%s: setting right ch map to codec %s\n",
-				__func__, component->name);
-		wsa881x_set_channel_map(component, &spkright_ports[0],
-				WSA881X_MAX_SWR_PORTS, &ch_mask[0],
-				&ch_rate[0], NULL);
-		if (dapm->component) {
-			snd_soc_dapm_ignore_suspend(dapm, "SpkrRight IN");
-			snd_soc_dapm_ignore_suspend(dapm, "SpkrRight SPKR");
-		}
-	} else {
-		dev_err(component->dev, "%s: wrong codec name %s\n", __func__,
-				component->name);
-		return -EINVAL;
-	}
-
-
-	pdata = snd_soc_card_get_drvdata(component->card);
-	if (pdata && pdata->codec_root)
-		wsa881x_codec_info_create_codec_entry(pdata->codec_root,
-						      component);
 	return 0;
 }
 
@@ -344,17 +306,11 @@ static int msm8952_set_spk(struct snd_kcontrol *kcontrol,
 static int msm8952_enable_codec_mclk(struct snd_soc_component *component,
 					int enable, bool dapm)
 {
-	int ret;
-
+	/* The analog CDC takes its clock from the machine's mclk; there is
+	 * no external codec clock to enable on this board.
+	 */
 	pr_debug("%s: enable = %d\n", __func__, enable);
-	if (!strcmp(dev_name(component->dev), "tasha_codec"))
-		ret = tasha_cdc_mclk_enable(component, enable, dapm);
-	else {
-		dev_err(component->dev, "%s: unknown codec to enable ext clk\n",
-			__func__);
-		ret = -EINVAL;
-	}
-	return ret;
+	return 0;
 }
 
 static int slim5_rx_sample_rate_get(struct snd_kcontrol *kcontrol,
@@ -3267,15 +3223,6 @@ int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 		return err;
 	}
 
-	if (!strcmp(dev_name(codec_dai->dev), "tasha_codec")) {
-		pdata->msm8952_codec_fn.get_afe_config_fn =
-			tasha_get_afe_config;
-		snd_soc_dapm_new_controls(dapm, msm8952_tasha_dapm_widgets,
-				ARRAY_SIZE(msm8952_tasha_dapm_widgets));
-		snd_soc_dapm_add_routes(dapm, wcd9335_audio_paths,
-				ARRAY_SIZE(wcd9335_audio_paths));
-	}
-
 	snd_soc_dapm_enable_pin(dapm, "Lineout_1 amp");
 	snd_soc_dapm_enable_pin(dapm, "Lineout_3 amp");
 	snd_soc_dapm_enable_pin(dapm, "Lineout_2 amp");
@@ -3750,7 +3697,6 @@ static void msm8952_asoc_machine_remove(struct platform_device *pdev)
 		iounmap(pdata->vaddr_gpio_mux_mic_ext_clk_ctl);
 	if (pdata->vaddr_gpio_mux_sec_tlmm_ctl)
 		iounmap(pdata->vaddr_gpio_mux_sec_tlmm_ctl);
-	msm895x_free_auxdev_mem(pdev);
 }
 
 static const struct of_device_id msm8952_asoc_machine_of_match[]  = {

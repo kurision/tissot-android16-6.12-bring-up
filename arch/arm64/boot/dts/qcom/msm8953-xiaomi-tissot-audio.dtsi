@@ -42,8 +42,31 @@
 		qcom,msm-mbhc-gnd-swh = <1>;
 
 		/* The speaker amplifier's enable, and its pinctrl states. */
-		qcom,msm-spk-ext-pa = <&tlmm 141 GPIO_ACTIVE_LOW>;
+		qcom,msm-spk-ext-pa = <&tlmm 141 0>;
 		qcom,cdc-ext-pa-gpios = <&cdc_ext_pa_gpios>;
+
+		/*
+		 * The CDC's pins. The machine driver muxes them itself, so
+		 * they have to be named here; the states themselves are in
+		 * the pinctrl nodes below.
+		 */
+		qcom,cdc-us-euro-gpios = <&tlmm 63 0>;
+		qcom,cdc-us-eu-gpios = <&cdc_us_euro_sw>;
+		qcom,cdc-comp-gpios = <&cdc_comp_gpios>;
+		qcom,pri-mi2s-gpios = <&cdc_pri_mi2s_gpios>;
+		qcom,quin-mi2s-gpios = <&cdc_quin_mi2s_gpios>;
+
+		/* The headset microphone bias is on an external capacitor. */
+		qcom,msm-micbias1-ext-cap;
+
+		/*
+		 * The codecs of the primary MI2S links. The machine driver
+		 * looks the names up in this list and takes the phandle at
+		 * that index, and this kernel's ASoC matches a link's codec
+		 * by its device node.
+		 */
+		asoc-codec-names = "msm-dig-codec", "analog-codec";
+		asoc-codec = <&msm_digital_codec>, <&pmic_analog_codec>;
 
 		qcom,audio-routing =
 			"RX_BIAS", "MCLK",
@@ -414,6 +437,16 @@
 					"cdc-vdda-cp";
 
 		qcom,cdc-on-demand-supplies = "cdc-vdd-mic-bias";
+
+		/*
+		 * The digital CDC. It is the first codec of the primary
+		 * MI2S links, the analog one the second, and the machine
+		 * driver finds both by their phandle here.
+		 */
+		msm_digital_codec: msm-dig-codec {
+			compatible = "qcom,msm-digital-codec";
+			reg = <0xc0f0000 0x0>;
+		};
 	};
 };
 

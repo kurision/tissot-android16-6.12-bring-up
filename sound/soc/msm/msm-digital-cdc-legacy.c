@@ -2465,8 +2465,17 @@ static void msm_digital_cdc_disable_supplies(struct msm_dig_priv *msm_cdc)
 	devm_kfree(msm_cdc->dev, msm_cdc->supplies);
 }
 
+static bool msm_digcdc_off;
+module_param(msm_digcdc_off, bool, 0644);
+MODULE_PARM_DESC(msm_digcdc_off, "do not probe the digital CDC");
+
 static int msm_dig_cdc_probe(struct platform_device *pdev)
 {
+	if (msm_digcdc_off) {
+		dev_info(&pdev->dev, "the digital CDC is off by the command line\n");
+		return -ENODEV;
+	}
+
 	int ret = -EINVAL;
 	u32 dig_cdc_addr;
 	struct msm_dig_priv *msm_dig_cdc;
