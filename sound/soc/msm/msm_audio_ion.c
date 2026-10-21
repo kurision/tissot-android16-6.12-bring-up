@@ -837,3 +837,5 @@ void msm_audio_ion_exit(void)
 
 MODULE_DESCRIPTION("MSM Audio ION module");
 MODULE_LICENSE("GPL v2");
+/* dma_buf_get() and friends are exported in the DMA_BUF namespace. */
+MODULE_IMPORT_NS(DMA_BUF);

@@ -7,7 +7,7 @@
 
 #ifndef __MFD_WCD9XXX_IRQ_H
 #define __MFD_WCD9XXX_IRQ_H
-#ifdef CONFIG_WCD9XXX_CODEC_CORE
+#if IS_ENABLED(CONFIG_WCD9XXX_CODEC_CORE)
 bool wcd9xxx_lock_sleep(struct wcd9xxx_core_resource *wcd9xxx_res);
 void wcd9xxx_unlock_sleep(struct wcd9xxx_core_resource *wcd9xxx_res);
 void wcd9xxx_nested_irq_lock(struct wcd9xxx_core_resource *wcd9xxx_res);

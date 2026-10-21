@@ -375,7 +375,7 @@ struct wcd9xxx_reg_val {
 	int bytes;          /* number of bytes to be written */
 };
 
-#ifdef CONFIG_WCD9XXX_CODEC_CORE
+#if IS_ENABLED(CONFIG_WCD9XXX_CODEC_CORE)
 int wcd9xxx_interface_reg_read(struct wcd9xxx *wcd9xxx, unsigned short reg);
 int wcd9xxx_interface_reg_write(struct wcd9xxx *wcd9xxx, unsigned short reg,
 		u8 val);

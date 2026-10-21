@@ -1480,3 +1480,5 @@ void msm_pcm_noirq_exit(void)
 
 MODULE_DESCRIPTION("PCM NOIRQ module platform driver");
 MODULE_LICENSE("GPL v2");
+/* dma_buf_get() and friends are exported in the DMA_BUF namespace. */
+MODULE_IMPORT_NS(DMA_BUF);

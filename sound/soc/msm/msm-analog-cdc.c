@@ -4129,7 +4129,11 @@ int msm_anlg_codec_info_create_codec_entry(struct snd_info_entry *codec_root,
 
 	sdm660_cdc_priv = snd_soc_component_get_drvdata(component);
 	card = component->card;
-	snd_info_card_create(card->snd_card);
+	/*
+	 * The card's proc_root already exists: snd_card_new() made it. CAF
+	 * called snd_info_card_create() again here, which is not exported
+	 * and would create a second cardN directory over the first.
+	 */
 	sdm660_cdc_priv->entry = snd_info_create_card_entry(card->snd_card,
 							    "spmi0-03",
 							    card->snd_card->proc_root);
