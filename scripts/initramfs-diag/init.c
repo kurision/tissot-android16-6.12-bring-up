@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sched.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -2878,41 +2879,111 @@ static void boot_deadline(int kin, int klog)
  * exist (the APR channel appears only once the ADSP is up) probe later, as
  * they would built in.
  */
+static int load_ack_module(int log, const char *name, int fd)
+{
+	char message[384];
+	int error = 0;
+
+	if (fd < 0 || syscall(SYS_finit_module, fd, "", 0))
+		error = fd < 0 ? ENOENT : errno;
+	if (fd >= 0)
+		close(fd);
+	/* EEXIST: already in the kernel, which is what was wanted. */
+	if (error == EEXIST)
+		error = 0;
+	snprintf(message, sizeof message, "DIAG: module %s %s errno=%d\n",
+		 name, error ? "failed" : "loaded", error);
+	say(log, message);
+	return error ? 1 : 0;
+}
+
+static int open_ack_module(const char *name)
+{
+	char path[320];
+
+	snprintf(path, sizeof path, "/ack-modules/%s", name);
+	return open(path, O_RDONLY | O_CLOEXEC);
+}
+
 static void load_ack_modules(int log)
 {
-	FILE *list = fopen("/ack-modules/load-order", "re");
-	char name[256], path[320], message[384];
-	unsigned int loaded = 0, failed = 0;
+	/*
+	 * The list is read whole first: a FILE shared across the fork below
+	 * shares its file offset, and the parent closing it moved the child's
+	 * (run333d loaded the late module twice).
+	 */
+	static char text[4096];
+	char *names[64], message[384], *line, *save = NULL;
+	int fds[64], count = 0, late_at = -1, i, fd;
+	unsigned int delay = 0, loaded = 0, failed = 0;
+	ssize_t len;
 
-	if (!list) {
+	fd = open("/ack-modules/load-order", O_RDONLY | O_CLOEXEC);
+	if (fd < 0) {
 		say(log, "DIAG: no /ack-modules/load-order; no modules loaded\n");
 		return;
 	}
-	while (fgets(name, sizeof name, list)) {
-		int fd, error = 0;
-
-		name[strcspn(name, "\r\n")] = '\0';
-		if (!name[0] || name[0] == '#')
+	len = read(fd, text, sizeof text - 1);
+	close(fd);
+	if (len <= 0)
+		return;
+	text[len] = '\0';
+	for (line = strtok_r(text, "\r\n", &save); line && count < 64;
+	     line = strtok_r(NULL, "\r\n", &save)) {
+		if (!line[0] || line[0] == '#')
 			continue;
-		snprintf(path, sizeof path, "/ack-modules/%s", name);
-		fd = open(path, O_RDONLY | O_CLOEXEC);
-		if (fd < 0 || syscall(SYS_finit_module, fd, "", 0))
-			error = errno;
-		if (fd >= 0)
-			close(fd);
-		/* EEXIST: already in the kernel, which is what was wanted. */
-		if (error && error != EEXIST)
-			failed++;
-		else
-			loaded++;
-		snprintf(message, sizeof message, "DIAG: module %s %s errno=%d\n",
-			 name, error && error != EEXIST ? "failed" : "loaded",
-			 error);
-		say(log, message);
+		/*
+		 * "@late <seconds>": load the rest from a detached child after
+		 * that long, once the recorder is writing the kernel log to
+		 * logdump, so a module that resets the phone leaves its log.
+		 */
+		if (!strncmp(line, "@late", 5)) {
+			if (late_at < 0) {
+				late_at = count;
+				delay = (unsigned int)strtoul(line + 5, NULL, 10);
+			}
+			continue;
+		}
+		names[count++] = line;
 	}
-	fclose(list);
-	snprintf(message, sizeof message,
-		 "DIAG: modules loaded=%u failed=%u\n", loaded, failed);
+	for (i = 0; i < (late_at < 0 ? count : late_at); i++) {
+		failed += load_ack_module(log, names[i], open_ack_module(names[i]));
+		loaded++;
+	}
+	if (late_at >= 0 && late_at < count) {
+		pid_t late;
+
+		/*
+		 * Open the late modules now: by the time they load, Android's
+		 * init has switched root and deleted the ramdisk's files
+		 * (run333d: ENOENT). An open file keeps its contents.
+		 */
+		for (i = late_at; i < count; i++)
+			fds[i] = open_ack_module(names[i]);
+		late = fork();
+		if (late == 0) {
+			snprintf(message, sizeof message,
+				 "DIAG: loading %d module(s) in %u s\n",
+				 count - late_at, delay);
+			say(log, message);
+			sleep(delay);
+			for (i = late_at; i < count; i++)
+				failed += load_ack_module(log, names[i], fds[i]);
+			snprintf(message, sizeof message,
+				 "DIAG: late modules loaded=%d failed=%u\n",
+				 count - late_at - (int)failed, failed);
+			say(log, message);
+			/* The late child must never return to the caller. */
+			_exit(0);
+		}
+		for (i = late_at; i < count; i++)
+			if (fds[i] >= 0)
+				close(fds[i]);
+		if (late < 0)
+			say(log, "DIAG: @late fork failed; late modules not loaded\n");
+	}
+	snprintf(message, sizeof message, "DIAG: modules loaded=%u failed=%u\n",
+		 loaded - failed, failed);
 	say(log, message);
 }
 
