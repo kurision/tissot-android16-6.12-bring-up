@@ -1,0 +1,12 @@
+What:		/proc/sys/dev/xiaomi_msm8953_touchscreen/enable_dt2w
+Date:		October 2026
+Contact:	Linux input mailing list <linux-input@vger.kernel.org>
+Description:
+		Downstream Xiaomi tissot ROM compatibility interface, provided by
+		edt-ft5x06 only for panels with edt,gesture-wakeup. ASCII integer:
+		0 disables double-tap wake, 1 enables it; other values are rejected.
+		Defaults to 0. Root may write it (mode 0644). Changes are sampled
+		on the next primary-display powerdown, not applied immediately.
+		A successful write records policy, not proof of firmware support.
+		A recognized double tap reports KEY_WAKEUP. Other gesture IDs do
+		not report a key, but their interrupts can still wake the system.
