@@ -8,10 +8,10 @@
  * HFPLL grid; the stock msm8953 table is 652.8 - 2016 MHz over 7 corners.
  * The GPU gains the donor's 725 MHz Turbo+ step and 100 MHz underclock.
  *
- * The mainline thermal zones are deliberately left at their 80 C passive
- * and 100 C (CPU) / 90 C (GPU) critical trips. The donor's 88 C
- * deca-cpu-max-step trip belongs to the vendor's CAF thermal driver; this
- * port uses the generic TSENS + cpufreq/devfreq cooling devices instead.
+ * All CPU sensors control the shared CPUFreq cooling device. At 80 C,
+ * remove overclock headroom; at the donor's 88 C threshold, request maximum
+ * cooling. These initial limits need bounded runtime validation. The CPU
+ * and GPU critical trips remain at 100 C and 90 C respectively.
  *
  * The APCC driver range is widened in apcc-msm8953.c: it has to accept the
  * 480 MHz and 2784 MHz endpoints before these plans can be used.
@@ -128,6 +128,54 @@
 		opp-hz = /bits/ 64 <2784000000>;
 	};
 };
+
+/*
+ * One OPP policy controls both cluster muxes: its cooling device is registered
+ * on CPU0, so every CPU sensor must refer to CPU0, not its individual CPU node.
+ *
+ * Cooling states count down from the highest frequency in the 19-entry table:
+ * state 8 = 2016 MHz, state 18 = 480 MHz. At 80 C, step_wise can increase
+ * cooling beyond state 8; at 88 C, force state 18 until below 86 C. Preserve
+ * the existing 2 C hysteresis and 100 C critical trip. The 50/100 ms polling
+ * delays and 88 C threshold come from the donor's deca-cpu-max-step zone
+ * (msm8953-thermal.dtsi and mi8953/tissot/oc.dtsi). Unlike CAF, generic cooling
+ * uses direct state indices, not THERMAL_MAX_LIMIT-relative limits.
+ */
+#define TISSOT_CPU_COOLING(zone, alert, backstop) \
+	zone { \
+		polling-delay-passive = <50>; \
+		polling-delay = <100>; \
+		trips { \
+			backstop: trip-point1 { \
+				temperature = <88000>; \
+				hysteresis = <2000>; \
+				type = "passive"; \
+			}; \
+		}; \
+		cooling-maps { \
+			map0 { \
+				trip = <&alert>; \
+				cooling-device = <&CPU0 8 THERMAL_NO_LIMIT>; \
+			}; \
+			map1 { \
+				trip = <&backstop>; \
+				cooling-device = <&CPU0 18 18>; \
+			}; \
+		}; \
+	}
+
+&{/thermal-zones} {
+	TISSOT_CPU_COOLING(cpu0-thermal, cpu0_alert, cpu0_backstop);
+	TISSOT_CPU_COOLING(cpu1-thermal, cpu1_alert, cpu1_backstop);
+	TISSOT_CPU_COOLING(cpu2-thermal, cpu2_alert, cpu2_backstop);
+	TISSOT_CPU_COOLING(cpu3-thermal, cpu3_alert, cpu3_backstop);
+	TISSOT_CPU_COOLING(cpu4-thermal, cpu4_alert, cpu4_backstop);
+	TISSOT_CPU_COOLING(cpu5-thermal, cpu5_alert, cpu5_backstop);
+	TISSOT_CPU_COOLING(cpu6-thermal, cpu6_alert, cpu6_backstop);
+	TISSOT_CPU_COOLING(cpu7-thermal, cpu7_alert, cpu7_backstop);
+};
+
+#undef TISSOT_CPU_COOLING
 
 /*
  * Every populated speed bin (0, 2, 6, 7) gets the same 19 corners, so all
