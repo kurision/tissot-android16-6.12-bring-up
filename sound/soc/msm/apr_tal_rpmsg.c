@@ -211,8 +211,16 @@ static int apr_tal_rpmsg_probe(struct rpmsg_device *rpdev)
 	int ret = 0;
 	const char* dest;
 
+	/*
+	 * Which processor the channel leads to comes from its SMD edge. CAF's
+	 * edges name it in mbox-names ("adsp_...", "mpss_..."); upstream's
+	 * name it in label ("lpass", "modem"), and this port's are upstream's.
+	 */
 	ret = of_property_read_string(rpdev->dev.parent->of_node,
-				   "mbox-names", &dest);
+				      "label", &dest);
+	if (ret < 0)
+		ret = of_property_read_string(rpdev->dev.parent->of_node,
+					      "mbox-names", &dest);
 
 	if(ret < 0){
 		pr_err("%s no parent source pid found\n", __func__);
@@ -227,14 +235,15 @@ static int apr_tal_rpmsg_probe(struct rpmsg_device *rpdev)
 			__func__, rpdev->id.name);
 		return -EINVAL;
 	}
-	if(strstr(dest, "adsp")) {
+	if (strstr(dest, "adsp") || strstr(dest, "lpass")) {
 		apr_ch =
 		&apr_svc_ch[APR_DL_SMD][APR_DEST_QDSP6][APR_CLIENT_AUDIO];
 		apr_ch->handle = rpdev;
 		apr_ch->channel_state = APR_CH_CONNECTED;
 		dev_set_drvdata(&rpdev->dev, apr_ch);
 		wake_up(&apr_ch->wait);
-	} else if(strstr(dest, "mpss")) {
+		apr_tal_adsp_state(true);
+	} else if (strstr(dest, "mpss") || strstr(dest, "modem")) {
 		apr_ch =
 		&apr_svc_ch[APR_DL_SMD][APR_DEST_MODEM][APR_CLIENT_AUDIO];
 		apr_ch->handle = rpdev;
@@ -264,6 +273,8 @@ static void apr_tal_rpmsg_remove(struct rpmsg_device *rpdev)
 	apr_ch->handle = NULL;
 	apr_ch->channel_state = APR_CH_DISCONNECTED;
 	dev_set_drvdata(&rpdev->dev, NULL);
+	if (apr_ch == &apr_svc_ch[APR_DL_SMD][APR_DEST_QDSP6][APR_CLIENT_AUDIO])
+		apr_tal_adsp_state(false);
 }
 
 static const struct rpmsg_device_id apr_tal_rpmsg_match[] = {

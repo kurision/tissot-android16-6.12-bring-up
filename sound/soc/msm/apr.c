@@ -1107,6 +1107,33 @@ static struct notifier_block modem_service_nb = {
 	.priority = 0,
 };
 
+/**
+ * apr_tal_adsp_state() - The ADSP's APR channel came up or went down.
+ * @up: true when the channel connected, false when it went away.
+ *
+ * Without the audio notifier (CONFIG_MSM_QDSP6_NOTIFIER), nothing reports
+ * the ADSP's audio service, and audio_notifier_register() is a stub: the
+ * ADSP would never be marked loaded and the APR's children (q6core, the
+ * audio ION device) never created. The channel connecting is the same
+ * event: it only exists once the ADSP's APR service runs, which is how
+ * the upstream qcom APR driver treats it when it has no protection-domain
+ * notifier. Feed it through the notifier's own callback, so the initial
+ * boot and state handling are CAF's. With the notifier on, it reports the
+ * service itself and this does nothing.
+ */
+void apr_tal_adsp_state(bool up)
+{
+	struct audio_notifier_cb_data cb_data = {
+		.domain = AUDIO_NOTIFIER_ADSP_DOMAIN,
+	};
+
+	if (IS_ENABLED(CONFIG_MSM_QDSP6_NOTIFIER) || !apr_priv)
+		return;
+	apr_notifier_service_cb(&adsp_service_nb,
+				up ? AUDIO_NOTIFIER_SERVICE_UP :
+				     AUDIO_NOTIFIER_SERVICE_DOWN, &cb_data);
+}
+
 #ifdef CONFIG_DEBUG_FS
 static int __init apr_debug_init(void)
 {
