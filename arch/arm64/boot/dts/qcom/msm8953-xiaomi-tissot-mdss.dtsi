@@ -39,6 +39,8 @@
 #include <dt-bindings/clock/qcom,mdss-dsi-pll-8953.h>
 #include <dt-bindings/clock/qcom,gcc-msm8953.h>
 #include <dt-bindings/clock/qcom,rpmcc.h>
+#include <dt-bindings/interconnect/qcom,msm8953.h>
+#include <dt-bindings/interconnect/qcom,rpm-icc.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 
 /* Mainline display nodes are disabled in msm8953-xiaomi-tissot.dts itself
@@ -78,6 +80,20 @@
 			<22 512 0 0>,
 			<22 512 0 6400000>,
 			<22 512 0 6400000>;
+
+		/*
+		 * The paths of the display pipeline. The vendor legacy
+		 * tables of this node name the MDP master and the EBI
+		 * channel ("mdp-ddr"), and the application processor and
+		 * the display configuration register ("display-cfg", the
+		 * table with the "qcom,msm-bus,active-only" flag). The
+		 * shim maps them onto these paths.
+		 */
+		interconnects = <&snoc_mm MAS_MDP RPM_ALWAYS_TAG
+				 &bimc SLV_EBI RPM_ALWAYS_TAG>,
+				<&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+				 &pcnoc SLV_DISP_SS_CFG RPM_ACTIVE_TAG>;
+		interconnect-names = "mdp-ddr", "display-cfg";
 
 		qcom,mdss-pref-prim-intf = "dsi";
 		qcom,mdss-ab-factor = <1 1>;
@@ -237,6 +253,11 @@
 		qcom,msm-bus,vectors-KBps =
 			<22 512 0 0>,
 			<22 512 0 1000>;
+
+		/* The DSI reads the display buffer from the memory. */
+		interconnects = <&snoc_mm MAS_MDP RPM_ALWAYS_TAG
+				 &bimc SLV_EBI RPM_ALWAYS_TAG>;
+		interconnect-names = "mdp-ddr";
 
 		ranges = <0x1a94000 0x1a94000 0x400
 			0x1a94400 0x1a94400 0x588
@@ -500,6 +521,13 @@
 			<22 512 0 0>,
 			<22 512 0 6400000>,
 			<22 512 0 6400000>;
+
+		/* The same two paths as the display pipeline's. */
+		interconnects = <&snoc_mm MAS_MDP RPM_ALWAYS_TAG
+				 &bimc SLV_EBI RPM_ALWAYS_TAG>,
+				<&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+				 &pcnoc SLV_DISP_SS_CFG RPM_ACTIVE_TAG>;
+		interconnect-names = "mdp-ddr", "display-cfg";
 
 		clocks = <&gcc GCC_MDSS_AHB_CLK>,
 			<&gcc GCC_MDSS_MDP_CLK>;

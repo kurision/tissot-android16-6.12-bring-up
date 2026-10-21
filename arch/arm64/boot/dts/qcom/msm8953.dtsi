@@ -4,6 +4,8 @@
 #include <dt-bindings/clock/qcom,gcc-msm8953.h>
 #include <dt-bindings/clock/qcom,rpmcc.h>
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interconnect/qcom,msm8953.h>
+#include <dt-bindings/interconnect/qcom,rpm-icc.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/power/qcom-rpmpd.h>
 #include <dt-bindings/soc/qcom,apr.h>
@@ -1107,6 +1109,17 @@
 				      "rbbmtimer",
 				      "alwayson";
 			power-domains = <&gcc OXILI_GX_GDSC>;
+
+			/*
+			 * The path of the graphics master to the memory.
+			 * The msm-bus table of the GPU (the vendor legacy
+			 * one on the board's gpu node) names the graphics
+			 * master and the EBI channel, and the shim maps
+			 * them onto this path.
+			 */
+			interconnects = <&bimc MAS_OXILI RPM_ALWAYS_TAG
+					 &bimc SLV_EBI RPM_ALWAYS_TAG>;
+			interconnect-names = "gpu-ddr";
 
 			iommus = <&gpu_iommu 0>;
 			operating-points-v2 = <&gpu_opp_table>;
