@@ -1515,7 +1515,6 @@ int mdss_mdp_overlay_start(struct msm_fb_data_type *mfd)
 		 * As splash is not enabled, disable EARLY_MAP setting which was
 		 * enabled through DT before first kickoff.
 		 */
-		pr_info("DIAG118 overlay_start smmu EARLY_MAP clear\n");
 		mdss_smmu_set_attribute(MDSS_IOMMU_DOMAIN_UNSECURE,
 					 EARLY_MAP, 0);
 		mdss_iommu_ctrl(0);
@@ -1527,10 +1526,7 @@ int mdss_mdp_overlay_start(struct msm_fb_data_type *mfd)
 	 * right away, it would be handled correctly.
 	 */
 	atomic_inc(&mdp5_data->mdata->active_intf_cnt);
-	mdss_mdp_diag_pwr("overlay_start ctl_start pre");
-	mdss_mdp_diag_pipes("overlay_start pre");
 	rc = mdss_mdp_ctl_start(ctl, false);
-	pr_info("DIAG118 overlay_start ctl_start rc=%d\n", rc);
 	if (rc == 0) {
 		mdss_mdp_ctl_notifier_register(mdp5_data->ctl,
 				&mfd->mdp_sync_pt_data.notifier);
@@ -1546,10 +1542,8 @@ int mdss_mdp_overlay_start(struct msm_fb_data_type *mfd)
 	rc = mdss_mdp_pp_resume(mfd);
 	if (rc && (rc != -EPERM) && (rc != -ENODEV))
 		pr_err("PP resume err %d\n", rc);
-	pr_info("DIAG118 overlay_start pp_resume rc=%d\n", rc);
 
 	rc = mdss_mdp_splash_cleanup(mfd, true);
-	pr_info("DIAG118 overlay_start splash_cleanup rc=%d\n", rc);
 	if (!rc)
 		goto end;
 
@@ -2527,7 +2521,6 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
 	int ret = 0;
 	struct mdss_mdp_commit_cb commit_cb;
-	static unsigned int diag123_kickoffs; /* DEBUG run123; per-fb ov_lock */
 
 	if (!ctl || !ctl->mixer_left)
 		return -ENODEV;
@@ -2625,17 +2618,6 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 		ret = mdss_mdp_display_commit(mdp5_data->ctl, NULL,
 			&commit_cb);
 		ATRACE_END("display_commit");
-		/*
-		 * DEBUG run123/run189: the old probe stopped after two commits,
-		 * so "only N lines" said nothing about whether the display is
-		 * still being programmed. Report the first two, then every
-		 * 600th (about ten seconds at 60 Hz) with the running total.
-		 */
-		diag123_kickoffs++;
-		if (diag123_kickoffs <= 2 || !(diag123_kickoffs % 600)) {
-			mdss_mdp_diag_pipes("kickoff post-commit");
-			pr_info("DIAG123 kickoff count=%u\n", diag123_kickoffs);
-		}
 	}
 	__vsync_set_vsync_handler(mfd);
 

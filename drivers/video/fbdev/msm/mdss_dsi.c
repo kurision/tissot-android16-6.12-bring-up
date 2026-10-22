@@ -1542,12 +1542,8 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 		 * sent to panel
 		 */
 		mdss_dsi_restore_intr_mask(ctrl_pdata);
-		pr_info("DIAG dsi_on: ctrl=%d panel already on (cont splash), PHY not re-initialised\n",
-			ctrl_pdata->ndx);
 		goto end;
 	}
-	pr_info("DIAG dsi_on: ctrl=%d cold bring-up, cur_power_state=%d\n",
-		ctrl_pdata->ndx, cur_power_state);
 
 	ret = mdss_dsi_panel_power_ctrl(pdata, MDSS_PANEL_POWER_ON);
 	if (ret) {
@@ -1613,9 +1609,6 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 				  MDSS_DSI_ALL_CLKS, MDSS_DSI_CLK_OFF);
 
 end:
-	pr_info("DIAG dsi_on: done ctrl=%d rc=%d state=0x%x pwr=%d clk_rate=%llu\n",
-		ctrl_pdata->ndx, ret, ctrl_pdata->ctrl_state,
-		pinfo->panel_power_state, pinfo->clk_rate);
 	pr_debug("%s-:\n", __func__);
 	return ret;
 }
