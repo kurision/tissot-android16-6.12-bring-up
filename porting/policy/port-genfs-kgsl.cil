@@ -167,3 +167,12 @@
 ;; qcom,vidc@1d00000 node of msm8953-xiaomi-tissot-vidc.dtsi), so the regex
 ;; does not match.  A prefix label covers the video4linux directory.
 (genfscon sysfs "/devices/platform/soc@0/1d00000.qcom,vidc/video4linux" (u object_r sysfs_graphics ((s0) (s0))))
+
+;; ---------------
+;; The CAF camera's device names on 6.12: the same type the ROM gives them.
+;;
+;; The camera's devices hang under the CCI (the qcom,cci@1b0c000 node of
+;; msm8953-xiaomi-tissot-camera.dtsi), so the vendor file_contexts, which
+;; expect the CAF 4.19 path, do not match them.  A prefix label covers
+;; the video4linux directory, as the video codec's one does.
+(genfscon sysfs "/devices/platform/soc@0/1b0c000.qcom,cci/video4linux" (u object_r sysfs_graphics ((s0) (s0))))

@@ -1223,10 +1223,11 @@ static int filter_flags_health_check_rc(const char *text, size_t used,
 }
 
 /*
- * Vendor services that crash-loop on this port.  The camera stack is
- * deliberately stopped: camera bring-up is not part of this pass.  dataqti
- * waits for the rmnet/MHI node that only exists once the modem data path is
- * up, so keep it stopped instead of retrying it every second.
+ * Vendor services that crash-loop on this port.  dataqti waits for the
+ * rmnet/MHI node that only exists once the modem data path is up, so
+ * keep it stopped instead of retrying it every second.  The camera
+ * services used to be stopped here as well, because the kernel had no
+ * camera at all; the CAF camera stack is in the tree now, so they run.
  *
  * Service definitions for a vendor service cannot be overridden from
  * /system: init rejects an override that crosses the treble boundary
@@ -1242,13 +1243,9 @@ static const char crashloop_rc[] =
 	"on property:init.svc.vendor.dataqti=restarting\n"
 	"    stop vendor.dataqti\n"
 	"\n"
-	"# ack: camera stack is out of scope for this bring-up.\n"
-	"on property:init.svc.vendor.per_mgr=running\n"
-	"    stop vendor.per_mgr\n"
-	"on property:init.svc.vendor.per_proxy=running\n"
-	"    stop vendor.per_proxy\n"
-	"on property:init.svc.qcamerasvr=running\n"
-	"    stop qcamerasvr\n";
+	"# ack: the camera services used to crash-loop here because the\n"
+	"# kernel had no camera at all; the CAF camera stack is in the tree\n"
+	"# now, so they run.\n";
 
 /*
  * The ROM's flags_health_check.rc runs flags_health_check
