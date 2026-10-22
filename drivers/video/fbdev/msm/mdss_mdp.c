@@ -145,7 +145,6 @@ struct mdss_hw mdss_misc_hw = {
 	.irq_handler = NULL,
 };
 
-#ifdef CONFIG_QCOM_BUS_SCALING
 #define MDP_REG_BUS_VECTOR_ENTRY(ab_val, ib_val)	\
 	{						\
 		.src = MSM_BUS_MASTER_AMPSS_M0,		\
@@ -173,7 +172,6 @@ static struct msm_bus_scale_pdata mdp_reg_bus_scale_table = {
 	.active_only = true,
 };
 static int mdss_mdp_parse_dt_bus_scale(struct platform_device *pdev);
-#endif
 
 u32 invalid_mdp107_wb_output_fmts[] = {
 	MDP_XRGB_8888,
@@ -502,7 +500,6 @@ static irqreturn_t mdss_irq_handler(int irq, void *ptr)
 	return IRQ_HANDLED;
 }
 
-#ifdef CONFIG_QCOM_BUS_SCALING
 static int mdss_mdp_bus_scale_register(struct mdss_data_type *mdata)
 {
 	struct msm_bus_scale_pdata *reg_bus_pdata;
@@ -803,41 +800,6 @@ int mdss_bus_scale_set_quota(int client, u64 ab_quota, u64 ib_quota)
 
 	return rc;
 }
-#else
-static int mdss_mdp_bus_scale_register(struct mdss_data_type *mdata)
-{
-	return 0;
-}
-
-static void mdss_mdp_bus_scale_unregister(struct mdss_data_type *mdata)
-{
-}
-
-int mdss_bus_scale_set_quota(int client, u64 ab_quota, u64 ib_quota)
-{
-	pr_debug("No bus scaling! client=%d ab=%llu ib=%llu\n",
-			client, ab_quota, ib_quota);
-
-	return 0;
-}
-
-struct reg_bus_client *mdss_reg_bus_vote_client_create(char *client_name)
-{
-	return NULL;
-}
-
-void mdss_reg_bus_vote_client_destroy(struct reg_bus_client *client)
-{
-}
-
-int mdss_update_reg_bus_vote(struct reg_bus_client *bus_client, u32 usecase_ndx)
-{
-	pr_debug("%pS: No reg scaling! usecase=%u\n",
-			__builtin_return_address(0), usecase_ndx);
-
-	return 0;
-}
-#endif
 
 void mdss_mdp_vbif_reg_lock(void)
 {
@@ -4914,7 +4876,6 @@ static int mdss_mdp_parse_dt_ppb_off(struct platform_device *pdev)
 	return 0;
 }
 
-#ifdef CONFIG_QCOM_BUS_SCALING
 static int mdss_mdp_parse_dt_bus_scale(struct platform_device *pdev)
 {
 	int rc, paths;
@@ -4988,7 +4949,6 @@ static int mdss_mdp_parse_dt_bus_scale(struct platform_device *pdev)
 
 	return rc;
 }
-#endif
 
 static int mdss_mdp_parse_dt_handler(struct platform_device *pdev,
 		char *prop_name, u32 *offsets, int len)
