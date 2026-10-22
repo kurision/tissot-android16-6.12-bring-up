@@ -14,6 +14,7 @@
 #define pr_fmt(fmt) "%s:%d " fmt, __func__, __LINE__
 
 #include <linux/module.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/of_gpio.h>
 #include "msm_ir_cut.h"
 #include "msm_camera_dt_util.h"

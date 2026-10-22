@@ -14,6 +14,7 @@
 #define pr_fmt(fmt) "%s:%d " fmt, __func__, __LINE__
 
 #include <linux/module.h>
+#include <linux/pinctrl/consumer.h>
 #include "msm_led_flash.h"
 #include "msm_camera_io_util.h"
 #include "../msm_sensor.h"
@@ -745,8 +746,7 @@ static int32_t msm_i2c_torch_create_classdev(struct device *dev ,
 	return 0;
 };
 
-int legacy_msm_flash_i2c_probe(struct i2c_client *client,
-		const struct i2c_device_id *id)
+int legacy_msm_flash_i2c_probe(struct i2c_client *client)
 {
 	int rc = 0;
 	struct msm_led_flash_ctrl_t *fctrl = NULL;

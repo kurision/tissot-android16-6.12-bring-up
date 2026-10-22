@@ -198,7 +198,6 @@ void legacy_msm_cpp_vbif_register_error_handler(void *dev,
 static int msm_cpp_init_bandwidth_mgr(struct cpp_device *cpp_dev)
 {
 	int rc = 0;
-	struct timespec64 ts;
 
 	rc = legacy_msm_camera_register_bus_client(cpp_dev->pdev, CAM_BUS_CLIENT_CPP);
 	if (rc < 0) {
@@ -1475,6 +1474,7 @@ static int msm_cpp_buffer_ops(struct cpp_device *cpp_dev,
 static int msm_cpp_notify_frame_done(struct cpp_device *cpp_dev,
 	uint8_t put_buf)
 {
+	struct timespec64 ts;
 	struct v4l2_event v4l2_evt;
 	struct msm_queue_cmd *frame_qcmd = NULL;
 	struct msm_queue_cmd *event_qcmd = NULL;
@@ -1840,6 +1840,8 @@ static void cpp_timer_callback(struct timer_list *cpp_t)
 static int msm_cpp_send_frame_to_hardware(struct cpp_device *cpp_dev,
 	struct msm_queue_cmd *frame_qcmd)
 {
+	struct timespec64 ts;
+
 	unsigned long flags;
 	uint32_t i, i1, i2;
 	int32_t rc = -EAGAIN;

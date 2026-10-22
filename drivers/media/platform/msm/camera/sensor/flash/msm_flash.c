@@ -18,9 +18,8 @@
 #include "msm_flash.h"
 #include "msm_camera_dt_util.h"
 #include "msm_cci.h"
+#include "xiaomi_msm8953_mach.h"
 #include "msm_sd.h"
-#if IS_ENABLED(CONFIG_MACH_XIAOMI_MSM8953)
-#endif
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
@@ -189,7 +188,7 @@ static int32_t msm_torch_create_classdev(struct platform_device *pdev,
     int32_t i = 0;
     struct msm_flash_ctrl_t *fctrl =
         (struct msm_flash_ctrl_t *)data;
-    int is_ysl = false;
+    int is_ysl = (xiaomi_msm8953_mach_get() == XIAOMI_MSM8953_MACH_YSL);
 
     if (!fctrl) {
         pr_err("Invalid fctrl\n");
@@ -618,7 +617,75 @@ static int32_t msm_flash_init(
 		}
 	}
 #if IS_ENABLED(CONFIG_MACH_XIAOMI_YSL)
-	
+	if (xiaomi_msm8953_mach_get() == XIAOMI_MSM8953_MACH_YSL) {
+		flash_ctrl->func_tbl->camera_flash_off(flash_ctrl, NULL);
+	}
+#endif
+
+	flash_ctrl->flash_state = MSM_CAMERA_FLASH_INIT;
+
+	CDBG("Exit");
+	return 0;
+}
+
+static int32_t msm_flash_init_prepare(
+	struct msm_flash_ctrl_t *flash_ctrl,
+	struct msm_flash_cfg_data_t *flash_data)
+{
+#ifdef CONFIG_COMPAT
+	struct msm_flash_cfg_data_t flash_data_k;
+	struct msm_flash_init_info_t flash_init_info;
+	int32_t i = 0;
+
+	if (!is_compat_task()) {
+		/*for 64-bit usecase,it need copy the data to local memory*/
+		flash_data_k.cfg_type = flash_data->cfg_type;
+		for (i = 0; i < MAX_LED_TRIGGERS; i++) {
+			flash_data_k.flash_current[i] =
+				flash_data->flash_current[i];
+			flash_data_k.flash_duration[i] =
+				flash_data->flash_duration[i];
+		}
+
+		flash_data_k.cfg.flash_init_info = &flash_init_info;
+		if (copy_from_user(&flash_init_info,
+			(void __user *)(flash_data->cfg.flash_init_info),
+			sizeof(struct msm_flash_init_info_t))) {
+			pr_err("%s copy_from_user failed %d\n",
+				__func__, __LINE__);
+			return -EFAULT;
+		}
+		return msm_flash_init(flash_ctrl, &flash_data_k);
+	}
+	/*
+	 * for 32-bit usecase,it already copy the userspace
+	 * data to local memory in msm_flash_subdev_do_ioctl()
+	 * so here do not need copy from user
+	 */
+	return msm_flash_init(flash_ctrl, flash_data);
+#else
+	struct msm_flash_cfg_data_t flash_data_k;
+	struct msm_flash_init_info_t flash_init_info;
+	int32_t i = 0;
+	flash_data_k.cfg_type = flash_data->cfg_type;
+	for (i = 0; i < MAX_LED_TRIGGERS; i++) {
+		flash_data_k.flash_current[i] =
+			flash_data->flash_current[i];
+		flash_data_k.flash_duration[i] =
+			flash_data->flash_duration[i];
+	}
+
+	flash_data_k.cfg.flash_init_info = &flash_init_info;
+	if (copy_from_user(&flash_init_info,
+		(void __user *)(flash_data->cfg.flash_init_info),
+		sizeof(struct msm_flash_init_info_t))) {
+		pr_err("%s copy_from_user failed %d\n",
+			__func__, __LINE__);
+		return -EFAULT;
+	}
+	return msm_flash_init(flash_ctrl, &flash_data_k);
+#endif
+}
 
 static int32_t msm_flash_low(
 	struct msm_flash_ctrl_t *flash_ctrl,
@@ -714,7 +781,7 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 	int32_t rc = 0;
 	struct msm_flash_cfg_data_t *flash_data =
         (struct msm_flash_cfg_data_t *) argp;
-    int is_vince = false;
+    int is_vince = (xiaomi_msm8953_mach_get() == XIAOMI_MSM8953_MACH_VINCE);
 
     mutex_lock(flash_ctrl->flash_mutex);
 
@@ -1175,8 +1242,7 @@ static long msm_flash_subdev_fops_ioctl(struct file *file,
 }
 #endif
 
-static int msm_camera_flash_i2c_probe(struct i2c_client *client,
-	const struct i2c_device_id *id)
+static int msm_camera_flash_i2c_probe(struct i2c_client *client)
 {
 	int32_t rc = 0;
 	struct msm_flash_ctrl_t *flash_ctrl = NULL;
@@ -1313,7 +1379,27 @@ static int32_t msm_flash_platform_probe(struct platform_device *pdev)
 	if (flash_ctrl->flash_driver_type == FLASH_DRIVER_PMIC)
 		rc = msm_torch_create_classdev(pdev, flash_ctrl);
 #if IS_ENABLED(CONFIG_MACH_XIAOMI_VINCE)
-	;
+	if (xiaomi_msm8953_mach_get() == XIAOMI_MSM8953_MACH_VINCE) {
+        msm_flashlight_create_classdev(pdev, flash_ctrl);
+    }
+#endif
+
+	CDBG("probe success\n");
+	return rc;
+}
+
+MODULE_DEVICE_TABLE(of, msm_flash_i2c_dt_match);
+
+static struct i2c_driver msm_flash_i2c_driver = {
+	.id_table = msm_flash_i2c_id,
+	.probe = msm_camera_flash_i2c_probe,
+	.remove = __exit_p(msm_camera_flash_i2c_remove),
+	.driver = {
+		.name = "qcom,camera-flash",
+		.owner = THIS_MODULE,
+		.of_match_table = msm_flash_i2c_dt_match,
+	},
+};
 
 MODULE_DEVICE_TABLE(of, msm_flash_dt_match);
 

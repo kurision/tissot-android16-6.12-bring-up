@@ -14,12 +14,18 @@
 /* The donor's camera stack flag: this tree has only the legacy stack. */
 
 /* The donor's camera stack flag: this tree has only the legacy stack. */
-extern bool camera_legacy_enable;
 
 #define _MSM_SD_H
 
 #include <media/v4l2-subdev.h>
 #include <media/msmb_camera-legacy.h>
+
+/*
+ * The donor's camera stack flag: the donor carried two stacks for the
+ * same silicon and chose between them per board.  This tree has only
+ * the legacy one, so the flag is always set.
+ */
+extern bool camera_legacy_enable;
 
 /* NOTE: this header file should ONLY be included by subdev drivers */
 

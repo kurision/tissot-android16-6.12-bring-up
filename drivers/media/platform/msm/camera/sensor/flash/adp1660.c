@@ -75,8 +75,7 @@ static const struct i2c_device_id adp1660_i2c_id[] = {
 	{ }
 };
 
-static int msm_flash_adp1660_i2c_probe(struct i2c_client *client,
-		const struct i2c_device_id *id)
+static int msm_flash_adp1660_i2c_probe(struct i2c_client *client)
 {
 	if (!id) {
 		pr_err("msm_flash_adp1660_i2c_probe: id is NULL");
@@ -88,7 +87,7 @@ static int msm_flash_adp1660_i2c_probe(struct i2c_client *client,
 
 static struct i2c_driver adp1660_i2c_driver = {
 	.id_table = adp1660_i2c_id,
-	.probe  = msm_flash_adp1660_i2c_probe,
+	.probe = msm_flash_adp1660_i2c_probe,
 	.remove = __exit_p(msm_flash_adp1660_i2c_remove),
 	.driver = {
 		.name = FLASH_NAME,

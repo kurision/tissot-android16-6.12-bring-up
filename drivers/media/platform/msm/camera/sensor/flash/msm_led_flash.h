@@ -71,8 +71,7 @@ struct msm_led_flash_ctrl_t {
 	struct msm_pinctrl_info pinctrl_info;
 };
 
-int legacy_msm_flash_i2c_probe(struct i2c_client *client,
-	const struct i2c_device_id *id);
+int legacy_msm_flash_i2c_probe(struct i2c_client *client);
 
 int legacy_msm_flash_probe(struct platform_device *pdev, const void *data);
 

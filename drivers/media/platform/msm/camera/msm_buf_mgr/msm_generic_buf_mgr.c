@@ -256,8 +256,12 @@ static void msm_buf_mngr_contq_listdel(struct msm_buf_mngr_device *dev,
 		if ((cont_bufs->sessid == session) &&
 		(cont_bufs->strid == stream)) {
 			if (cnt == 1 && unmap == 1) {
-				/* dma_buf_vunmap ignored vaddr(2nd argument) */
-				dma_buf_vunmap(cont_bufs->dmabuf, NULL);
+				/*
+				 * The 6.12 dma-buf wants the map the
+				 * buffer was mapped with.
+				 */
+				dma_buf_vunmap_unlocked(cont_bufs->dmabuf,
+					&cont_bufs->map);
 				rc = dma_buf_end_cpu_access(cont_bufs->dmabuf,
 					DMA_BIDIRECTIONAL);
 				if (rc) {
@@ -330,6 +334,7 @@ static int msm_buf_mngr_handle_cont_cmd(struct msm_buf_mngr_device *dev,
 	int rc = 0, i = 0;
 	struct dma_buf *dmabuf = NULL;
 	struct msm_camera_user_buf_cont_t *iaddr, *temp_addr;
+	struct iosys_map map;
 	struct msm_buf_mngr_user_buf_cont_info *new_entry, *bufs, *save;
 	size_t size;
 
@@ -386,12 +391,13 @@ static int msm_buf_mngr_handle_cont_cmd(struct msm_buf_mngr_device *dev,
 			pr_err("dma begin access failed rc=%d", rc);
 			return rc;
 		}
-		iaddr = dma_buf_vmap(dmabuf);
-		if (IS_ERR_OR_NULL(iaddr)) {
+		rc = dma_buf_vmap_unlocked(dmabuf, &map);
+		if (rc) {
 			pr_err("dma_buf_vmap failed\n");
 			rc = -EINVAL;
 			goto free_ion_handle;
 		}
+		iaddr = map.vaddr;
 		for (i = 0; i < cont_cmd->cnt; i++) {
 			temp_addr = iaddr + i;
 			if (temp_addr->buf_cnt >
@@ -416,6 +422,7 @@ static int msm_buf_mngr_handle_cont_cmd(struct msm_buf_mngr_device *dev,
 			new_entry->main_fd = cont_cmd->cont_fd;
 			new_entry->dmabuf = dmabuf;
 			new_entry->cnt = cont_cmd->cnt;
+			new_entry->map = map;
 			new_entry->paddr = temp_addr;
 			list_add_tail(&new_entry->entry, &dev->cont_qhead);
 		}
@@ -440,7 +447,7 @@ free_list:
 		}
 	}
 	// ion_unmap_kernel(dev->ion_client, ion_handle);
-	dma_buf_vunmap(dmabuf, iaddr);
+	dma_buf_vunmap_unlocked(dmabuf, &map);
 	rc = dma_buf_end_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 	if (rc) {
 		pr_err("Failed in end cpu access, dmabuf=%pK", dmabuf);

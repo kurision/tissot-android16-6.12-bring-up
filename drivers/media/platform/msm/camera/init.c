@@ -12,6 +12,7 @@
  */
 #include <linux/module.h>
 #include <linux/printk.h>
+#include "msm_sd.h"
 
 bool camera_legacy_enable = true;
 

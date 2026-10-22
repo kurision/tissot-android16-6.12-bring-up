@@ -17,8 +17,7 @@
 #include "msm_sd.h"
 #include "msm_cci.h"
 #include "msm_eeprom.h"
-#if IS_ENABLED(CONFIG_MACH_XIAOMI_MSM8953)
-#endif
+#include "xiaomi_msm8953_mach.h"
 #if IS_ENABLED(CONFIG_MACH_XIAOMI_MSM8953)
 #include "msm_eeprom_otp_interface.h"
 #endif
@@ -806,8 +805,7 @@ static struct v4l2_subdev_ops msm_eeprom_subdev_ops = {
 	.core = &msm_eeprom_subdev_core_ops,
 };
 
-static int msm_eeprom_i2c_probe(struct i2c_client *client,
-			 const struct i2c_device_id *id)
+static int msm_eeprom_i2c_probe(struct i2c_client *client)
 {
 	int rc = 0;
 	struct msm_eeprom_ctrl_t *e_ctrl = NULL;
@@ -1273,24 +1271,24 @@ static int msm_eeprom_spi_probe(struct spi_device *spi)
 	return msm_eeprom_spi_setup(spi);
 }
 
-static int msm_eeprom_spi_remove(struct spi_device *sdev)
+static void msm_eeprom_spi_remove(struct spi_device *sdev)
 {
 	struct v4l2_subdev *sd = spi_get_drvdata(sdev);
 	struct msm_eeprom_ctrl_t  *e_ctrl;
 	if (!sd) {
 		pr_err("%s: Subdevice is NULL\n", __func__);
-		return 0;
+		return;
 	}
 
 	e_ctrl = (struct msm_eeprom_ctrl_t *)v4l2_get_subdevdata(sd);
 	if (!e_ctrl) {
 		pr_err("%s: eeprom device is NULL\n", __func__);
-		return 0;
+		return;
 	}
 
 	if (!e_ctrl->eboard_info) {
 		pr_err("%s: eboard_info is NULL\n", __func__);
-		return 0;
+		return;
 	}
 	legacy_msm_camera_i2c_dev_put_clk_info(
 		&e_ctrl->i2c_client.spi_client->spi_master->dev,
@@ -1309,7 +1307,7 @@ static int msm_eeprom_spi_remove(struct spi_device *sdev)
 	kfree(e_ctrl);
 	e_ctrl = NULL;
 
-	return 0;
+	return;
 }
 
 #ifdef CONFIG_COMPAT
@@ -1765,11 +1763,15 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
             goto memdata_free;
         }
 
-        if (false) {
+        #if IS_ENABLED(CONFIG_MACH_XIAOMI_ROSY)
+#if IS_ENABLED(CONFIG_MACH_XIAOMI_ROSY)
+if (xiaomi_msm8953_mach_get() == XIAOMI_MSM8953_MACH_ROSY) {
             if (!strcmp(eb_info->eeprom_name, "ovt_ov5675_i")){
                 printk("insensor eeprom todo init the otp register!\n");
                 eeprom_init_ov5675_reg_otp(e_ctrl, 0x20);
-            } else if (!strcmp(eb_info->eeprom_name, "ovt_ov5675_ii")){
+            } else
+#endif
+ else if (!strcmp(eb_info->eeprom_name, "ovt_ov5675_ii")){
                 printk("insensor eeprom todo init the otp register!\n");
                 eeprom_init_ov5675_reg_otp(e_ctrl, 0x6c);
             } else {
@@ -1806,6 +1808,8 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
                 }
             }
         }
+#endif
+
 
         rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
         if (rc < 0) {
@@ -1817,7 +1821,8 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
             CDBG("memory_data[%d] = 0x%X\n", j,
                 e_ctrl->cal_data.mapdata[j]);
 
-        if (false) {
+        #if IS_ENABLED(CONFIG_MACH_XIAOMI_ROSY)
+if (xiaomi_msm8953_mach_get() == XIAOMI_MSM8953_MACH_ROSY) {
             if (!strcmp(eb_info->eeprom_name, "ovt_ov12a10_i")) {
                 CDBG("match id for ovt_ov12a10_i\n");
                 if (e_ctrl->cal_data.mapdata[0] == 0x01){
@@ -1896,6 +1901,8 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
             }
             CDBG("%s eeprom module id: main_module_id=%d  sub_module_id=%d\n", __func__, main_module_id, sub_module_id);
         }
+#endif
+
 
         e_ctrl->is_supported |= msm_eeprom_match_crc(&e_ctrl->cal_data);
 
@@ -2005,7 +2012,7 @@ static const struct i2c_device_id msm_eeprom_i2c_id[] = {
 
 static struct i2c_driver msm_eeprom_i2c_driver = {
 	.id_table = msm_eeprom_i2c_id,
-	.probe  = msm_eeprom_i2c_probe,
+	.probe = msm_eeprom_i2c_probe,
 	.remove = msm_eeprom_i2c_remove,
 	.driver = {
 		.name = "msm_eeprom",

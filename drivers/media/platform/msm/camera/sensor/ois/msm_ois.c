@@ -13,6 +13,7 @@
 #define pr_fmt(fmt) "%s:%d " fmt, __func__, __LINE__
 
 #include <linux/module.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/firmware.h>
 #include "msm_sd.h"
 #include "msm_ois.h"
@@ -686,8 +687,7 @@ static const struct i2c_device_id msm_ois_i2c_id[] = {
 	{ }
 };
 
-static int32_t msm_ois_i2c_probe(struct i2c_client *client,
-	const struct i2c_device_id *id)
+static int32_t msm_ois_i2c_probe(struct i2c_client *client)
 {
 	int rc = 0;
 	struct msm_ois_ctrl_t *ois_ctrl_t = NULL;
@@ -960,7 +960,7 @@ MODULE_DEVICE_TABLE(of, msm_ois_i2c_dt_match);
 
 static struct i2c_driver msm_ois_i2c_driver = {
 	.id_table = msm_ois_i2c_id,
-	.probe  = msm_ois_i2c_probe,
+	.probe = msm_ois_i2c_probe,
 	.remove = __exit_p(msm_ois_i2c_remove),
 	.driver = {
 		.name = "qcom,ois",

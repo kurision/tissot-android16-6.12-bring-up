@@ -1859,8 +1859,7 @@ static const struct i2c_device_id msm_actuator_i2c_id[] = {
 	{ }
 };
 
-static int32_t msm_actuator_i2c_probe(struct i2c_client *client,
-	const struct i2c_device_id *id)
+static int32_t msm_actuator_i2c_probe(struct i2c_client *client)
 {
 	int rc = 0;
 	struct msm_actuator_ctrl_t *act_ctrl_t = NULL;
@@ -2062,7 +2061,7 @@ MODULE_DEVICE_TABLE(of, msm_actuator_i2c_dt_match);
 
 static struct i2c_driver msm_actuator_i2c_driver = {
 	.id_table = msm_actuator_i2c_id,
-	.probe  = msm_actuator_i2c_probe,
+	.probe = msm_actuator_i2c_probe,
 	.remove = __exit_p(msm_actuator_i2c_remove),
 	.driver = {
 		.name = "qcom,actuator",

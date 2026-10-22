@@ -1487,8 +1487,7 @@ FREE_S_CTRL:
 	return rc;
 }
 
-static int32_t msm_sensor_driver_i2c_probe(struct i2c_client *client,
-	const struct i2c_device_id *id)
+static int32_t msm_sensor_driver_i2c_probe(struct i2c_client *client)
 {
 	int32_t rc = 0;
 	struct msm_sensor_ctrl_t *s_ctrl;
@@ -1540,7 +1539,7 @@ FREE_S_CTRL:
 	return rc;
 }
 
-static int msm_sensor_driver_i2c_remove(struct i2c_client *client)
+static void msm_sensor_driver_i2c_remove(struct i2c_client *client)
 {
 	struct msm_sensor_ctrl_t  *s_ctrl = i2c_get_clientdata(client);
 
@@ -1548,7 +1547,7 @@ static int msm_sensor_driver_i2c_remove(struct i2c_client *client)
 
 	if (!s_ctrl) {
 		pr_err("%s: sensor device is NULL\n", __func__);
-		return 0;
+		return;
 	}
 
 	g_sctrl[s_ctrl->id] = NULL;
@@ -1557,7 +1556,7 @@ static int msm_sensor_driver_i2c_remove(struct i2c_client *client)
 	kfree(s_ctrl->sensor_i2c_client);
 	kfree(s_ctrl);
 
-	return 0;
+	return;
 }
 
 static const struct i2c_device_id i2c_id[] = {
@@ -1567,7 +1566,7 @@ static const struct i2c_device_id i2c_id[] = {
 
 static struct i2c_driver msm_sensor_driver_i2c = {
 	.id_table = i2c_id,
-	.probe  = msm_sensor_driver_i2c_probe,
+	.probe = msm_sensor_driver_i2c_probe,
 	.remove = msm_sensor_driver_i2c_remove,
 	.driver = {
 		.name = SENSOR_DRIVER_I2C,

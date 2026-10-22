@@ -50,6 +50,8 @@ struct msm_buf_mngr_user_buf_cont_info {
 	struct msm_camera_user_buf_cont_t *paddr;
 	uint32_t cnt;
 	struct dma_buf *dmabuf;
+	/* the mapping the buffer was mapped with, for the vunmap */
+	struct iosys_map map;
 };
 
 /* kernel space functions*/
