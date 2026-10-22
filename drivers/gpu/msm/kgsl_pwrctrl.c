@@ -2961,6 +2961,14 @@ _slumber(struct kgsl_device *device)
 		kgsl_pwrscale_sleep(device);
 		trace_gpu_frequency(0, 0);
 		kgsl_pwrctrl_set_state(device, KGSL_STATE_SLUMBER);
+		/*
+		 * adreno_start() voted the active latency; a slumbering GPU
+		 * needs none. The donor released it here, and without it the
+		 * 501 us vote stayed for the rest of the boot and kept CPUs
+		 * 4-7 out of cpu-sleep-1 (541 us) whenever the GPU was idle.
+		 */
+		cpu_latency_qos_update_request(&device->pwrctrl.pm_qos_req_dma,
+					       PM_QOS_DEFAULT_VALUE);
 		break;
 	case KGSL_STATE_SUSPEND:
 		complete_all(&device->hwaccess_gate);
