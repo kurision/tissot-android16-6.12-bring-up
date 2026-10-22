@@ -25,6 +25,7 @@
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include <linux/workqueue.h>
 
 #include <dt-bindings/interconnect/qcom,rpm-icc.h>
 
@@ -47,6 +48,7 @@ struct msm_bus_client {
 	enum path_state state;
 	unsigned int cur_uc;	/* the usecase last applied */
 	bool active_only;
+	bool pending;		/* the vote waits for the path */
 };
 
 static struct msm_bus_client clients[MAX_CLIENTS];
@@ -253,6 +255,105 @@ static int resolve_paths(struct msm_bus_client *client)
 	return 0;
 }
 
+/*
+ * Apply the bandwidth of a usecase on the paths of the client.
+ */
+static int apply_bw(struct msm_bus_client *client, unsigned int index)
+{
+	struct msm_bus_scale_pdata *pdata = client->pdata;
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < pdata->usecase[index].num_paths; i++) {
+		if (!client->paths[i])
+			continue;
+
+		ret = icc_set_bw(client->paths[i],
+				 Bps_to_icc(pdata->usecase[index].vectors[i].ab),
+				  Bps_to_icc(pdata->usecase[index].vectors[i].ib));
+		if (ret)
+			return ret;
+	}
+
+	client->cur_uc = index;
+
+	return 0;
+}
+
+/*
+ * A vote can arrive before the interconnect provider has probed: the
+ * clients of this port are built in and their drivers register before
+ * the interconnect one, so their first vote finds no path. The vote is
+ * remembered and applied as soon as the path is there, so that a client
+ * does not have to vote again for its bandwidth to count. That matters
+ * when the state of the interconnect is synchronised, because until then
+ * the buses are at their maximum and after it they are at what the
+ * clients asked for.
+ */
+#define RETRY_DELAY_MS	10
+#define RETRY_MAX	100
+
+static unsigned int retry_count;
+
+static void retry_work(struct work_struct *work);
+static DECLARE_DELAYED_WORK(retry_work_item, retry_work);
+
+static void retry_schedule(void)
+{
+	if (delayed_work_pending(&retry_work_item))
+		return;
+
+	retry_count = 0;
+	schedule_delayed_work(&retry_work_item, msecs_to_jiffies(RETRY_DELAY_MS));
+}
+
+static void retry_work(struct work_struct *work)
+{
+	bool again = false;
+	unsigned int i;
+
+	for (i = 0; i < MAX_CLIENTS; i++) {
+		struct msm_bus_client *client = &clients[i];
+
+		if (!client->pdata || !client->pending)
+			continue;
+
+		if (client->state == PATH_UNRESOLVED ||
+		    client->state == PATH_PENDING) {
+			if (resolve_paths(client) == -EPROBE_DEFER) {
+				again = true;
+				continue;
+			}
+		}
+
+		if (client->state != PATH_READY)
+			continue;
+
+		if (!apply_bw(client, client->cur_uc))
+			client->pending = false;
+		else
+			again = true;
+	}
+
+	if (!again)
+		return;
+
+	if (retry_count >= RETRY_MAX) {
+		for (i = 0; i < MAX_CLIENTS; i++) {
+			if (clients[i].pdata && clients[i].pending) {
+				dev_warn(clients[i].dev,
+					 "giving up on the pending bus vote of %s\n",
+					 clients[i].pdata->name);
+				break;
+			}
+		}
+		return;
+	}
+
+	retry_count++;
+	schedule_delayed_work(&retry_work_item, msecs_to_jiffies(RETRY_DELAY_MS));
+}
+
 uint32_t msm_bus_scale_register_client(
 		struct msm_bus_scale_pdata *pdata)
 {
@@ -290,7 +391,6 @@ int msm_bus_scale_client_update_request(uint32_t cl, unsigned int index)
 {
 	struct msm_bus_client *client;
 	struct msm_bus_scale_pdata *pdata;
-	unsigned int i;
 	int ret;
 
 	/*
@@ -315,7 +415,13 @@ int msm_bus_scale_client_update_request(uint32_t cl, unsigned int index)
 	    client->state == PATH_PENDING) {
 		ret = resolve_paths(client);
 		if (ret == -EPROBE_DEFER) {
-			/* The provider is not there yet; try again later. */
+			/*
+			 * The provider is not there yet. The vote is
+			 * remembered and applied when it is.
+			 */
+			client->cur_uc = index;
+			client->pending = true;
+			retry_schedule();
 			return 0;
 		}
 	}
@@ -323,20 +429,11 @@ int msm_bus_scale_client_update_request(uint32_t cl, unsigned int index)
 	if (client->state != PATH_READY)
 		return 0;
 
-	for (i = 0; i < pdata->usecase[index].num_paths; i++) {
-		if (!client->paths[i])
-			continue;
+	ret = apply_bw(client, index);
+	if (!ret)
+		client->pending = false;
 
-		ret = icc_set_bw(client->paths[i],
-				 Bps_to_icc(pdata->usecase[index].vectors[i].ab),
-				   Bps_to_icc(pdata->usecase[index].vectors[i].ib));
-		if (ret)
-			return ret;
-	}
-
-	client->cur_uc = index;
-
-	return 0;
+	return ret;
 }
 
 int msm_bus_scale_client_update_context(uint32_t cl, bool active_only,
@@ -345,7 +442,6 @@ int msm_bus_scale_client_update_context(uint32_t cl, bool active_only,
 	struct msm_bus_client *client;
 	struct msm_bus_scale_pdata *pdata;
 	unsigned int i;
-	int ret;
 
 	if (!cl || cl > MAX_CLIENTS)
 		return -EINVAL;
@@ -375,16 +471,9 @@ int msm_bus_scale_client_update_context(uint32_t cl, bool active_only,
 
 		icc_set_tag(client->paths[i],
 			    active_only ? RPM_ACTIVE_TAG : RPM_ALWAYS_TAG);
-		ret = icc_set_bw(client->paths[i],
-				 Bps_to_icc(pdata->usecase[ctx_idx].vectors[i].ab),
-				   Bps_to_icc(pdata->usecase[ctx_idx].vectors[i].ib));
-		if (ret)
-			return ret;
 	}
 
-	client->cur_uc = ctx_idx;
-
-	return 0;
+	return apply_bw(client, ctx_idx);
 }
 
 void msm_bus_scale_unregister_client(uint32_t cl)

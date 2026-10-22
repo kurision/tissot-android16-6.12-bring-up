@@ -1314,6 +1314,17 @@ static struct platform_driver msm8953_noc_driver = {
 	.driver = {
 		.name = "qnoc-msm8953",
 		.of_match_table = msm8953_noc_of_match,
+		/*
+		 * The bandwidth of the fabrics is the maximum until the
+		 * state of the interconnect is synchronised, because the
+		 * framework keeps the initial bandwidth of every node as
+		 * the floor of its aggregated bandwidth
+		 * (drivers/interconnect/core.c:293) and this driver cannot
+		 * read it back from the hardware. The synchronisation
+		 * drops the floor, and with it the maximum, so the buses
+		 * run at what the clients asked for.
+		 */
+		.sync_state = icc_sync_state,
 	},
 };
 
