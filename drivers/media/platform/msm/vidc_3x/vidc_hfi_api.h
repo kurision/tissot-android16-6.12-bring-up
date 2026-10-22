@@ -592,7 +592,12 @@ struct hal_uncompressed_plane_constraints {
 struct hal_uncompressed_plane_actual_constraints_info {
 	enum hal_buffer buffer_type;
 	u32 num_planes;
-	struct hal_uncompressed_plane_constraints rg_plane_format[1];
+	/*
+	 * Two planes: the code fills the Y plane and the UV plane, and
+	 * the allocation it is copied into is sized for two
+	 * (msm_comm_set_color_format_constraints()).
+	 */
+	struct hal_uncompressed_plane_constraints rg_plane_format[2];
 };
 
 struct hal_extra_data_header_config {

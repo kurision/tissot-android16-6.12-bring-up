@@ -374,7 +374,12 @@ struct hfi_hybrid_hierp {
 struct hfi_uncompressed_plane_actual_constraints_info {
 	u32 buffer_type;
 	u32 num_planes;
-	struct hfi_uncompressed_plane_constraints rg_plane_format[1];
+	/*
+	 * Two planes: the code fills the Y plane and the UV plane, and
+	 * the allocation it is copied into is sized for two
+	 * (msm_comm_set_color_format_constraints()).
+	 */
+	struct hfi_uncompressed_plane_constraints rg_plane_format[2];
 };
 
 #define HFI_CMD_SYS_OX_START		\

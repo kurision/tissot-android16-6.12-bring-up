@@ -1112,8 +1112,12 @@ int msm_vidc_enum_framesizes(void *instance, struct v4l2_frmsizeenum *fsize)
 }
 EXPORT_SYMBOL(msm_vidc_enum_framesizes);
 
-static void *vidc_get_userptr(struct device *dev, unsigned long vaddr,
-			unsigned long size, enum dma_data_direction dma_dir)
+/*
+ * 6.12 passes the buffer and the address to get_userptr(); the
+ * direction is not a separate argument any more.
+ */
+static void *vidc_get_userptr(struct vb2_buffer *vb, struct device *dev,
+			unsigned long vaddr, unsigned long size)
 {
 	return (void *)0xdeadbeef;
 }

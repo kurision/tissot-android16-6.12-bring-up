@@ -6,7 +6,7 @@ source "drivers/media/platform/msm/vidc_3x/governors/Kconfig"
 
 menuconfig MSM_VIDC_3X_V4L2
 	tristate "Qualcomm Technologies, Inc. MSM V4L2 3X based video driver"
-		depends on ARCH_QCOM && VIDEO_V4L2
+		depends on ARCH_QCOM && VIDEO_DEV
 		select VIDEOBUF2_CORE
 	help
 		Enable support of MSM V4L2 3X based video driver for

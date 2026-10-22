@@ -12,7 +12,10 @@
  * GNU General Public License for more details.
  */
 
-#include <asm/dma-iommu.h>
+/*
+ * The donor's <asm/dma-iommu.h> declared CAF's fast SMMU mapping
+ * API, which 6.12 does not have.
+ */
 #include <linux/iommu.h>
 #include <linux/of.h>
 #include <linux/slab.h>
@@ -989,7 +992,7 @@ static int msm_vidc_load_regulator_table(
 					"Failed to alloc memory for regulator name\n");
 			goto err_reg_name_alloc;
 		}
-		strlcpy(rinfo->name, domains_property->name,
+		strscpy(rinfo->name, domains_property->name,
 			(supply - domains_property->name) + 1);
 
 		rinfo->has_hw_power_collapse = of_property_read_bool(
@@ -1379,7 +1382,7 @@ static int msm_vidc_setup_context_bank(struct context_bank_info *cb,
 		struct device *dev)
 {
 	int rc = 0;
-	struct bus_type *bus;
+	const struct bus_type *bus;
 
 	if (!dev || !cb) {
 		dprintk(VIDC_ERR,
@@ -1405,8 +1408,14 @@ static int msm_vidc_setup_context_bank(struct context_bank_info *cb,
 	if (!dev->dma_parms)
 		dev->dma_parms =
 			devm_kzalloc(dev, sizeof(*dev->dma_parms), GFP_KERNEL);
-	dma_set_max_seg_size(dev, DMA_BIT_MASK(32));
-	dma_set_seg_boundary(dev, (unsigned long)DMA_BIT_MASK(64));
+	/*
+	 * The donor wrote DMA_BIT_MASK(32) and DMA_BIT_MASK(64) here.
+	 * 6.12's DMA_BIT_MASK() is the low mask ((1 << n) - 1), and its
+	 * 64 bit case is a shift of the full width, which the compiler
+	 * rejects, so the boundary is written out.
+	 */
+	dma_set_max_seg_size(dev, (u32)DMA_BIT_MASK(32));
+	dma_set_seg_boundary(dev, (unsigned long)~0UL);
 
 	dprintk(VIDC_DBG, "Attached %s and created mapping\n", dev_name(dev));
 	dprintk(VIDC_DBG,

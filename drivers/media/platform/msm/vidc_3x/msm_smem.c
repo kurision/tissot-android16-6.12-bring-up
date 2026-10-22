@@ -12,13 +12,23 @@
  * GNU General Public License for more details.
  */
 
-#include <asm/dma-iommu.h>
+/*
+ * The donor's <asm/dma-iommu.h> declared CAF's fast SMMU mapping
+ * API, which 6.12 does not have: the port maps the buffers with
+ * the generic dma-buf API against the context bank's device.
+ */
 #include <linux/dma-buf.h>
 #include <linux/dma-direction.h>
 #include <linux/iommu.h>
-#include <linux/msm_dma_iommu_mapping.h>
+/*
+ * The donor's <linux/msm_dma_iommu_mapping.h> declared CAF's lazy
+ * SMMU mapping helpers, which this driver does not use: the
+ * buffers are mapped with the generic dma-buf API against the
+ * context bank's device.
+ */
 #include <linux/msm_ion.h>
 #include <linux/ion_kernel.h>
+#include <linux/dma-buf.h>
 #include <linux/slab.h>
 #include <linux/types.h>
 #include "media/msm_vidc.h"
@@ -76,12 +86,15 @@ static int msm_dma_get_device_address(struct dma_buf *dbuf, unsigned long align,
 		 * Get the scatterlist for the given attachment
 		 * Mapping of sg is taken care by map attachment
 		 */
-		attach->dma_map_attrs = DMA_ATTR_DELAYED_UNMAP;
 		/*
 		 * We do not need dma_map function to perform cache operations
 		 * on the whole buffer size and hence pass skip sync flag.
 		 * We do the required cache operations separately for the
-		 * required buffer size
+		 * required buffer size.
+		 *
+		 * The donor also asked for DMA_ATTR_DELAYED_UNMAP here;
+		 * 6.12 has no such attribute, the delayed unmap is what the
+		 * dma-buf heaps do.
 		 */
 		attach->dma_map_attrs |= DMA_ATTR_SKIP_CPU_SYNC;
 		/*
@@ -457,7 +470,7 @@ static int alloc_dma_mem(size_t size, u32 align, u32 flags,
 	mem->offset = 0;
 	mem->size = size;
 	mem->dma_buf = dbuf;
-	mem->kvaddr = NULL;
+	mem->map.vaddr = NULL;
 
 	rc = msm_dma_get_device_address(dbuf, align, &iova,
 			&buffer_size, flags, buffer_type,
@@ -476,8 +489,11 @@ static int alloc_dma_mem(size_t size, u32 align, u32 flags,
 
 	if (map_kernel) {
 		dma_buf_begin_cpu_access(dbuf, DMA_BIDIRECTIONAL);
-		mem->kvaddr = dma_buf_vmap(dbuf);
-		if (!mem->kvaddr) {
+		/*
+		 * 6.12's dma_buf_vmap() returns the error code and fills
+		 * the map in; the address is in map.vaddr.
+		 */
+		if (dma_buf_vmap(dbuf, &mem->map)) {
 			dprintk(VIDC_ERR,
 				"Failed to map shared mem in kernel\n");
 			rc = -EIO;
@@ -488,7 +504,7 @@ static int alloc_dma_mem(size_t size, u32 align, u32 flags,
 	dprintk(VIDC_DBG,
 		"%s: dma_buf = %pK, device_addr = %x, size = %d, kvaddr = %pK, buffer_type = %#x, flags = %#lx\n",
 		__func__, mem->dma_buf, mem->device_addr, mem->size,
-		mem->kvaddr, mem->buffer_type, mem->flags);
+		mem->map.vaddr, mem->buffer_type, mem->flags);
 	return rc;
 
 fail_map:
@@ -505,7 +521,7 @@ static int free_dma_mem(struct msm_smem *mem)
 	dprintk(VIDC_DBG,
 		"%s: dma_buf = %pK, device_addr = %x, size = %d, kvaddr = %pK, buffer_type = %#x\n",
 		__func__, mem->dma_buf, mem->device_addr, mem->size,
-		mem->kvaddr, mem->buffer_type);
+		mem->map.vaddr, mem->buffer_type);
 
 	if (mem->device_addr) {
 		msm_dma_put_device_address(mem->flags,
@@ -513,9 +529,9 @@ static int free_dma_mem(struct msm_smem *mem)
 		mem->device_addr = 0x0;
 	}
 
-	if (mem->kvaddr) {
-		dma_buf_vunmap(mem->dma_buf, mem->kvaddr);
-		mem->kvaddr = NULL;
+	if (mem->map.vaddr) {
+		dma_buf_vunmap(mem->dma_buf, &mem->map);
+		mem->map.vaddr = NULL;
 		dma_buf_end_cpu_access(mem->dma_buf, DMA_BIDIRECTIONAL);
 	}
 

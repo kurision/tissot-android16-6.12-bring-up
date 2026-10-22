@@ -663,8 +663,8 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.default_value = V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE,
 		.menu_skip_mask = ~(
 		(1 << V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE) |
-		(1 << V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_MB) |
-		(1 << V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_BYTES) |
+		(1 << V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_MB) |
+		(1 << V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_BYTES) |
 		(1 << V4L2_MPEG_VIDEO_MULTI_SLICE_GOB)
 		),
 	},
@@ -1587,6 +1587,7 @@ static void msm_venc_update_plane_count(struct msm_vidc_inst *inst, int type)
 		case V4L2_MPEG_VIDC_EXTRADATA_ENC_FRAME_QP:
 		case V4L2_MPEG_VIDC_EXTRADATA_METADATA_MBI:
 			inst->fmts[CAPTURE_PORT].num_planes = 2;
+			fallthrough;
 		default:
 			break;
 		}
@@ -3090,10 +3091,10 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		int temp = 0;
 
 		switch (ctrl->val) {
-		case V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_MB:
+		case V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_MB:
 			temp = V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_MB;
 			break;
-		case V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_BYTES:
+		case V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_BYTES:
 			temp = V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_BYTES;
 			break;
 		case V4L2_MPEG_VIDEO_MULTI_SLICE_GOB:
@@ -3133,7 +3134,7 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 
 		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MODE);
 		if (codec_avc && temp_ctrl->val ==
-				V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_MB) {
+				V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_MB) {
 			property_id = HAL_PARAM_VENC_SLICE_DELIVERY_MODE;
 			enable.enable = true;
 		} else {
@@ -4133,8 +4134,8 @@ int msm_venc_querycap(struct msm_vidc_inst *inst, struct v4l2_capability *cap)
 			"Invalid input, inst = %pK, cap = %pK\n", inst, cap);
 		return -EINVAL;
 	}
-	strlcpy(cap->driver, MSM_VIDC_DRV_NAME, sizeof(cap->driver));
-	strlcpy(cap->card, MSM_VENC_DVC_NAME, sizeof(cap->card));
+	strscpy(cap->driver, MSM_VIDC_DRV_NAME, sizeof(cap->driver));
+	strscpy(cap->card, MSM_VENC_DVC_NAME, sizeof(cap->card));
 	cap->bus_info[0] = 0;
 	//cap->version = MSM_VIDC_VERSION;
 	cap->capabilities = V4L2_CAP_VIDEO_CAPTURE_MPLANE |
@@ -4165,7 +4166,7 @@ int msm_venc_enum_fmt(struct msm_vidc_inst *inst, struct v4l2_fmtdesc *f)
 
 	memset(f->reserved, 0, sizeof(f->reserved));
 	if (fmt) {
-		strlcpy(f->description, fmt->description,
+		strscpy(f->description, fmt->description,
 				sizeof(f->description));
 		f->pixelformat = fmt->fourcc;
 	} else {
@@ -4627,7 +4628,7 @@ int msm_venc_qbuf(struct msm_vidc_inst *inst, struct v4l2_buffer *b)
 		return -EINVAL;
 	}
 	mutex_lock(&q->lock);
-	rc = vb2_qbuf(&q->vb2_bufq, b);
+	rc = vb2_qbuf(&q->vb2_bufq, NULL, b);
 	mutex_unlock(&q->lock);
 	if (rc)
 		dprintk(VIDC_ERR, "Failed to qbuf, %d\n", rc);

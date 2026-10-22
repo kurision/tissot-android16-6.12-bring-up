@@ -126,28 +126,28 @@ void msm_vidc_debugfs_update(struct msm_vidc_inst *inst,
 static inline void tic(struct msm_vidc_inst *i, enum profiling_points p,
 				 char *b)
 {
-	struct timeval __ddl_tv;
+	struct timespec64 __ddl_ts;
 
 	if (!i->debug.pdata[p].name[0])
 		memcpy(i->debug.pdata[p].name, b, 64);
 	if ((msm_vidc_debug & VIDC_PROF) &&
 		i->debug.pdata[p].sampling) {
-		do_gettimeofday(&__ddl_tv);
+		ktime_get_real_ts64(&__ddl_ts);
 		i->debug.pdata[p].start =
-			(__ddl_tv.tv_sec * 1000) + (__ddl_tv.tv_usec / 1000);
+			(__ddl_ts.tv_sec * 1000) + (__ddl_ts.tv_nsec / 1000000);
 			i->debug.pdata[p].sampling = false;
 	}
 }
 
 static inline void toc(struct msm_vidc_inst *i, enum profiling_points p)
 {
-	struct timeval __ddl_tv;
+	struct timespec64 __ddl_ts;
 
 	if ((msm_vidc_debug & VIDC_PROF) &&
 		!i->debug.pdata[p].sampling) {
-		do_gettimeofday(&__ddl_tv);
-		i->debug.pdata[p].stop = (__ddl_tv.tv_sec * 1000)
-			+ (__ddl_tv.tv_usec / 1000);
+		ktime_get_real_ts64(&__ddl_ts);
+		i->debug.pdata[p].stop = (__ddl_ts.tv_sec * 1000)
+			+ (__ddl_ts.tv_nsec / 1000000);
 		i->debug.pdata[p].cumulative += i->debug.pdata[p].stop -
 			i->debug.pdata[p].start;
 		i->debug.pdata[p].sampling = true;

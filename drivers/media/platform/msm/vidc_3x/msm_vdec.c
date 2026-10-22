@@ -1049,7 +1049,12 @@ int msm_vdec_qbuf(struct msm_vidc_inst *inst, struct v4l2_buffer *b)
 	}
 
 	mutex_lock(&q->lock);
-	rc = vb2_qbuf(&q->vb2_bufq, b);
+	/*
+	 * 6.12's vb2_qbuf() takes the media device.  The CAF video
+	 * codec does not use the media controller, and the requests
+	 * API is not used either, so there is none to pass.
+	 */
+	rc = vb2_qbuf(&q->vb2_bufq, NULL, b);
 	mutex_unlock(&q->lock);
 
 	if (rc)
@@ -1391,8 +1396,8 @@ int msm_vdec_querycap(struct msm_vidc_inst *inst, struct v4l2_capability *cap)
 			"Invalid input, inst = %pK, cap = %pK\n", inst, cap);
 		return -EINVAL;
 	}
-	strlcpy(cap->driver, MSM_VIDC_DRV_NAME, sizeof(cap->driver));
-	strlcpy(cap->card, MSM_VDEC_DVC_NAME, sizeof(cap->card));
+	strscpy(cap->driver, MSM_VIDC_DRV_NAME, sizeof(cap->driver));
+	strscpy(cap->card, MSM_VDEC_DVC_NAME, sizeof(cap->card));
 	cap->bus_info[0] = 0;
 	//cap->version = MSM_VIDC_VERSION;
 	cap->capabilities = V4L2_CAP_VIDEO_CAPTURE_MPLANE |
@@ -1423,7 +1428,7 @@ int msm_vdec_enum_fmt(struct msm_vidc_inst *inst, struct v4l2_fmtdesc *f)
 
 	memset(f->reserved, 0, sizeof(f->reserved));
 	if (fmt) {
-		strlcpy(f->description, fmt->description,
+		strscpy(f->description, fmt->description,
 				sizeof(f->description));
 		f->pixelformat = fmt->fourcc;
 	} else {

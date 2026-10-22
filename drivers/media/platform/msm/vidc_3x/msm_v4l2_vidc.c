@@ -245,8 +245,11 @@ static int msm_v4l2_enum_framesizes(struct file *file, void *fh,
 
 static const struct v4l2_ioctl_ops msm_v4l2_ioctl_ops = {
 	.vidioc_querycap = msm_v4l2_querycap,
-	.vidioc_enum_fmt_vid_cap_mplane = msm_v4l2_enum_fmt,
-	.vidioc_enum_fmt_vid_out_mplane = msm_v4l2_enum_fmt,
+	/*
+	 * 6.12 has no vidioc_enum_fmt_vid_{cap,out}_mplane: the core
+	 * dispatches the mplane types to the vid_cap and vid_out
+	 * handlers (drivers/media/v4l2-core/v4l2-ioctl.c).
+	 */
 	.vidioc_s_fmt_vid_cap_mplane = msm_v4l2_s_fmt,
 	.vidioc_s_fmt_vid_out_mplane = msm_v4l2_s_fmt,
 	.vidioc_g_fmt_vid_cap_mplane = msm_v4l2_g_fmt,
@@ -544,7 +547,7 @@ static int msm_vidc_probe_vidc_device(struct platform_device *pdev)
 	core->vdev[MSM_VIDC_DECODER].type = MSM_VIDC_DECODER;
 	core->vdev[MSM_VIDC_DECODER].vdev.v4l2_dev = &core->v4l2_dev;
 	rc = video_register_device(&core->vdev[MSM_VIDC_DECODER].vdev,
-					VFL_TYPE_GRABBER, nr);
+					VFL_TYPE_VIDEO, nr);
 	if (rc) {
 		dprintk(VIDC_ERR, "Failed to register video decoder device");
 		goto err_dec_register;
@@ -568,7 +571,7 @@ static int msm_vidc_probe_vidc_device(struct platform_device *pdev)
 	core->vdev[MSM_VIDC_ENCODER].type = MSM_VIDC_ENCODER;
 	core->vdev[MSM_VIDC_ENCODER].vdev.v4l2_dev = &core->v4l2_dev;
 	rc = video_register_device(&core->vdev[MSM_VIDC_ENCODER].vdev,
-				VFL_TYPE_GRABBER, nr + 1);
+				VFL_TYPE_VIDEO, nr + 1);
 	if (rc) {
 		dprintk(VIDC_ERR, "Failed to register video encoder device");
 		goto err_enc_register;
@@ -705,20 +708,19 @@ static int msm_vidc_probe(struct platform_device *pdev)
 	return -EINVAL;
 }
 
-static int msm_vidc_remove(struct platform_device *pdev)
+static void msm_vidc_remove(struct platform_device *pdev)
 {
-	int rc = 0;
 	struct msm_vidc_core *core;
 
 	if (!pdev) {
 		dprintk(VIDC_ERR, "%s invalid input %pK", __func__, pdev);
-		return -EINVAL;
+		return;
 	}
 
 	core = dev_get_drvdata(&pdev->dev);
 	if (!core) {
 		dprintk(VIDC_ERR, "%s invalid core", __func__);
-		return -EINVAL;
+		return;
 	}
 
 	if (core->resources.use_non_secure_pil)
@@ -737,7 +739,6 @@ static int msm_vidc_remove(struct platform_device *pdev)
 	sysfs_remove_group(&pdev->dev.kobj, &msm_vidc_core_attr_group);
 	dev_set_drvdata(&pdev->dev, NULL);
 	kfree(core);
-	return rc;
 }
 
 static int msm_vidc_pm_suspend(struct device *dev)

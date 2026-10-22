@@ -18,7 +18,10 @@
 #include <linux/interrupt.h>
 #include <linux/hash.h>
 #include <linux/soc/qcom/smem.h>
-#include <soc/qcom/socinfo.h>
+/*
+ * The donor included <soc/qcom/socinfo.h> here, but the driver
+ * does not use it: the SoC is known from the device tree.
+ */
 #include "vidc_hfi_helper.h"
 #include "vidc_hfi_io.h"
 #include "msm_vidc_debug.h"

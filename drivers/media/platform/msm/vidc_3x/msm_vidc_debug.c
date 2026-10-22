@@ -167,15 +167,13 @@ struct dentry *msm_vidc_debugfs_init_drv(void)
 		goto failed_create_dir;
 	}
 
+/*
+ * 6.12's debugfs_create_*() helpers return nothing, so there is no
+ * file handle to check; the file is created and the next one is made.
+ */
 #define __debugfs_create(__type, __name, __value) ({                          \
-	struct dentry *f = debugfs_create_##__type(__name, 0644, \
-		dir, __value);                                                \
-	if (IS_ERR_OR_NULL(f)) {                                              \
-		dprintk(VIDC_ERR, "Failed creating debugfs file '%pd/%s'\n",  \
-			dir, __name);                                         \
-		f = NULL;                                                     \
-	}                                                                     \
-	f;                                                                    \
+	debugfs_create_##__type(__name, 0644, dir, __value);                   \
+	true;                                                                \
 })
 
 	ok =
@@ -378,7 +376,7 @@ static ssize_t inst_info_read(struct file *file, char __user *buf,
 		}
 
 		cur += write_str(cur, end - cur, "count: %u\n",
-				inst->bufq[i].vb2_bufq.num_buffers);
+				vb2_get_num_buffers(&inst->bufq[i].vb2_bufq));
 
 		for (j = 0; j < inst->fmts[i].num_planes; j++)
 			cur += write_str(cur, end - cur,

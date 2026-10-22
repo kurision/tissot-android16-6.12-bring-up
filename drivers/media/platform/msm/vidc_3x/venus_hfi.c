@@ -12,7 +12,10 @@
  * GNU General Public License for more details.
  */
 
-#include <asm/dma-iommu.h>
+/*
+ * The donor's <asm/dma-iommu.h> declared CAF's fast SMMU mapping
+ * API, which 6.12 does not have.
+ */
 #include <asm/memory.h>
 #include <linux/clk/qcom.h>
 #include <linux/coresight-stm.h>
@@ -28,7 +31,10 @@
 #include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <soc/qcom/scm.h>
-#include <soc/qcom/socinfo.h>
+/*
+ * The donor included <soc/qcom/socinfo.h> here, but the driver
+ * does not use it: the SoC is known from the device tree.
+ */
 #include <linux/soc/qcom/smem.h>
 #include <soc/qcom/subsystem_restart.h>
 #include "hfi_packetization.h"
@@ -592,7 +598,7 @@ static int __smem_alloc(struct venus_hfi_device *dev,
 
 	dprintk(VIDC_DBG, "%s: ptr = %pK, size = %d\n",
 			__func__,
-			alloc->kvaddr, size);
+			alloc->map.vaddr, size);
 	rc = msm_smem_cache_operations(alloc->dma_buf, 0, alloc->size,
 		SMEM_CACHE_CLEAN);
 	if (rc) {
@@ -601,7 +607,7 @@ static int __smem_alloc(struct venus_hfi_device *dev,
 	}
 
 	mem->mem_size = alloc->size;
-	mem->align_virtual_addr = alloc->kvaddr;
+	mem->align_virtual_addr = alloc->map.vaddr;
 	mem->align_device_addr = alloc->device_addr;
 	return rc;
 fail_smem_alloc:
@@ -760,7 +766,11 @@ static int __vote_bandwidth(struct bus_info *bus,
 	/* Bus Driver expects values in Bps */
 	ab = *freq * 1000;
 	dprintk(VIDC_PROF, "Voting bus %s to ab %llu\n", bus->name, ab);
-	rc = msm_bus_scale_update_bw(bus->client, ab, 0);
+	/*
+	 * The port's msm-bus shim votes with the index of the bus in
+	 * the table, not with a bandwidth in bytes per second.
+	 */
+	rc = msm_bus_scale_client_update_request(bus->client, bus->index);
 	if (rc)
 		dprintk(VIDC_ERR, "Failed voting bus %s to ab %llu, rc=%d\n",
 				bus->name, ab, rc);
@@ -1537,7 +1547,7 @@ static int __iface_cmdq_write_relaxed(struct venus_hfi_device *device,
 
 	if (cmd_packet->packet_type == HFI_CMD_SESSION_EMPTY_BUFFER &&
 				!is_clock_bus_voted(device))
-		dprintk(VIDC_ERR, "%s: bus %llu bps or clock %lu MHz\n",
+		dprintk(VIDC_ERR, "%s: bus %llu bps or clock %u MHz\n",
 				__func__, device->bus_vote.total_bw_ddr,
 					device->clk_freq);
 
@@ -1749,7 +1759,8 @@ static int __get_qdss_iommu_virtual_addr(struct venus_hfi_device *dev,
 			rc = iommu_map(domain, iova,
 					qdss_addr_tbl[i].start,
 					qdss_addr_tbl[i].size,
-					IOMMU_READ | IOMMU_WRITE);
+					IOMMU_READ | IOMMU_WRITE,
+					GFP_KERNEL);
 
 			if (rc) {
 				dprintk(VIDC_ERR,
@@ -2150,11 +2161,12 @@ static int venus_hfi_core_init(void *device)
 		dprintk(VIDC_WARN, "Failed to send image version pkt to f/w\n");
 
 	if (dev->res->pm_qos_latency_us) {
-#ifdef CONFIG_SMP
-		dev->qos.type = PM_QOS_REQ_AFFINE_IRQ;
-		dev->qos.irq = dev->hal_data->irq;
-#endif
-		pm_qos_add_request(&dev->qos, PM_QOS_CPU_DMA_LATENCY,
+		/*
+		 * 6.12 has the CPU latency QoS, not the CPU DMA latency
+		 * one, and it has no affine IRQ type: the request is a
+		 * plain CPU latency vote.
+		 */
+		cpu_latency_qos_add_request(&dev->qos,
 				dev->res->pm_qos_latency_us);
 	}
 
@@ -2181,8 +2193,8 @@ static int venus_hfi_core_release(void *dev)
 	mutex_lock(&device->lock);
 
 	if (device->res->pm_qos_latency_us &&
-		pm_qos_request_active(&device->qos))
-		pm_qos_remove_request(&device->qos);
+		cpu_latency_qos_request_active(&device->qos))
+		cpu_latency_qos_remove_request(&device->qos);
 	__set_state(device, VENUS_STATE_DEINIT);
 	__unload_fw(device);
 
@@ -3278,8 +3290,13 @@ static void __flush_debug_queue(struct venus_hfi_device *device, u8 *packet)
 			SKIP_INVALID_PKT(pkt->size,
 				pkt->msg_size, sizeof(*pkt));
 
-			stm_size = stm_log_inv_ts(0, 0,
-				pkt->rg_msg_data, pkt->msg_size);
+			/*
+			 * The donor traced the coverage message into the
+			 * STM trace buffer with CAF's stm_log_inv_ts();
+			 * 6.12 has no such helper, so the trace is
+			 * dropped and the message is only counted.
+			 */
+			stm_size = pkt->msg_size;
 			if (stm_size == 0)
 				dprintk(VIDC_ERR,
 					"In %s, stm_log returned size of 0\n",
@@ -4208,8 +4225,8 @@ static inline int __suspend(struct venus_hfi_device *device)
 	dprintk(VIDC_DBG, "Entering power collapse\n");
 
 	if (device->res->pm_qos_latency_us &&
-		pm_qos_request_active(&device->qos))
-		pm_qos_remove_request(&device->qos);
+		cpu_latency_qos_request_active(&device->qos))
+		cpu_latency_qos_remove_request(&device->qos);
 
 	rc = __tzbsp_set_video_state(TZBSP_VIDEO_STATE_SUSPEND);
 	if (rc) {
@@ -4321,7 +4338,8 @@ static int __load_fw(struct venus_hfi_device *device)
 			|| device->res->use_non_secure_pil) {
 		if (!device->resources.fw.cookie)
 			device->resources.fw.cookie =
-				subsystem_get_with_fwname("venus",
+				subsystem_get_with_fwname(
+				&device->res->pdev->dev, "venus",
 				device->res->fw_name);
 
 		if (IS_ERR_OR_NULL(device->resources.fw.cookie)) {
