@@ -22,6 +22,23 @@ config MSMB_CAMERA_LEGACY
 	  CSIPHY and the CSID, the ISPIF, the VFE, the CPP and the JPEG
 	  encoder. The ROM's mm-qcamera-daemon drives this interface.
 
+config MSM_CAMERA_VFE
+	bool "QTI MSM camera VFE, ISPIF and CSID support"
+	depends on MSMB_CAMERA
+	help
+	  The pixel processor, the interface between the CSID and the VFE,
+	  and the CSI receivers.  This is the part of the stack that turns
+	  the sensor's frames into images, and it needs the pm8953's GDSC
+	  rails, which this tree does not describe yet.
+
+config MSM_CAMERA_CPP
+	bool "QTI MSM camera post processing engine support"
+	depends on MSMB_CAMERA
+	help
+	  The post processing engine: the scaling and the cropping of the
+	  image, and the JPEG encoder's input.  It needs the pm8953's GDSC
+	  rails, which this tree does not describe yet.
+
 config MSM_CAMERA_SENSOR
 	bool "QTI MSM camera sensor support"
 	depends on MSMB_CAMERA
