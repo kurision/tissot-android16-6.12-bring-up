@@ -2511,6 +2511,10 @@ static int v4l_g_crop(const struct v4l2_ioctl_ops *ops,
 	};
 	int ret;
 
+	/* the driver's own crop handler, if it has one */
+	if (ops->vidioc_g_crop)
+		return ops->vidioc_g_crop(file, fh, p);
+
 	/* simulate capture crop using selection api */
 
 	/* crop means compose for output devices */
@@ -2540,6 +2544,10 @@ static int v4l_s_crop(const struct v4l2_ioctl_ops *ops,
 		.type = p->type,
 		.r = p->c,
 	};
+
+	/* the driver's own crop handler, if it has one */
+	if (ops->vidioc_s_crop)
+		return ops->vidioc_s_crop(file, fh, p);
 
 	/* simulate capture crop using selection api */
 

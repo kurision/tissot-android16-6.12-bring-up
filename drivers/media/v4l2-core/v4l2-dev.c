@@ -633,6 +633,9 @@ static void determine_valid_ioctls(struct video_device *vdev)
 		SET_VALID_IOCTL(ops, VIDIOC_OVERLAY, vidioc_overlay);
 		SET_VALID_IOCTL(ops, VIDIOC_G_FBUF, vidioc_g_fbuf);
 		SET_VALID_IOCTL(ops, VIDIOC_S_FBUF, vidioc_s_fbuf);
+		SET_VALID_IOCTL(ops, VIDIOC_CROPCAP, vidioc_cropcap);
+		SET_VALID_IOCTL(ops, VIDIOC_G_CROP, vidioc_g_crop);
+		SET_VALID_IOCTL(ops, VIDIOC_S_CROP, vidioc_s_crop);
 		SET_VALID_IOCTL(ops, VIDIOC_G_JPEGCOMP, vidioc_g_jpegcomp);
 		SET_VALID_IOCTL(ops, VIDIOC_S_JPEGCOMP, vidioc_s_jpegcomp);
 		SET_VALID_IOCTL(ops, VIDIOC_G_ENC_INDEX, vidioc_g_enc_index);
