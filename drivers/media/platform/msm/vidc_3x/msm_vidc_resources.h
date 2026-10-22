@@ -209,6 +209,8 @@ struct msm_vidc_platform_resources {
 	bool sw_power_collapsible;
 	bool sys_idle_indicator;
 	bool slave_side_cp;
+	u32 cp_nonpixel_start;
+	u32 cp_nonpixel_size;
 	struct list_head context_banks;
 	bool thermal_mitigable;
 	const char *fw_name;

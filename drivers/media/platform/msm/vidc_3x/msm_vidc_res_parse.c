@@ -1197,6 +1197,16 @@ int read_platform_resources_from_dt(
 	res->irq = rc;
 	rc = 0;
 
+	/*
+	 * TrustZone's video memory protection needs the secure non-pixel
+	 * range, which the donor read from its venus_sec_non_pixel context
+	 * bank. Without the secure banks the range comes from here.
+	 */
+	of_property_read_u32_index(pdev->dev.of_node, "qcom,cp-nonpixel-range",
+				   0, &res->cp_nonpixel_start);
+	of_property_read_u32_index(pdev->dev.of_node, "qcom,cp-nonpixel-range",
+				   1, &res->cp_nonpixel_size);
+
 	of_property_read_u32(pdev->dev.of_node,
 			"qcom,imem-size", &res->imem_size);
 	res->imem_type = read_imem_type(pdev);
