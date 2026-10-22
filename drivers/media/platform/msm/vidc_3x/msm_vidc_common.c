@@ -17,7 +17,7 @@
 #include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/bitops.h>
-#include <soc/qcom/subsystem_restart.h>
+#include <soc/qcom/msm_subsystem_compat.h>
 #include <soc/qcom/boot_stats.h>
 #include <asm/div64.h>
 #include "msm_vidc_common.h"
@@ -1805,7 +1805,7 @@ static void handle_sys_error(enum hal_command_response cmd, void *data)
 	struct hfi_device *hdev = NULL;
 	int rc = 0;
 
-	subsystem_crashed("venus");
+	msm_subsystem_crashed("venus");
 	if (!response) {
 		dprintk(VIDC_ERR,
 			"Failed to get valid response for sys error\n");

@@ -36,7 +36,7 @@
  * does not use it: the SoC is known from the device tree.
  */
 #include <linux/soc/qcom/smem.h>
-#include <soc/qcom/subsystem_restart.h>
+#include <soc/qcom/msm_subsystem_compat.h>
 #include "hfi_packetization.h"
 #include "msm_vidc_debug.h"
 #include "venus_hfi.h"
@@ -4338,7 +4338,7 @@ static int __load_fw(struct venus_hfi_device *device)
 			|| device->res->use_non_secure_pil) {
 		if (!device->resources.fw.cookie)
 			device->resources.fw.cookie =
-				subsystem_get_with_fwname(
+				msm_subsystem_get_with_fwname(
 				&device->res->pdev->dev, "venus",
 				device->res->fw_name);
 
@@ -4361,7 +4361,7 @@ static int __load_fw(struct venus_hfi_device *device)
 	return rc;
 fail_protect_mem:
 	if (device->resources.fw.cookie)
-		subsystem_put(device->resources.fw.cookie);
+		msm_subsystem_put(device->resources.fw.cookie);
 	device->resources.fw.cookie = NULL;
 fail_load_fw:
 	__venus_power_off(device, true);
@@ -4383,7 +4383,7 @@ static void __unload_fw(struct venus_hfi_device *device)
 		flush_workqueue(device->venus_pm_workq);
 
 	__vote_buses(device, NULL, 0);
-	subsystem_put(device->resources.fw.cookie);
+	msm_subsystem_put(device->resources.fw.cookie);
 	__interface_queues_release(device);
 	__venus_power_off(device, false);
 	device->resources.fw.cookie = NULL;

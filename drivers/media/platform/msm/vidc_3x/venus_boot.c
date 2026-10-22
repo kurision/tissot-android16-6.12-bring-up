@@ -31,7 +31,7 @@
 #include <linux/sizes.h>
 #include <linux/slab.h>
 #include <soc/qcom/subsystem_notif.h>
-#include <soc/qcom/subsystem_restart.h>
+#include <soc/qcom/msm_subsystem_compat.h>
 #include "msm_vidc_debug.h"
 #include "vidc_hfi_io.h"
 #include "venus_boot.h"
@@ -446,7 +446,7 @@ int venus_boot_init(struct msm_vidc_platform_resources *res,
 		rc = -ENOMEM;
 		goto err_ioremap_fail;
 	}
-	venus_data->venus_notif_hdle = subsys_notif_register_notifier("venus",
+	venus_data->venus_notif_hdle = msm_subsys_notif_register_notifier("venus",
 							&venus_notifier);
 	if (IS_ERR(venus_data->venus_notif_hdle)) {
 		dprintk(VIDC_ERR, "register event notification failed\n");
@@ -465,7 +465,7 @@ err_ioremap_fail:
 void venus_boot_deinit(void)
 {
 	venus_data->resources = NULL;
-	subsys_notif_unregister_notifier(venus_data->venus_notif_hdle,
+	msm_subsys_notif_unregister_notifier(venus_data->venus_notif_hdle,
 			&venus_notifier);
 	kfree(venus_data);
 }

@@ -14,8 +14,8 @@
  * the driver and the driver cannot recover from one.  That is a
  * documented limitation of this port.
  */
-#ifndef __SUBSYS_RESTART_H
-#define __SUBSYS_RESTART_H
+#ifndef _SOC_QCOM_MSM_SUBSYSTEM_COMPAT_H
+#define _SOC_QCOM_MSM_SUBSYSTEM_COMPAT_H
 
 #include <linux/notifier.h>
 #include <linux/types.h>
@@ -47,46 +47,46 @@ struct notif_data {
 };
 
 /**
- * subsystem_get_with_fwname() - load a subsystem's firmware
+ * msm_subsystem_get_with_fwname() - load a subsystem's firmware
  * @dev: the device the firmware is loaded for
  * @name: the name of the subsystem ("venus")
  * @fw_name: the name of the firmware image ("venus")
  *
  * Returns a handle on success, an error pointer on failure.
  */
-void *subsystem_get_with_fwname(struct device *dev, const char *name,
+void *msm_subsystem_get_with_fwname(struct device *dev, const char *name,
 				const char *fw_name);
 
 /**
- * subsystem_put() - release a subsystem
- * @subsystem: the handle from subsystem_get_with_fwname()
+ * msm_subsystem_put() - release a subsystem
+ * @subsystem: the handle from msm_subsystem_get_with_fwname()
  */
-void subsystem_put(void *subsystem);
+void msm_subsystem_put(void *subsystem);
 
 /**
- * subsys_notif_register_notifier() - register for a subsystem's restart
+ * msm_subsys_notif_register_notifier() - register for a subsystem's restart
  * @name: the name of the subsystem
  * @nb: the notifier block
  *
  * There is no subsystem framework in this tree, so nothing is ever
  * notified and the returned handle is a placeholder.
  */
-void *subsys_notif_register_notifier(const char *name,
+void *msm_subsys_notif_register_notifier(const char *name,
 				     struct notifier_block *nb);
 
 /**
- * subsys_notif_unregister_notifier() - unregister a restart notifier
+ * msm_subsys_notif_unregister_notifier() - unregister a restart notifier
  */
-void subsys_notif_unregister_notifier(void *handle,
+void msm_subsys_notif_unregister_notifier(void *handle,
 				       struct notifier_block *nb);
 
 /**
- * subsystem_crashed() - tell the framework that a subsystem crashed
+ * msm_subsystem_crashed() - tell the framework that a subsystem crashed
  * @name: the name of the subsystem
  *
  * There is no subsystem framework in this tree, so this does nothing.
  * The CAF video codec calls it when the firmware reports an error.
  */
-void subsystem_crashed(const char *name);
+void msm_subsystem_crashed(const char *name);
 
-#endif /* __SUBSYS_RESTART_H */
+#endif /* _SOC_QCOM_MSM_SUBSYSTEM_COMPAT_H */

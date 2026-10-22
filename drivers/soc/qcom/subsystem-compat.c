@@ -8,7 +8,7 @@
  * work itself.  This file provides the two entry points the CAF video
  * codec calls:
  *
- *  - subsystem_get_with_fwname() loads the firmware the way this port's
+ *  - msm_subsystem_get_with_fwname() loads the firmware the way this port's
  *    own upstream Venus driver does it: request_firmware() for the .mdt,
  *    qcom_mdt_load() into the reserved memory the device tree names,
  *    and qcom_scm_pas_auth_and_reset() to let the secure world start it.
@@ -29,7 +29,7 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 
-#include <soc/qcom/subsystem_restart.h>
+#include <soc/qcom/msm_subsystem_compat.h>
 
 #include <linux/firmware/qcom/qcom_scm.h>
 #include <linux/soc/qcom/mdt_loader.h>
@@ -45,7 +45,7 @@ struct subsys_cookie {
 };
 
 /**
- * subsystem_get_with_fwname() - load a subsystem's firmware
+ * msm_subsystem_get_with_fwname() - load a subsystem's firmware
  * @dev: the device the firmware is loaded for
  * @name: the name of the subsystem
  * @fw_name: the name of the firmware image
@@ -54,7 +54,7 @@ struct subsys_cookie {
  * with "memory-region", the same way this port's upstream Venus driver
  * loads it.
  */
-void *subsystem_get_with_fwname(struct device *dev, const char *name,
+void *msm_subsystem_get_with_fwname(struct device *dev, const char *name,
 				const char *fw_name)
 {
 	struct subsys_cookie *cookie;
@@ -129,13 +129,13 @@ err_cookie:
 	kfree(cookie);
 	return ERR_PTR(ret);
 }
-EXPORT_SYMBOL_GPL(subsystem_get_with_fwname);
+EXPORT_SYMBOL_GPL(msm_subsystem_get_with_fwname);
 
 /**
- * subsystem_put() - release a subsystem
- * @subsystem: the handle from subsystem_get_with_fwname()
+ * msm_subsystem_put() - release a subsystem
+ * @subsystem: the handle from msm_subsystem_get_with_fwname()
  */
-void subsystem_put(void *subsystem)
+void msm_subsystem_put(void *subsystem)
 {
 	struct subsys_cookie *cookie = subsystem;
 
@@ -146,39 +146,39 @@ void subsystem_put(void *subsystem)
 	memunmap(cookie->mem_va);
 	kfree(cookie);
 }
-EXPORT_SYMBOL_GPL(subsystem_put);
+EXPORT_SYMBOL_GPL(msm_subsystem_put);
 
 /**
- * subsys_notif_register_notifier() - register for a subsystem's restart
+ * msm_subsys_notif_register_notifier() - register for a subsystem's restart
  *
  * There is no subsystem framework in this tree, so nothing is ever
  * notified.  The handle is a placeholder that
- * subsys_notif_unregister_notifier() accepts.
+ * msm_subsys_notif_unregister_notifier() accepts.
  */
-void *subsys_notif_register_notifier(const char *name,
+void *msm_subsys_notif_register_notifier(const char *name,
 				     struct notifier_block *nb)
 {
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(subsys_notif_register_notifier);
+EXPORT_SYMBOL_GPL(msm_subsys_notif_register_notifier);
 
 /**
- * subsys_notif_unregister_notifier() - unregister a restart notifier
+ * msm_subsys_notif_unregister_notifier() - unregister a restart notifier
  */
-void subsys_notif_unregister_notifier(void *handle,
+void msm_subsys_notif_unregister_notifier(void *handle,
 				       struct notifier_block *nb)
 {
 }
-EXPORT_SYMBOL_GPL(subsys_notif_unregister_notifier);
+EXPORT_SYMBOL_GPL(msm_subsys_notif_unregister_notifier);
 
 /**
- * subsystem_crashed() - tell the framework that a subsystem crashed
+ * msm_subsystem_crashed() - tell the framework that a subsystem crashed
  * @name: the name of the subsystem
  *
  * There is no subsystem framework in this tree, so there is nothing to
  * tell.
  */
-void subsystem_crashed(const char *name)
+void msm_subsystem_crashed(const char *name)
 {
 }
-EXPORT_SYMBOL_GPL(subsystem_crashed);
+EXPORT_SYMBOL_GPL(msm_subsystem_crashed);
