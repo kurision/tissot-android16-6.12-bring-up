@@ -1185,8 +1185,17 @@ int read_platform_resources_from_dt(
 	res->register_base = kres ? kres->start : -1;
 	res->register_size = kres ? (kres->end + 1 - kres->start) : -1;
 
-	kres = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
-	res->irq = kres ? kres->start : -1;
+	/*
+	 * Since "of/platform: Drop static setup of IRQ resource from DT
+	 * core" a DT device has no IORESOURCE_IRQ resource, so the donor's
+	 * platform_get_resource() lookup returns NULL here and request_irq()
+	 * later fails with -EINVAL.
+	 */
+	rc = platform_get_irq(pdev, 0);
+	if (rc < 0)
+		return rc;
+	res->irq = rc;
+	rc = 0;
 
 	of_property_read_u32(pdev->dev.of_node,
 			"qcom,imem-size", &res->imem_size);
