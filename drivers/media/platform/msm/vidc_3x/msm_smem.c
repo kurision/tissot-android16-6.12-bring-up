@@ -492,7 +492,9 @@ static int alloc_dma_mem(size_t size, u32 align, u32 flags,
 	if ((dma_addr_t)mem->device_addr != iova) {
 		dprintk(VIDC_ERR, "iova(%pa) truncated to %#x",
 			&iova, mem->device_addr);
-		goto fail_device_address;
+		/* The donor returned 0 here, with the buffer released. */
+		rc = -EINVAL;
+		goto fail_put_address;
 	}
 
 	if (map_kernel) {
@@ -519,8 +521,16 @@ static int alloc_dma_mem(size_t size, u32 align, u32 flags,
 fail_map:
 	if (map_kernel)
 		dma_buf_end_cpu_access(dbuf, DMA_BIDIRECTIONAL);
+fail_put_address:
+	/*
+	 * The donor released the buffer here but kept its device
+	 * mapping, and left mem pointing at the released buffer.
+	 */
+	msm_dma_put_device_address(flags, &mem->mapping_info, buffer_type);
+	mem->device_addr = 0;
 fail_device_address:
 	dma_buf_put(dbuf);
+	mem->dma_buf = NULL;
 fail_shared_mem_alloc:
 	return rc;
 }
