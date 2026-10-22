@@ -15,8 +15,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/export.h>
 #include <linux/printk.h>
-#include <linux/ratelimit.h>
-#include <linux/sched.h>
 
 #include "qcom_scm.h"
 
@@ -74,9 +72,6 @@ static void __scm_smc_do_quirk(const struct arm_smccc_args *smc,
 }
 
 #ifdef CONFIG_ARM64
-/* Log the full returned register set for the first attempts of a traced call. */
-#define SCM_SMC_INT_CAPTURE_ATTEMPTS	3
-
 /* One SMC with x0..x7 as inputs and x0..x7 as outputs. */
 static void scm_smc_full_regs(const unsigned long *in, unsigned long *out)
 {
@@ -108,11 +103,9 @@ static void scm_smc_full_regs(const unsigned long *in, unsigned long *out)
  * instead re-sends the original x1..x5 and only follows x0/x6.
  */
 static void __scm_smc_do_legacy(const struct arm_smccc_args *smc,
-				struct arm_smccc_res *res, bool trace_send)
+				struct arm_smccc_res *res)
 {
-	static DEFINE_RATELIMIT_STATE(scm_pre_rs, HZ, 8);
 	unsigned long in[8], out[8];
-	unsigned int attempts = 0;
 	int i;
 
 	for (i = 0; i < 8; i++)
@@ -120,22 +113,7 @@ static void __scm_smc_do_legacy(const struct arm_smccc_args *smc,
 	in[6] = 0;
 
 	for (;;) {
-		attempts++;
-		if (trace_send && attempts == 1)
-			pr_info("snapshot43 scm_raw_enter pid=%d fn=0x%lx\n",
-				current->pid, smc->args[0]);
-		if (trace_send && __ratelimit(&scm_pre_rs))
-			pr_info("snapshot35 scm_pre pid=%d a0=0x%lx a1=0x%lx a2=0x%lx a3=0x%lx a4=0x%lx a5=0x%lx a6=0x%lx a7=0x%lx\n",
-				current->pid, in[0], in[1], in[2], in[3],
-				in[4], in[5], in[6], in[7]);
-
 		scm_smc_full_regs(in, out);
-
-		if (trace_send && attempts <= SCM_SMC_INT_CAPTURE_ATTEMPTS)
-			pr_info("snapshot43 scm_regs pid=%d fn=0x%lx attempt=%u x0=0x%lx x1=0x%lx x2=0x%lx x3=0x%lx x4=0x%lx x5=0x%lx x6=0x%lx x7=0x%lx\n",
-				current->pid, smc->args[0], attempts,
-				out[0], out[1], out[2], out[3],
-				out[4], out[5], out[6], out[7]);
 
 		if (out[0] != QCOM_SCM_INTERRUPTED)
 			break;
@@ -148,20 +126,16 @@ static void __scm_smc_do_legacy(const struct arm_smccc_args *smc,
 	res->a1 = out[1];
 	res->a2 = out[2];
 	res->a3 = out[3];
-	if (trace_send)
-		pr_info("snapshot43 scm_raw_done pid=%d fn=0x%lx attempts=%u a0=0x%lx\n",
-			current->pid, smc->args[0], attempts, res->a0);
 }
 #endif
 
 /* One complete firmware call, resuming INTERRUPTED returns internally. */
 static void __scm_smc_do_resumable(const struct arm_smccc_args *smc,
-				   struct arm_smccc_res *res, bool legacy,
-				   bool trace_send)
+				   struct arm_smccc_res *res, bool legacy)
 {
 #ifdef CONFIG_ARM64
 	if (legacy) {
-		__scm_smc_do_legacy(smc, res, trace_send);
+		__scm_smc_do_legacy(smc, res);
 		return;
 	}
 #endif
@@ -238,27 +212,20 @@ static int __scm_smc_do_quirk_handle_waitq(struct device *dev, struct arm_smccc_
  * with qcom_scm_lock held, because this firmware never signals it.
  */
 static int __scm_smc_do(struct device *dev, struct arm_smccc_args *smc,
-			struct arm_smccc_res *res, bool atomic, bool legacy,
-			bool trace_send)
+			struct arm_smccc_res *res, bool atomic, bool legacy)
 {
 	int ret, retry_count = 0;
 
 	if (atomic) {
-		__scm_smc_do_resumable(smc, res, legacy, trace_send);
+		__scm_smc_do_resumable(smc, res, legacy);
 		return 0;
 	}
 
 	do {
-		if (trace_send && !retry_count)
-			pr_info("snapshot43 scm_lock_wait pid=%d fn=0x%lx\n",
-				current->pid, smc->args[0]);
 		mutex_lock(&qcom_scm_lock);
-		if (trace_send && !retry_count)
-			pr_info("snapshot43 scm_lock_acquired pid=%d fn=0x%lx\n",
-				current->pid, smc->args[0]);
 
 		if (legacy) {
-			__scm_smc_do_resumable(smc, res, true, trace_send);
+			__scm_smc_do_resumable(smc, res, true);
 			ret = 0;
 		} else {
 			ret = __scm_smc_do_quirk_handle_waitq(dev, smc, res);
@@ -297,8 +264,6 @@ static int __scm_smc_call_common(struct device *dev,
 				    ARM_SMCCC_SMC_32 : ARM_SMCCC_SMC_64;
 	struct arm_smccc_res smc_res;
 	struct arm_smccc_args smc = {0};
-	/* Trace app transactions only; owner-50 listener calls have shim markers. */
-	bool trace_send = legacy && desc->owner == 48 && desc->svc == 0;
 
 	smc.args[0] = ARM_SMCCC_CALL_VAL(
 		smccc_call_type,
@@ -332,7 +297,7 @@ static int __scm_smc_call_common(struct device *dev,
 			}
 
 			smc.args[SCM_SMC_LAST_REG_IDX] = ext_phys;
-			pr_info("qcom_scm: spilled %d args to carveout %pad (svc %x cmd %x)\n",
+			pr_debug("qcom_scm: spilled %d args to carveout %pad (svc %x cmd %x)\n",
 				arglen, &ext_phys, desc->svc, desc->cmd);
 		} else {
 			if (!mempool)
@@ -362,22 +327,7 @@ static int __scm_smc_call_common(struct device *dev,
 		}
 	}
 
-	if (trace_send)
-		pr_info("snapshot35 scm_send_desc pid=%d owner=%u svc=%u cmd=%u arginfo=0x%x args0=0x%llx args1=0x%llx args2=0x%llx args3=0x%llx args4=0x%llx args5=0x%llx args6=0x%llx ext_pa=0x%lx ext_alloc_len=%zu ext_width=%u atomic=%u\n",
-			current->pid, desc->owner, desc->svc, desc->cmd,
-			desc->arginfo, (unsigned long long)desc->args[0],
-			(unsigned long long)desc->args[1],
-			(unsigned long long)desc->args[2],
-			(unsigned long long)desc->args[3],
-			(unsigned long long)desc->args[4],
-			(unsigned long long)desc->args[5],
-			(unsigned long long)desc->args[6],
-			arglen > SCM_SMC_N_REG_ARGS ? smc.args[5] : 0UL,
-			arglen > SCM_SMC_N_REG_ARGS ?
-				SCM_SMC_N_EXT_ARGS * sizeof(u64) : (size_t)0,
-			qcom_smccc_convention == ARM_SMCCC_SMC_32 ? 32 : 64,
-			atomic);
-	ret = __scm_smc_do(dev, &smc, &smc_res, atomic, legacy, trace_send);
+	ret = __scm_smc_do(dev, &smc, &smc_res, atomic, legacy);
 	if (ext_virt)
 		spill_mem_override->free(ext_virt,
 				SCM_SMC_N_EXT_ARGS * sizeof(u64), ext_phys);
