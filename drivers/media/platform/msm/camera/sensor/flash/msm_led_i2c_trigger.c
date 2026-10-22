@@ -22,6 +22,7 @@
 #include "../cci/msm_cci.h"
 #include <linux/debugfs.h>
 
+
 #define FLASH_NAME "camera-led-flash"
 #define CAM_FLASH_PINCTRL_STATE_SLEEP "cam_flash_suspend"
 #define CAM_FLASH_PINCTRL_STATE_DEFAULT "cam_flash_default"
@@ -499,7 +500,7 @@ static int32_t msm_led_get_dt_data(struct device_node *of_node,
 			return -ENOMEM;
 		gconf = power_info->gpio_conf;
 
-		gpio_array_size = msm_camera_gpio_count(dev, of_node);
+		gpio_array_size = msm_camera_gpio_count(&fctrl->pdev->dev, of_node);
 		CDBG("%s gpio count %d\n", __func__, gpio_array_size);
 
 		if (gpio_array_size) {
@@ -511,7 +512,7 @@ static int32_t msm_led_get_dt_data(struct device_node *of_node,
 				goto ERROR4;
 			}
 			for (i = 0; i < gpio_array_size; i++) {
-				gpio_array[i] = msm_camera_gpio_number(dev, of_node, i);
+				gpio_array[i] = msm_camera_gpio_number(&fctrl->pdev->dev, of_node, i);
 				CDBG("%s gpio_array[%d] = %d\n", __func__, i,
 					gpio_array[i]);
 			}
@@ -758,7 +759,7 @@ int legacy_msm_flash_i2c_probe(struct i2c_client *client)
 		goto probe_failure;
 	}
 
-	fctrl = (struct msm_led_flash_ctrl_t *)(id->driver_data);
+	fctrl = (struct msm_led_flash_ctrl_t *)(i2c_get_match_data(client));
 	if (fctrl->flash_i2c_client)
 		fctrl->flash_i2c_client->client = client;
 	/* Set device type as I2C */
@@ -766,7 +767,7 @@ int legacy_msm_flash_i2c_probe(struct i2c_client *client)
 
 	/* Assign name for sub device */
 	snprintf(fctrl->msm_sd.sd.name, sizeof(fctrl->msm_sd.sd.name),
-		"%s", id->name);
+		"%s", client->name);
 
 	rc = msm_led_get_dt_data(client->dev.of_node, fctrl);
 	if (rc < 0) {

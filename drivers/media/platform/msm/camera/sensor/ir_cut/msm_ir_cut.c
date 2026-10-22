@@ -404,7 +404,7 @@ static int32_t msm_ir_cut_get_gpio_dt_data(struct device_node *of_node,
 	int16_t gpio_array_size = 0;
 	struct msm_camera_gpio_conf *gconf = NULL;
 
-	gpio_array_size = msm_camera_gpio_count(dev, of_node);
+	gpio_array_size = msm_camera_gpio_count(&fctrl->pdev->dev, of_node);
 	CDBG("%s gpio count %d\n", __func__, gpio_array_size);
 
 	if (gpio_array_size > 0) {
@@ -423,7 +423,7 @@ static int32_t msm_ir_cut_get_gpio_dt_data(struct device_node *of_node,
 		if (!gpio_array)
 			return -ENOMEM;
 		for (i = 0; i < gpio_array_size; i++) {
-			gpio_array[i] = msm_camera_gpio_number(dev, of_node, i);
+			gpio_array[i] = msm_camera_gpio_number(&fctrl->pdev->dev, of_node, i);
 			if (((int16_t)gpio_array[i]) < 0) {
 				pr_err("%s failed %d\n", __func__, __LINE__);
 				rc = -EINVAL;

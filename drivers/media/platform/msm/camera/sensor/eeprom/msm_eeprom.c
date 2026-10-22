@@ -20,6 +20,7 @@
 #include "xiaomi_msm8953_mach.h"
 #if IS_ENABLED(CONFIG_MACH_XIAOMI_MSM8953)
 #include "msm_eeprom_otp_interface.h"
+
 #endif
 
 #undef CDBG
@@ -827,10 +828,10 @@ static int msm_eeprom_i2c_probe(struct i2c_client *client)
 	/*
 	 * The donor took the board information from the device id the
 	 * probe was called with.  This tree's I2C driver has the old
-	 * probe signature, so the driver's own id table is the source.
+	 * probe signature, so the matched id is asked for instead.
 	 */
 	e_ctrl->eboard_info = (struct msm_eeprom_board_info *)
-		(msm_eeprom_i2c_id[0].driver_data);
+		i2c_get_match_data(client);
 	if (!e_ctrl->eboard_info) {
 		pr_err("%s:%d board info NULL\n", __func__, __LINE__);
 		rc = -EINVAL;
@@ -1266,7 +1267,7 @@ static int msm_eeprom_spi_probe(struct spi_device *spi)
 	spi_setup(spi);
 
 	irq = spi->irq;
-	cs = spi->chip_select;
+	cs = spi->chip_select[0];
 	cpha = (spi->mode & SPI_CPHA) ? 1 : 0;
 	cpol = (spi->mode & SPI_CPOL) ? 1 : 0;
 	cs_high = (spi->mode & SPI_CS_HIGH) ? 1 : 0;

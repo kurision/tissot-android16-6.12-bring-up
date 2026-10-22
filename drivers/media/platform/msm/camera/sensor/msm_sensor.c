@@ -48,16 +48,16 @@ static void msm_sensor_misc_regulator(
 {
 	int32_t rc = 0;
 	if (enable) {
-		sctrl->misc_regulator = (void *)rpm_regulator_get(
+		sctrl->misc_regulator = regulator_get(
 			&sctrl->pdev->dev, sctrl->sensordata->misc_regulator);
 		if (sctrl->misc_regulator) {
-			rc = rpm_regulator_set_mode(sctrl->misc_regulator,
-				RPM_REGULATOR_MODE_HPM);
+			rc = regulator_set_mode(sctrl->misc_regulator,
+				REGULATOR_MODE_FAST);
 			if (rc < 0) {
 				pr_err("%s: Failed to set for rpm regulator on %s: %d\n",
 					__func__,
 					sctrl->sensordata->misc_regulator, rc);
-				rpm_regulator_put(sctrl->misc_regulator);
+				regulator_put(sctrl->misc_regulator);
 			}
 		} else {
 			pr_err("%s: Failed to vote for rpm regulator on %s: %d\n",
@@ -66,14 +66,13 @@ static void msm_sensor_misc_regulator(
 		}
 	} else {
 		if (sctrl->misc_regulator) {
-			rc = rpm_regulator_set_mode(
-				(struct rpm_regulator *)sctrl->misc_regulator,
-				RPM_REGULATOR_MODE_AUTO);
+			rc = regulator_set_mode(sctrl->misc_regulator,
+				REGULATOR_MODE_NORMAL);
 			if (rc < 0)
 				pr_err("%s: Failed to set for rpm regulator on %s: %d\n",
 					__func__,
 					sctrl->sensordata->misc_regulator, rc);
-			rpm_regulator_put(sctrl->misc_regulator);
+			regulator_put(sctrl->misc_regulator);
 		}
 	}
 }
@@ -367,6 +366,7 @@ static long msm_sensor_subdev_do_ioctl(
 	switch (cmd) {
 	case VIDIOC_MSM_SENSOR_CFG32:
 		cmd = VIDIOC_MSM_SENSOR_CFG;
+		fallthrough;
 	default:
 		return msm_sensor_subdev_ioctl(sd, cmd, arg);
 	}

@@ -22,6 +22,7 @@
 #include <linux/slab.h>
 #include <linux/clk.h>
 #include <linux/types.h>
+#include <linux/regulator/consumer.h>
 #include <linux/uaccess.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
@@ -80,7 +81,7 @@ struct msm_sensor_ctrl_t {
 	struct v4l2_subdev_ops *sensor_v4l2_subdev_ops;
 	struct msm_sensor_fn_t *func_tbl;
 	struct msm_camera_i2c_reg_setting stop_setting;
-	void *misc_regulator;
+	struct regulator *misc_regulator;
 	enum msm_sensor_state_t sensor_state;
 	uint8_t is_probe_succeed;
 	uint32_t id;

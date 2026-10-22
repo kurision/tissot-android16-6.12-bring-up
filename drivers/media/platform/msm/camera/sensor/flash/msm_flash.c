@@ -29,10 +29,7 @@ DEFINE_MSM_MUTEX(msm_flash_mutex);
 static struct v4l2_file_operations msm_flash_v4l2_subdev_fops;
 static struct led_trigger *torch_trigger;
 
-#if IS_ENABLED(CONFIG_MACH_XIAOMI_MSM8953)
-static struct msm_flash_ctrl_t *flashlight_ctrl;
 static unsigned char flashlight_brightness_value;
-#endif
 
 static const struct of_device_id msm_flash_i2c_dt_match[] = {
 	{.compatible = "qcom,camera-flash"},
@@ -462,8 +459,7 @@ static int32_t msm_flash_i2c_release(
 {
 	int32_t rc = 0;
 
-	if (!flash_ctrl->power_info.client ||
-		!flash_ctrl->flash_i2c_client) {
+	if (!flash_ctrl->power_info.gpio_conf) {
 		pr_err("%s:%d failed: %pK %pK\n",
 			__func__, __LINE__, &flash_ctrl->power_info,
 			&flash_ctrl->flash_i2c_client);
@@ -1125,7 +1121,7 @@ static int32_t msm_flash_get_dt_data(struct device_node *of_node,
 	/* Read the gpio information from device tree */
 	rc = legacy_msm_sensor_driver_get_gpio_data(
 		&(fctrl->power_info.gpio_conf), of_node,
-		fctrl->pdev);
+		&fctrl->pdev->dev);
 	if (-ENODEV == rc) {
 		pr_notice("No valid flash GPIOs data\n");
 		rc = 0;

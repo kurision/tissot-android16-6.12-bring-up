@@ -289,8 +289,14 @@ static int cam_ahb_get_voltage_level(unsigned int corner)
 
 	case RPM_REGULATOR_CORNER_TURBO:
 	case RPM_REGULATOR_CORNER_RETENTION:
-	default:
 		return -EINVAL;
+	default:
+		/*
+		 * This tree has no regulator corners: the operating point
+		 * of the camera's clock carries a real voltage, which is not
+		 * a corner.  The nominal vote is the safe one.
+		 */
+		return CAM_AHB_NOMINAL_VOTE;
 	}
 }
 

@@ -355,7 +355,7 @@ static int32_t msm_ir_led_platform_probe(struct platform_device *pdev)
 	ir_led_ctrl->pdev = pdev;
 
 	/* Reading PWM device node */
-	ir_led_ctrl->pwm_dev = of_pwm_get(pdev->dev.of_node, NULL);
+	ir_led_ctrl->pwm_dev = devm_pwm_get(&pdev->dev, NULL);
 
 	if (PTR_ERR(ir_led_ctrl->pwm_dev) == -EPROBE_DEFER) {
 		pr_info("Deferring probe...Cannot get PWM device\n");
