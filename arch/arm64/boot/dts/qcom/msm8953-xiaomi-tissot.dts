@@ -12,6 +12,7 @@
 #include "msm8953-xiaomi-tissot-battery.dtsi"
 #include "msm8953-xiaomi-tissot-mdss.dtsi"
 #include "msm8953-xiaomi-tissot-vidc.dtsi"
+#include "msm8953-xiaomi-tissot-thermal.dtsi"
 #include <dt-bindings/leds/common.h>
 #include <dt-bindings/input/linux-event-codes.h>
 
@@ -600,10 +601,10 @@
 	 * (kgsl_pwrctrl.c temp_show(), /sys/class/kgsl/kgsl-3d0/temp). The
 	 * donor's msm8953 gpu node had none, so the file read INT_MIN
 	 * (-2147483648) there as well; apps that show the GPU temperature
-	 * read it. gpu-thermal is the msm8953.dtsi zone on the GPU's TSENS
-	 * sensor.
+	 * read it. tsens_tz_sensor15 is the zone on the GPU's TSENS sensor
+	 * (msm8953-xiaomi-tissot-thermal.dtsi).
 	 */
-	qcom,tzone-names = "gpu-thermal";
+	qcom,tzone-names = "tsens_tz_sensor15";
 
 	/*
 	 * Donor GPU clock names, verbatim from the 4.19 gpu node

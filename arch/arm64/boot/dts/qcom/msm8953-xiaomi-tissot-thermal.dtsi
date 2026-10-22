@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * tissot's thermal zones under the names the ROM's thermal-engine reads.
+ *
+ * thermal-engine (/vendor/etc/thermal-engine.conf) finds its sensors by
+ * thermal zone type: tsens_tz_sensor0..15 for the TSENS sensors, by
+ * hardware sensor number, and pm8953_tz for the PMIC's temperature alarm.
+ * The zone type is the node name (thermal_of registers np->name), and the
+ * SoC and PMIC dtsi files use upstream names (cpu0-thermal, gpu-thermal,
+ * pm8953-thermal), so thermal-engine matched none of them and its CPU and
+ * GPU mitigation, its charging control and its speaker calibration
+ * sensors read nothing.
+ *
+ * The zones are recreated here under the ROM's names with the same
+ * sensors, trips, trip labels and cooling maps as msm8953.dtsi and
+ * pm8953.dtsi; the shared SoC and PMIC files keep their names for the
+ * other boards. The mapping is the one thermal-engine.conf documents:
+ *
+ *   tsens_tz_sensor9..12  cpu0..cpu3     tsens_tz_sensor13  L2 cache 0
+ *   tsens_tz_sensor4..7   cpu4..cpu7     tsens_tz_sensor8   L2 cache 1
+ *   tsens_tz_sensor15     gpu            tsens_tz_sensor2   pop_mem
+ *
+ * The sensors upstream gave no zone (0, 1, 2, 3, 8, 13 and 14) are added
+ * as read-only zones with no trips, because thermal-engine.conf reads
+ * them: 8 and 13 belong to its VIRTUAL-CPUS sensor and 1, 2, 3 and 14 to
+ * SPEAKER-CAL.
+ *
+ * This file must come before msm8953-xiaomi-tissot-oc.dtsi, which adds
+ * its trips to these zones by path.
+ */
+
+#define TISSOT_TSENS_ZONE(zone, sensor, alert_label, crit_label, alert_mc, crit_mc, cdev) \
+	zone { \
+		polling-delay-passive = <250>; \
+		thermal-sensors = <&tsens0 sensor>; \
+		trips { \
+			alert_label: trip-point0 { \
+				temperature = <alert_mc>; \
+				hysteresis = <2000>; \
+				type = "passive"; \
+			}; \
+			crit_label: crit { \
+				temperature = <crit_mc>; \
+				hysteresis = <2000>; \
+				type = "critical"; \
+			}; \
+		}; \
+		cooling-maps { \
+			map0 { \
+				trip = <&alert_label>; \
+				cooling-device = <&cdev THERMAL_NO_LIMIT THERMAL_NO_LIMIT>; \
+			}; \
+		}; \
+	}
+
+#define TISSOT_TSENS_READOUT(zone, sensor) \
+	zone { \
+		thermal-sensors = <&tsens0 sensor>; \
+	}
+
+&{/thermal-zones} {
+	/delete-node/ cpu0-thermal;
+	/delete-node/ cpu1-thermal;
+	/delete-node/ cpu2-thermal;
+	/delete-node/ cpu3-thermal;
+	/delete-node/ cpu4-thermal;
+	/delete-node/ cpu5-thermal;
+	/delete-node/ cpu6-thermal;
+	/delete-node/ cpu7-thermal;
+	/delete-node/ gpu-thermal;
+	/delete-node/ pm8953-thermal;
+
+	TISSOT_TSENS_ZONE(tsens_tz_sensor9, 9, cpu0_alert, cpu0_crit, 80000, 100000, CPU0);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor10, 10, cpu1_alert, cpu1_crit, 80000, 100000, CPU1);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor11, 11, cpu2_alert, cpu2_crit, 80000, 100000, CPU2);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor12, 12, cpu3_alert, cpu3_crit, 80000, 100000, CPU3);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor4, 4, cpu4_alert, cpu4_crit, 80000, 100000, CPU4);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor5, 5, cpu5_alert, cpu5_crit, 80000, 100000, CPU5);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor6, 6, cpu6_alert, cpu6_crit, 80000, 100000, CPU6);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor7, 7, cpu7_alert, cpu7_crit, 80000, 100000, CPU7);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor15, 15, gpu_alert, gpu_crit, 70000, 90000, gpu);
+
+	TISSOT_TSENS_READOUT(tsens_tz_sensor0, 0);
+	TISSOT_TSENS_READOUT(tsens_tz_sensor1, 1);
+	TISSOT_TSENS_READOUT(tsens_tz_sensor2, 2);
+	TISSOT_TSENS_READOUT(tsens_tz_sensor3, 3);
+	TISSOT_TSENS_READOUT(tsens_tz_sensor8, 8);
+	TISSOT_TSENS_READOUT(tsens_tz_sensor13, 13);
+	TISSOT_TSENS_READOUT(tsens_tz_sensor14, 14);
+
+	pm8953_tz {
+		thermal-sensors = <&pm8953_temp>;
+
+		trips {
+			trip0 {
+				temperature = <105000>;
+				hysteresis = <0>;
+				type = "passive";
+			};
+
+			trip1 {
+				temperature = <125000>;
+				hysteresis = <0>;
+				type = "hot";
+			};
+
+			trip2 {
+				temperature = <145000>;
+				hysteresis = <0>;
+				type = "critical";
+			};
+		};
+	};
+};
+
+#undef TISSOT_TSENS_ZONE
+#undef TISSOT_TSENS_READOUT
