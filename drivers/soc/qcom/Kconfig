@@ -190,6 +190,23 @@ config QCOM_RPMH
 	  of hardware components aggregate requests for these resources and
 	  help apply the aggregated state on the resource.
 
+config QCOM_SUBSYSTEM_COMPAT
+	bool "Qualcomm subsystem framework compatibility for the CAF video codec"
+	depends on ARCH_QCOM && OF
+	select QCOM_MDT_LOADER
+	select QCOM_SCM
+	help
+	  The CAF 4.19 subsystem framework is not in 6.12.  The CAF video
+	  codec (vidc_3x) needs two things from it: the Venus firmware
+	  load, and the subsystem restart notification.
+
+	  This provides the firmware load the way this port's own upstream
+	  Venus driver does it.  The restart notification is a no-op: a
+	  Venus crash is not reported to the driver, and the driver cannot
+	  recover from one.
+
+	  Say Y here if the CAF video codec is enabled.
+
 config QCOM_SMEM
 	tristate "Qualcomm Shared Memory Manager (SMEM)"
 	depends on ARCH_QCOM || COMPILE_TEST

@@ -10,7 +10,7 @@
 #include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/major.h>
-#include <media/msm_media_info.h>
+#include <media/msm_mdp_media_info.h>
 
 #include <linux/dma-buf.h>
 

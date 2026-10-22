@@ -1,0 +1,92 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * The CAF 4.19 subsystem framework is not in 6.12.  The CAF video codec
+ * (vidc_3x) uses it for two things: the Venus firmware load, and the
+ * subsystem restart notification.
+ *
+ * The firmware load is done here, the way this port's own upstream Venus
+ * driver does it: request_firmware() for the .mdt, qcom_mdt_load() into
+ * the reserved memory the device tree names, and
+ * qcom_scm_pas_auth_and_reset() to let the secure world start it.
+ *
+ * The subsystem restart notification is a no-op.  There is no subsystem
+ * framework here to register with, so a Venus crash is not reported to
+ * the driver and the driver cannot recover from one.  That is a
+ * documented limitation of this port.
+ */
+#ifndef __SUBSYS_RESTART_H
+#define __SUBSYS_RESTART_H
+
+#include <linux/notifier.h>
+#include <linux/types.h>
+
+struct device;
+struct platform_device;
+
+enum crash_status {
+	CRASH_STATUS_NO_CRASH = 0,
+	CRASH_STATUS_ERR_FATAL,
+	CRASH_STATUS_WDOG_BITE,
+};
+
+/**
+ * struct notif_data - additional notif information
+ * @crashed: indicates if subsystem has crashed due to wdog bite or err fatal
+ * @enable_ramdump: ramdumps disabled if set to 0
+ * @enable_mini_ramdumps: enable flag for minimized critical-memory-only
+ * ramdumps
+ * @no_auth: set if subsystem does not use PIL to bring it out of reset
+ * @pdev: subsystem platform device pointer
+ */
+struct notif_data {
+	enum crash_status crashed;
+	int enable_ramdump;
+	int enable_mini_ramdumps;
+	bool no_auth;
+	struct platform_device *pdev;
+};
+
+/**
+ * subsystem_get_with_fwname() - load a subsystem's firmware
+ * @dev: the device the firmware is loaded for
+ * @name: the name of the subsystem ("venus")
+ * @fw_name: the name of the firmware image ("venus")
+ *
+ * Returns a handle on success, an error pointer on failure.
+ */
+void *subsystem_get_with_fwname(struct device *dev, const char *name,
+				const char *fw_name);
+
+/**
+ * subsystem_put() - release a subsystem
+ * @subsystem: the handle from subsystem_get_with_fwname()
+ */
+void subsystem_put(void *subsystem);
+
+/**
+ * subsys_notif_register_notifier() - register for a subsystem's restart
+ * @name: the name of the subsystem
+ * @nb: the notifier block
+ *
+ * There is no subsystem framework in this tree, so nothing is ever
+ * notified and the returned handle is a placeholder.
+ */
+void *subsys_notif_register_notifier(const char *name,
+				     struct notifier_block *nb);
+
+/**
+ * subsys_notif_unregister_notifier() - unregister a restart notifier
+ */
+void subsys_notif_unregister_notifier(void *handle,
+				       struct notifier_block *nb);
+
+/**
+ * subsystem_crashed() - tell the framework that a subsystem crashed
+ * @name: the name of the subsystem
+ *
+ * There is no subsystem framework in this tree, so this does nothing.
+ * The CAF video codec calls it when the firmware reports an error.
+ */
+void subsystem_crashed(const char *name);
+
+#endif /* __SUBSYS_RESTART_H */
