@@ -106,8 +106,12 @@ config MSMB_JPEG
 config MSM_FD
 	bool "QTI MSM face detection engine support"
 	depends on MSMB_CAMERA
+	depends on MSM_CAMERA_CPP
 	help
-	  Enable support for the MSM face detection engine.
+	  Enable support for the MSM face detection engine.  The engine runs
+	  on the post processing engine's hardware, so it follows that
+	  symbol: with the CPP out of the build, this one cannot be linked
+	  either.
 
 config MSM_JPEGDMA
 	bool "QTI MSM JPEG DMA engine support"
