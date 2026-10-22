@@ -25,7 +25,6 @@
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
-#include <linux/workqueue.h>
 
 #include <dt-bindings/interconnect/qcom,rpm-icc.h>
 
@@ -48,7 +47,6 @@ struct msm_bus_client {
 	enum path_state state;
 	unsigned int cur_uc;	/* the usecase last applied */
 	bool active_only;
-	bool pending;		/* the vote waits for the path */
 };
 
 static struct msm_bus_client clients[MAX_CLIENTS];
@@ -280,80 +278,6 @@ static int apply_bw(struct msm_bus_client *client, unsigned int index)
 	return 0;
 }
 
-/*
- * A vote can arrive before the interconnect provider has probed: the
- * clients of this port are built in and their drivers register before
- * the interconnect one, so their first vote finds no path. The vote is
- * remembered and applied as soon as the path is there, so that a client
- * does not have to vote again for its bandwidth to count. That matters
- * when the state of the interconnect is synchronised, because until then
- * the buses are at their maximum and after it they are at what the
- * clients asked for.
- */
-#define RETRY_DELAY_MS	10
-#define RETRY_MAX	100
-
-static unsigned int retry_count;
-
-static void retry_work(struct work_struct *work);
-static DECLARE_DELAYED_WORK(retry_work_item, retry_work);
-
-static void retry_schedule(void)
-{
-	if (delayed_work_pending(&retry_work_item))
-		return;
-
-	retry_count = 0;
-	schedule_delayed_work(&retry_work_item, msecs_to_jiffies(RETRY_DELAY_MS));
-}
-
-static void retry_work(struct work_struct *work)
-{
-	bool again = false;
-	unsigned int i;
-
-	for (i = 0; i < MAX_CLIENTS; i++) {
-		struct msm_bus_client *client = &clients[i];
-
-		if (!client->pdata || !client->pending)
-			continue;
-
-		if (client->state == PATH_UNRESOLVED ||
-		    client->state == PATH_PENDING) {
-			if (resolve_paths(client) == -EPROBE_DEFER) {
-				again = true;
-				continue;
-			}
-		}
-
-		if (client->state != PATH_READY)
-			continue;
-
-		if (!apply_bw(client, client->cur_uc))
-			client->pending = false;
-		else
-			again = true;
-	}
-
-	if (!again)
-		return;
-
-	if (retry_count >= RETRY_MAX) {
-		for (i = 0; i < MAX_CLIENTS; i++) {
-			if (clients[i].pdata && clients[i].pending) {
-				dev_warn(clients[i].dev,
-					 "giving up on the pending bus vote of %s\n",
-					 clients[i].pdata->name);
-				break;
-			}
-		}
-		return;
-	}
-
-	retry_count++;
-	schedule_delayed_work(&retry_work_item, msecs_to_jiffies(RETRY_DELAY_MS));
-}
-
 uint32_t msm_bus_scale_register_client(
 		struct msm_bus_scale_pdata *pdata)
 {
@@ -416,12 +340,14 @@ int msm_bus_scale_client_update_request(uint32_t cl, unsigned int index)
 		ret = resolve_paths(client);
 		if (ret == -EPROBE_DEFER) {
 			/*
-			 * The provider is not there yet. The vote is
-			 * remembered and applied when it is.
+			 * The provider is not there yet; try again on the
+			 * next vote. fw_devlink holds back the probe of a
+			 * device whose "interconnects" property names a
+			 * provider that has not probed
+			 * (drivers/of/property.c parse_interconnects), so
+			 * this only happens when fw_devlink is off or has
+			 * given up on the link.
 			 */
-			client->cur_uc = index;
-			client->pending = true;
-			retry_schedule();
 			return 0;
 		}
 	}
@@ -429,11 +355,7 @@ int msm_bus_scale_client_update_request(uint32_t cl, unsigned int index)
 	if (client->state != PATH_READY)
 		return 0;
 
-	ret = apply_bw(client, index);
-	if (!ret)
-		client->pending = false;
-
-	return ret;
+	return apply_bw(client, index);
 }
 
 int msm_bus_scale_client_update_context(uint32_t cl, bool active_only,
