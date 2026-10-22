@@ -36,39 +36,6 @@
 (genfscon sysfs "/devices/platform/soc@0/1c00000.gpu/kgsl/kgsl-3d0" (u object_r sysfs_kgsl ((s0) (s0))))
 
 ;; ---------------
-;; The DDR bandwidth device of the power HAL on 6.12: label the new path
-;; with the type the ROM already grants.
-;;
-;; The power HAL of the ROM writes the bandwidth it wants to
-;;
-;;   /sys/class/devfreq/soc:qcom,cpu-cpu-ddr-bw/min_freq
-;;
-;; and every write fails with
-;;
-;;   libperfmgr: Failed to write to node: .../min_freq with value: 769,
-;;   fd: -1
-;;
-;; because this kernel has no such device.  The device tree of the port
-;; creates it with the name the ROM expects (the container of the node
-;; is named "soc", as in the vendor device tree), but the devfreq
-;; framework names its device after the device it belongs to, so the
-;; attributes are at
-;;
-;;   /devices/platform/soc/soc:qcom,cpu-cpu-ddr-bw/soc:qcom,cpu-cpu-ddr-bw/
-;;
-;; and not at the path the vendor policy labels,
-;;
-;;   /devices/platform/soc/soc:qcom,cpu-cpu-ddr-bw/devfreq
-;;
-;; The attributes therefore land on the generic sysfs type, and the
-;; write of the power HAL is denied.
-;;
-;; The type is the one the vendor policy gives to the devfreq
-;; directories of the donor's devices, sysfs_devfreq_dir, so the
-;; permissions of the power HAL are the ones it has on the donor.
-(genfscon sysfs "/devices/platform/soc/soc:qcom,cpu-cpu-ddr-bw/soc:qcom,cpu-cpu-ddr-bw" (u object_r sysfs_devfreq_dir ((s0) (s0))))
-
-;; ---------------
 ;; The per-device wakeup statistics on 6.12: label them with the type the
 ;; ROM's policy already has for them.
 ;;
