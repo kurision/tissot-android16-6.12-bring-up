@@ -26,6 +26,33 @@
 	qcom,msm-id = <293 0>;
 	qcom,board-id = <0x1000b 0x00>;
 
+	cpus {
+		idle-states {
+			entry-method = "psci";
+
+			/* Core-only states and timings from CAF msm8953-pm.dtsi. */
+			tissot_cpu_sleep_0: cpu-sleep-0 {
+				compatible = "arm,idle-state";
+				idle-state-name = "standalone-power-collapse";
+				arm,psci-suspend-param = <0x40000003>;
+				entry-latency-us = <136>;
+				exit-latency-us = <180>;
+				min-residency-us = <901>;
+				local-timer-stop;
+			};
+
+			tissot_cpu_sleep_1: cpu-sleep-1 {
+				compatible = "arm,idle-state";
+				idle-state-name = "standalone-power-collapse";
+				arm,psci-suspend-param = <0x40000003>;
+				entry-latency-us = <179>;
+				exit-latency-us = <362>;
+				min-residency-us = <401>;
+				local-timer-stop;
+			};
+		};
+	};
+
 	gpio-keys {
 		compatible = "gpio-keys";
 
@@ -781,6 +808,38 @@
 			iommus = <&gpu_iommu 0>;
 		};
 	};
+};
+
+&CPU0 {
+	cpu-idle-states = <&tissot_cpu_sleep_0>;
+};
+
+&CPU1 {
+	cpu-idle-states = <&tissot_cpu_sleep_0>;
+};
+
+&CPU2 {
+	cpu-idle-states = <&tissot_cpu_sleep_0>;
+};
+
+&CPU3 {
+	cpu-idle-states = <&tissot_cpu_sleep_0>;
+};
+
+&CPU4 {
+	cpu-idle-states = <&tissot_cpu_sleep_1>;
+};
+
+&CPU5 {
+	cpu-idle-states = <&tissot_cpu_sleep_1>;
+};
+
+&CPU6 {
+	cpu-idle-states = <&tissot_cpu_sleep_1>;
+};
+
+&CPU7 {
+	cpu-idle-states = <&tissot_cpu_sleep_1>;
 };
 
 /* earlycon: stdout-path lets bare `earlycon` auto-match the UART (see
