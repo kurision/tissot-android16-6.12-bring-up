@@ -13,6 +13,8 @@
  */
 
 #define CREATE_TRACE_POINTS
+#include <linux/atomic.h>
+
 #include "msm_vidc_common.h"
 #define MAX_SSR_STRING_LEN 10
 #include "msm_vidc_debug.h"
@@ -218,29 +220,33 @@ struct dentry *msm_vidc_debugfs_init_core(struct msm_vidc_core *core,
 	struct dentry *dir = NULL;
 	char debugfs_name[MAX_DEBUGFS_NAME];
 
-	if (!core) {
+	if (!core || IS_ERR_OR_NULL(parent)) {
 		dprintk(VIDC_ERR, "Invalid params, core: %pK\n", core);
-		goto failed_create_dir;
+		return NULL;
 	}
 
 	snprintf(debugfs_name, MAX_DEBUGFS_NAME, "core%d", core->id);
 	dir = debugfs_create_dir(debugfs_name, parent);
-	if (!dir) {
+	if (IS_ERR_OR_NULL(dir)) {
 		dprintk(VIDC_ERR, "Failed to create debugfs for msm_vidc\n");
-		goto failed_create_dir;
+		return NULL;
 	}
 
-	if (!debugfs_create_file("info", 0444, dir, core, &core_info_fops)) {
+	if (IS_ERR_OR_NULL(debugfs_create_file("info", 0444, dir,
+					       core, &core_info_fops))) {
 		dprintk(VIDC_ERR, "debugfs_create_file: fail\n");
-		goto failed_create_dir;
+		goto failed_create_file;
 	}
-	if (!debugfs_create_file("trigger_ssr", 0200,
-			dir, core, &ssr_fops)) {
+	if (IS_ERR_OR_NULL(debugfs_create_file("trigger_ssr", 0200,
+					       dir, core, &ssr_fops))) {
 		dprintk(VIDC_ERR, "debugfs_create_file: fail\n");
-		goto failed_create_dir;
+		goto failed_create_file;
 	}
-failed_create_dir:
 	return dir;
+
+failed_create_file:
+	debugfs_remove_recursive(dir);
+	return NULL;
 }
 
 static int inst_info_open(struct inode *inode, struct file *file)
@@ -424,15 +430,17 @@ static const struct file_operations inst_info_fops = {
 struct dentry *msm_vidc_debugfs_init_inst(struct msm_vidc_inst *inst,
 		struct dentry *parent)
 {
+	static atomic_t instance_id = ATOMIC_INIT(0);
 	struct dentry *dir = NULL, *info = NULL;
 	char debugfs_name[MAX_DEBUGFS_NAME];
 	struct core_inst_pair *idata = NULL;
 
-	if (!inst) {
+	if (!inst || IS_ERR_OR_NULL(parent)) {
 		dprintk(VIDC_ERR, "Invalid params, inst: %pK\n", inst);
 		goto exit;
 	}
-	snprintf(debugfs_name, MAX_DEBUGFS_NAME, "inst_%pK", inst);
+	snprintf(debugfs_name, MAX_DEBUGFS_NAME, "inst_%u",
+		 (unsigned int)atomic_inc_return(&instance_id));
 
 	idata = kzalloc(sizeof(struct core_inst_pair), GFP_KERNEL);
 	if (!idata) {
@@ -444,14 +452,15 @@ struct dentry *msm_vidc_debugfs_init_inst(struct msm_vidc_inst *inst,
 	idata->inst = inst;
 
 	dir = debugfs_create_dir(debugfs_name, parent);
-	if (!dir) {
+	if (IS_ERR_OR_NULL(dir)) {
 		dprintk(VIDC_ERR, "Failed to create debugfs for msm_vidc\n");
+		dir = NULL;
 		goto failed_create_dir;
 	}
 
 	info = debugfs_create_file("info", 0444, dir,
 			idata, &inst_info_fops);
-	if (!info) {
+	if (IS_ERR_OR_NULL(info)) {
 		dprintk(VIDC_ERR, "debugfs_create_file: fail\n");
 		goto failed_create_file;
 	}

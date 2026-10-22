@@ -3920,8 +3920,14 @@ static int __protect_cp_mem(struct venus_hfi_device *device)
 
 	memprot.cp_start = 0x0;
 	memprot.cp_size = 0x0;
-	memprot.cp_nonpixel_start = 0x0;
-	memprot.cp_nonpixel_size = 0x0;
+	/*
+	 * A zero non-pixel range is rejected by TrustZone (-EINVAL); without
+	 * a venus_sec_non_pixel bank use the range the device tree gives.
+	 */
+	desc.args[2] = memprot.cp_nonpixel_start =
+		device->res->cp_nonpixel_start;
+	desc.args[3] = memprot.cp_nonpixel_size =
+		device->res->cp_nonpixel_size;
 
 	list_for_each_entry(cb, &device->res->context_banks, list) {
 		if (!strcmp(cb->name, "venus_ns")) {

@@ -181,14 +181,14 @@
 	}
 
 &{/thermal-zones} {
-	TISSOT_CPU_COOLING(cpu0-thermal, cpu0_alert, cpu0_backstop);
-	TISSOT_CPU_COOLING(cpu1-thermal, cpu1_alert, cpu1_backstop);
-	TISSOT_CPU_COOLING(cpu2-thermal, cpu2_alert, cpu2_backstop);
-	TISSOT_CPU_COOLING(cpu3-thermal, cpu3_alert, cpu3_backstop);
-	TISSOT_CPU_COOLING(cpu4-thermal, cpu4_alert, cpu4_backstop);
-	TISSOT_CPU_COOLING(cpu5-thermal, cpu5_alert, cpu5_backstop);
-	TISSOT_CPU_COOLING(cpu6-thermal, cpu6_alert, cpu6_backstop);
-	TISSOT_CPU_COOLING(cpu7-thermal, cpu7_alert, cpu7_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor9, cpu0_alert, cpu0_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor10, cpu1_alert, cpu1_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor11, cpu2_alert, cpu2_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor12, cpu3_alert, cpu3_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor4, cpu4_alert, cpu4_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor5, cpu5_alert, cpu5_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor6, cpu6_alert, cpu6_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor7, cpu7_alert, cpu7_backstop);
 };
 
 #undef TISSOT_CPU_COOLING

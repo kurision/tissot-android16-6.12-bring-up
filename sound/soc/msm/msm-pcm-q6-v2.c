@@ -177,7 +177,9 @@ static void event_handler(uint32_t opcode,
 		break;
 	}
 	case ASM_DATA_EVENT_RENDERED_EOS:
-		pr_debug("ASM_DATA_EVENT_RENDERED_EOS\n");
+		pr_info_ratelimited("%s: EOS complete session=%d pending=%#lx\n",
+				    __func__, prtd->audio_client->session,
+				    prtd->cmd_pending);
 		clear_bit(CMD_EOS, &prtd->cmd_pending);
 		wake_up(&the_locks.eos_wait);
 		break;
@@ -653,6 +655,8 @@ static int msm_pcm_trigger(struct snd_soc_component *component, struct snd_pcm_s
 		WARN_ON_ONCE(test_bit(CMD_EOS, &prtd->cmd_pending));
 		set_bit(CMD_EOS, &prtd->cmd_pending);
 		ret = q6asm_cmd_nowait(prtd->audio_client, CMD_EOS);
+		pr_info_ratelimited("%s: EOS submit session=%d ret=%d\n",
+				    __func__, prtd->audio_client->session, ret);
 		if (ret)
 			clear_bit(CMD_EOS, &prtd->cmd_pending);
 		break;
@@ -932,14 +936,19 @@ static int msm_pcm_playback_close(struct snd_pcm_substream *substream)
 			if (timeout < CMD_EOS_MIN_TIMEOUT_LENGTH)
 				timeout = CMD_EOS_MIN_TIMEOUT_LENGTH;
 		}
-		pr_debug("%s: CMD_EOS timeout is %d\n", __func__, timeout);
+		pr_info_ratelimited("%s: EOS wait session=%d pending=%#lx timeout_ticks=%u rate=%u period_frames=%lu frame_bits=%u\n",
+				    __func__, prtd->audio_client->session,
+				    prtd->cmd_pending, timeout, runtime->rate,
+				    (unsigned long)runtime->period_size,
+				    runtime->frame_bits);
 
 		ret = wait_event_timeout(the_locks.eos_wait,
 					 !test_bit(CMD_EOS, &prtd->cmd_pending),
 					 timeout);
 		if (!ret)
-			pr_err("%s: CMD_EOS failed, cmd_pending 0x%lx\n",
-			       __func__, prtd->cmd_pending);
+			pr_err("%s: CMD_EOS failed session=%d cmd_pending=%#lx timeout_ticks=%u\n",
+			       __func__, prtd->audio_client->session,
+			       prtd->cmd_pending, timeout);
 		q6asm_cmd(prtd->audio_client, CMD_CLOSE);
 		q6asm_audio_client_buf_free_contiguous(dir,
 					prtd->audio_client);
@@ -1845,7 +1854,8 @@ static int msm_pcm_chmap_ctl_put(struct snd_kcontrol *kcontrol,
 		if (rtd) {
 			if (component) {
 				fe_id = rtd->dai_link->id;
-				chmixer_pspd = pdata ?
+				chmixer_pspd = pdata &&
+					fe_id < MSM_FRONTEND_DAI_MM_SIZE ?
 					pdata->chmixer_pspd[fe_id][SESSION_TYPE_RX] : NULL;
 
 				if (chmixer_pspd && chmixer_pspd->enable) {
@@ -2722,6 +2732,18 @@ static int msm_pcm_add_channel_mixer_controls(struct snd_soc_pcm_runtime *rtd)
 		pr_err("%s: platform data not populated\n", __func__);
 		return -EINVAL;
 	}
+
+	/*
+	 * The channel mixer state is kept per MultiMedia front end only
+	 * (pcm_device[] and chmixer_pspd[] are MSM_FRONTEND_DAI_MM_SIZE
+	 * long). The port also puts the VoIP and LSM links on this platform
+	 * (the donor had them on platforms this tree does not build), and
+	 * their ids are past the arrays: indexing with them overwrote
+	 * pdata->lock and the memory after pdata. Those front ends have no
+	 * channel mixer, as msm_pcm_get_chmixer() already says.
+	 */
+	if (rtd->dai_link->id > MSM_FRONTEND_DAI_MM_MAX_ID)
+		return 0;
 
 	if (pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream &&
 		!pdata->chmixer_pspd[rtd->dai_link->id][SESSION_TYPE_RX]) {

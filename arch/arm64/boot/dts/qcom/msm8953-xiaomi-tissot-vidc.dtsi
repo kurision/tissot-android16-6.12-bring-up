@@ -26,7 +26,9 @@
  *   - only the non-secure context bank, on the Venus SMMU stream the
  *     upstream driver uses (0x16). The three secure banks need the
  *     TrustZone secure SMMU, which this tree does not have; secure
- *     playback is out of scope.
+ *     playback is out of scope. TrustZone's memory protection call
+ *     still needs the secure non-pixel bank's range, so it is given
+ *     as qcom,cp-nonpixel-range.
  */
 
 #include <dt-bindings/clock/qcom,gcc-msm8953.h>
@@ -71,6 +73,8 @@
 				    <0x9181000 0x1000>;
 		qcom,max-hw-load = <1044480>; /* 4096 x 2176 @ 30 fps */
 		qcom,slave-side-cp;
+		/* The donor's venus_sec_non_pixel virtual-addr-pool. */
+		qcom,cp-nonpixel-range = <0x01000000 0x28000000>;
 		qcom,sw-power-collapse;
 		qcom,firmware-name = "venus";
 		qcom,pm-qos-latency-us = <213>;

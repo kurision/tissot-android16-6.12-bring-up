@@ -106,6 +106,8 @@ struct qcom_icc_qos {
  * @ab_coeff: a percentage-based coefficient for compensating the AB calculations
  * @ib_coeff: an inverse-percentage-based coefficient for compensating the IB calculations
  * @bus_clk_rate: a pointer to an array containing bus clock rates in Hz
+ * @rpm_bw: the bandwidth last committed to the RPM, per context, in bps
+ * @rpm_bw_valid: whether @rpm_bw holds a committed value, per context
  */
 struct qcom_icc_node {
 	unsigned char *name;
@@ -123,6 +125,8 @@ struct qcom_icc_node {
 	u16 ab_coeff;
 	u16 ib_coeff;
 	u32 bus_clk_rate[QCOM_SMD_RPM_STATE_NUM];
+	u64 rpm_bw[QCOM_SMD_RPM_STATE_NUM];
+	bool rpm_bw_valid[QCOM_SMD_RPM_STATE_NUM];
 };
 
 struct qcom_icc_desc {

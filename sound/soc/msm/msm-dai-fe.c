@@ -2396,6 +2396,109 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 		.ops = &msm_fe_Multimedia_dai_ops,
 		.name = "MultiMedia16",
 	},
+	/*
+	 * The legacy voice front ends, from the donor's audio-legacy
+	 * msm-dai-fe.c. msm8952.c switches the voice links to them with
+	 * qcom,use-legacy-voice-cpu-dais, and the routing driver has their
+	 * mixers (msm-pcm-routing-v2.c). fe_dai_probe() runs from
+	 * msm_fe_dai_ops on this kernel.
+	 */
+	{
+		.playback = {
+			.stream_name = "CS-VOICE Playback",
+			.aif_name = "CS-VOICE_DL1",
+			.rates = SNDRV_PCM_RATE_8000_48000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.channels_min = 1,
+			.channels_max = 2,
+			.rate_min =     8000,
+			.rate_max =     48000,
+		},
+		.capture = {
+			.stream_name = "CS-VOICE Capture",
+			.aif_name = "CS-VOICE_UL1",
+			.rates = SNDRV_PCM_RATE_8000_48000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.channels_min = 1,
+			.channels_max = 2,
+			.rate_min =     8000,
+			.rate_max =     48000,
+		},
+		.ops = &msm_fe_dai_ops,
+		.name = "CS-VOICE",
+	},
+	{
+		.playback = {
+			.stream_name = "Voice2 Playback",
+			.aif_name = "VOICE2_DL",
+			.rates = SNDRV_PCM_RATE_8000_48000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.channels_min = 1,
+			.channels_max = 2,
+			.rate_min =     8000,
+			.rate_max =     48000,
+		},
+		.capture = {
+			.stream_name = "Voice2 Capture",
+			.aif_name = "VOICE2_UL",
+			.rates = SNDRV_PCM_RATE_8000_48000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.channels_min = 1,
+			.channels_max = 2,
+			.rate_min =     8000,
+			.rate_max =     48000,
+		},
+		.ops = &msm_fe_dai_ops,
+		.name = "Voice2",
+	},
+	{
+		.playback = {
+			.stream_name = "VoLTE Playback",
+			.aif_name = "VoLTE_DL",
+			.rates = SNDRV_PCM_RATE_8000_48000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.channels_min = 1,
+			.channels_max = 2,
+			.rate_min =     8000,
+			.rate_max =     48000,
+		},
+		.capture = {
+			.stream_name = "VoLTE Capture",
+			.aif_name = "VoLTE_UL",
+			.rates = SNDRV_PCM_RATE_8000_48000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.channels_min = 1,
+			.channels_max = 2,
+			.rate_min =     8000,
+			.rate_max =     48000,
+		},
+		.ops = &msm_fe_dai_ops,
+		.name = "VoLTE",
+	},
+	{
+		.playback = {
+			.stream_name = "VoWLAN Playback",
+			.aif_name = "VoWLAN_DL",
+			.rates = SNDRV_PCM_RATE_8000_48000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.channels_min = 1,
+			.channels_max = 2,
+			.rate_min = 8000,
+			.rate_max = 48000,
+		},
+		.capture = {
+			.stream_name = "VoWLAN Capture",
+			.aif_name = "VoWLAN_UL",
+			.rates = SNDRV_PCM_RATE_8000_48000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.channels_min = 1,
+			.channels_max = 2,
+			.rate_min = 8000,
+			.rate_max = 48000,
+		},
+		.ops = &msm_fe_dai_ops,
+		.name = "VoWLAN",
+	},
 	{
 		.playback = {
 			.stream_name = "VoiceMMode1 Playback",

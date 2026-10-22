@@ -1197,6 +1197,16 @@ int read_platform_resources_from_dt(
 	res->irq = rc;
 	rc = 0;
 
+	/*
+	 * TrustZone's video memory protection needs the secure non-pixel
+	 * range, which the donor read from its venus_sec_non_pixel context
+	 * bank. Without the secure banks the range comes from here.
+	 */
+	of_property_read_u32_index(pdev->dev.of_node, "qcom,cp-nonpixel-range",
+				   0, &res->cp_nonpixel_start);
+	of_property_read_u32_index(pdev->dev.of_node, "qcom,cp-nonpixel-range",
+				   1, &res->cp_nonpixel_size);
+
 	of_property_read_u32(pdev->dev.of_node,
 			"qcom,imem-size", &res->imem_size);
 	res->imem_type = read_imem_type(pdev);
@@ -1402,6 +1412,27 @@ static int msm_vidc_setup_context_bank(struct context_bank_info *cb,
 	 */
 	dma_set_max_seg_size(dev, (u32)DMA_BIT_MASK(32));
 	dma_set_seg_boundary(dev, (unsigned long)~0UL);
+
+	/*
+	 * Venus can only reach the bank's virtual-addr-pool. The donor's
+	 * IOMMU layer kept the IOVAs inside it through the node's
+	 * qcom,iommu-dma-addr-pool; 6.12 has no such property and its
+	 * dma-iommu allocates top-down from the DMA mask, which gave the
+	 * firmware its queues at 0xffc00000, where it cannot use them. Cap
+	 * the mask at the end of the pool, as the upstream Venus driver
+	 * caps it (venus/core.c, dma_mask); msm_dma_get_device_address()
+	 * rejects a mapping below the start.
+	 */
+	if (cb->addr_range.size) {
+		u64 end = (u64)cb->addr_range.start + cb->addr_range.size - 1;
+
+		rc = dma_set_mask_and_coherent(dev, end);
+		if (rc) {
+			dprintk(VIDC_ERR, "%s: cannot limit %s to %#llx: %d\n",
+				__func__, dev_name(dev), end, rc);
+			goto remove_cb;
+		}
+	}
 
 	dprintk(VIDC_DBG, "Attached %s and created mapping\n", dev_name(dev));
 	dprintk(VIDC_DBG,

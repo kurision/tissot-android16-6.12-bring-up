@@ -9,6 +9,8 @@
 #include <linux/wait.h>
 #include <linux/delay.h>
 #include <linux/rpmsg.h>
+#include <linux/string.h>
+#include <dsp/apr_audio-v2.h>
 #include <ipc/apr_tal.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
@@ -22,6 +24,44 @@ enum apr_channel_state {
 
 static struct apr_svc_ch_dev
 	apr_svc_ch[APR_DL_MAX][APR_DEST_MAX][APR_CLIENT_MAX];
+
+static void apr_tal_trace_eos(const char *direction, const void *data,
+			      int len, int ret)
+{
+	struct apr_hdr hdr;
+	u32 response[2] = { 0 };
+	unsigned int hdr_size;
+
+	if (!data || len < (int)sizeof(hdr))
+		return;
+	memcpy(&hdr, data, sizeof(hdr));
+	hdr_size = ((hdr.hdr_field >> 4) & 0xf) * 4;
+	if (hdr_size < sizeof(hdr) || hdr_size > hdr.pkt_size ||
+	    hdr.pkt_size > len)
+		return;
+
+	switch (hdr.opcode) {
+	case ASM_DATA_CMD_EOS:
+	case ASM_DATA_EVENT_EOS:
+	case ASM_DATA_EVENT_RENDERED_EOS:
+		break;
+	case APR_BASIC_RSP_RESULT:
+		if (hdr.pkt_size - hdr_size < sizeof(response))
+			return;
+		memcpy(response, (const u8 *)data + hdr_size, sizeof(response));
+		if (response[0] != ASM_DATA_CMD_EOS)
+			return;
+		break;
+	default:
+		return;
+	}
+
+	pr_info_ratelimited("APR EOS %s ret=%d len=%d hdr=%u pkt=%u src=%u:%u:%#x dest=%u:%u:%#x token=%#x opcode=%#x status=%#x\n",
+			    direction, ret, len, hdr_size, hdr.pkt_size,
+			    hdr.src_domain, hdr.src_svc, hdr.src_port,
+			    hdr.dest_domain, hdr.dest_svc, hdr.dest_port,
+			    hdr.token, hdr.opcode, response[1]);
+}
 
 /**
  * apr_tal_write() - Write a message across to the remote processor
@@ -57,6 +97,7 @@ int apr_tal_write(struct apr_svc_ch_dev *apr_ch, void *data,
 		rc = rpmsg_trysend(rpdev->ept, data, len);
 	} while (rc == -EAGAIN && retries++ < APR_MAXIMUM_NUM_OF_RETRIES);
 	spin_unlock_irqrestore(&apr_ch->w_lock, flags);
+	apr_tal_trace_eos("TX", data, len, rc);
 
 	if (rc)
 		pr_err("%s: Unable to send the packet, rc:%d\n", __func__, rc);
@@ -196,6 +237,7 @@ static int apr_tal_rpmsg_callback(struct rpmsg_device *rpdev,
 
 	dev_dbg(&rpdev->dev, "%s: Rx packet received, len:%d\n",
 		__func__, len);
+	apr_tal_trace_eos("RX", data, len, 0);
 
 	spin_lock_irqsave(&apr_ch->r_lock, flags);
 	if (apr_ch->func)

@@ -1,5 +1,161 @@
 # tissot / Mi A1 → android-mainline
 
+## Status — 2026-10-22
+
+The phone runs the Evolution X ROM on this kernel, flashed to `boot_b`.
+The running build is `793615c17`; `c2b2e78a9` is committed and not yet
+built. [CURRENT-STATE.md](CURRENT-STATE.md) holds the evidence for each
+row; the sections after this one are the history up to 2026-10-18.
+
+### Working
+
+| Component | State |
+|---|---|
+| Boot, Android UI, adb, root | Boots to the home screen; adb up; KernelSU-Next adb root |
+| CPU | One `schedutil` policy over CPUs 0-7, 480-2784 MHz |
+| Display + backlight | Panel driven, home screen renders, WLED through the backlight class |
+| GPU | Adreno 506 on KGSL, vendor GLES 3.2 driver |
+| Touch, keys | Multitouch, power/volume, capacitive navigation keys, hall sensor, double-tap wake |
+| Wi-Fi, Bluetooth | wcn36xx associates; the QTI Bluetooth HAL reaches `ON` |
+| Modem | Comes up with the rmtfs shared-memory UIO driver |
+| Hardware video decode | H.264 1280x720 at 30 fps decodes on Venus through the ROM's OMX service; no software decoder running |
+| Audio calibration | The ACDB loader finds `/sys/devices/soc0/hw_platform` = `QRD` and loads the QRD calibration |
+| Freeze evidence | A hard lockup now panics, so a frozen phone leaves a logdump record |
+
+### Not working / open
+
+| Component | State |
+|---|---|
+| Full-screen video, YouTube mini player | Solid blue: the rotator overwrote the MDP core clock with 50 MHz and the panel underran. Fixed in `c2b2e78a9`, not yet built |
+| Screen off (suspend) | adb/USB is lost after resume (`gcc_usb30_master_clk` stuck on, ep0 not queued); Wi-Fi and other components reported dead too. The video driver also refuses suspend (`-EBUSY`) while a session is open. Under investigation |
+| Speaker output | Calibration loads, the amplifier powers on and its I2S pins are now muxed (`24ceeffd2`, `fe78c82ef`); audible output not yet confirmed |
+| Freeze when leaving YouTube | Caused by an out-of-bounds write into the PCM platform's mutex (`45847644a`); not reproduced since that fix, on few runs |
+| Video beyond 720p decode | 1080p decode, encode (camera recording) and secure playback untested; secure playback is out of scope |
+| Cameras | Not ported: the ROM needs CAF's msmb camera stack (`techpack/camera-legacy`) |
+| Sensors, fingerprint, IR, haptics | See [TRACKER-tissot-hardware.md](TRACKER-tissot-hardware.md) |
+
+## Bring-up commits by component
+
+Functional commits only; diagnostics, reverts and documentation are left
+out. Hashes are on `main`.
+
+* **GPU — Adreno 506 on KGSL**
+  * Bring-up: `e883a4be9` enable the GPU node, `ba01d8ba1` bind it to kgsl
+    instead of drm/msm, `466b1d985` vendor the 4.19 kgsl with compat shims
+  * SMMU: `85ad23b58` one owner for the GPU context bank, `689664e8b`
+    NOMMU with the bank untranslated, `8a50e48ba` CAF's page-table format
+  * Start and hang: `966fd5e12` soft reset A5xx on start, `131277c33` A506
+    quirks, `7bf34e26b` CPU latency QoS request
+  * Correctness: `5037fd74d` 6.12 memory ownership, `4d2602e38` physical SG
+    mapping and ZAP failure, `6bad9b4fa` the QSMMU SError fix
+  * Bus votes: `4f7944387` one interconnect path per client, `66fb850af`
+    drop the pending-vote retry
+  * Clean-up: `3622e538f` `019b7a5ad` `532ea5b70` `9924e4f29` `97ff6777f`
+    `ba2e3e1b1` `9d8f8e7aa` remove the bring-up logging; `258f96236`
+    `40e5deac0` keep the IB dump on GPU faults
+* **Display — MDSS, DSI, panel, backlight**
+  * Import: `23f85fef1` display, panel and WLED bring-up tree
+  * MDSS: `17fa25c0c` skip late hw_init while runtime-suspended,
+    `6355b61d0` probe MDP without the boottime gate, `bab96fd63` single
+    MDSS SMMU client and 1:1 splash map
+  * DSI and panel: `2609852be` DSI byte/pixel RCG parents, `80e9cd828` DSI
+    PLL lifecycle, `84f86005d` panel policy after node resolution,
+    `26c607aa8` stock supply topology, `125c70dcf` reset and TE pins
+  * Backlight: `c7ca1a69c` `31f923968` WLED OVP IRQ, `d3998f3ec` (re-applied
+    by `35373d1a2`) WLED through the backlight class, `c0e9c6487` stock
+    current limit
+  * Bandwidth and rotator: `4992773f3` bus voter paths, `410c96756`
+    display bandwidth through the msm-bus shim, `c2b2e78a9` rotator votes a
+    minimum MDP clock (not built)
+* **Hardware video — Venus on CAF vidc_3x**
+  * Upstream Venus prototype: `c5e5fa5e0` msm8953 resource table and DT
+  * Import: `fa4add5f1` the driver verbatim, `d7e462da4` `7aed9dbc3` the
+    user space interface, `d3a1cbac7` the build, `3ed7bd87a` never next to
+    upstream Venus
+  * Subsystem framework shim: `735dd5498` `64b513d84` `0288bffae`
+    `29efad900`
+  * 6.12 API conversion: `f7aa33bd9` `2e19d190d` `fdc649252` `62176b8ec`
+    `b8123d808` `044d3f406` `162246637` `fe931b92a` `da3e5224b`
+    `0cb8dabd8` `f03a27694` `55bfed223`
+  * Switch-over: `a31072aeb` the DT moves from Venus to vidc_3x
+  * First-boot fixes: `bd462f2f1` interrupt via `platform_get_irq()`,
+    `1e3269ac0` TrustZone's non-pixel CP range, `b64b87a7e` IOVAs inside
+    the bank's pool, `793615c17` 32-bit compat keeps the plane's fd
+* **Audio — CAF q6 stack, PM8953 CDC, MAX98927 speaker amplifier**
+  * Import: `15371d63a` `fe8a18433` `51b62321f` `224949976` `6b6a54bc2`
+    `7a015a35c` `750cbde2e` `91fe819e4` `0eb206e32` `8a5015f04`
+    `7d6f924c4` `302782edc` `c71e69007` `5ddf6b81d` `ca066e50f`
+    `867dfaaac` `3ad1dd27d` `23af05ffa`
+  * ALSA core helpers: `e63411f23` `bc085d754` `602a82282` `51c41314a`
+    `217ced779` `1288fe08a` `9a7f7ccda`
+  * Loadable modules: `313c4c1e0` the split, `51cccf6d6` `5b69c90f2`
+    `09e3154bf` loading them from the ramdisk
+  * DSP and DT: `f9e30b428` APR on SMD, `fe18981e1` audio ION stream ID,
+    `ecafa61f1` APR/ION/avtimer nodes, `512f2705b` analog CDC under the
+    PMIC, `9b1a63525` CDC pin names, `bc1e1fdf2` digital CDC clock vote
+  * Sound card: `be919f62d` `ef199eb14` `f86715c44` `8b3cb50d9`
+    `f79691702` `565871d5a` `6861c32da` `59f8270f1`, and `ecad3d95c` the
+    donor's PCM device numbers
+  * Playback path: `d67199a80` `0700e3b03` `b250002a2` `fdfca326d`
+    `4698570a2` `9a1ee1dd5` `ea9ee91a9` `b42ab748f` `f7e403d4f` `0ad17af7f`
+  * Speaker and calibration: `5e37ed796` amplifier on quinary MI2S,
+    `24ceeffd2` its pins, `fe78c82ef` the pin control driver, `e1ebf25d2`
+    socinfo `hw_platform` for the ACDB loader
+  * Stability: `45847644a` VoIP/LSM ids kept out of the channel mixer arrays
+* **TEE — QSEECom, ION, SCM**
+  * `a33336265` legacy QSEECom and ION, `a17c54c4f` listener errors,
+    `2f5c7e101` ION heaps on TZ carveouts, `15218cbd4` `13a9c029e` SMC
+    spill, TZ address and dma-buf locking, `56aed9bb8` ION for keymaster,
+    `97d12f932` crypto-engine clock votes
+* **Wi-Fi and Bluetooth — WCN3680**
+  * `546f97cd7` wcn36xx and pronto PIL, `e4a462791` late firmware rebind,
+    `dbab265f6` no silent WLAN downgrade, `bba8aa1e9` WLAN HAL compatibility,
+    `7c1515865` built-in NV blob, `211b20008` Bluetooth over `smd_pkt`
+* **Modem**
+  * `86cf5e369` QRTR, `a775067e2` MPSS in the DT, `da553ac97` `d6f0eaf9b`
+    qrtr-ns, `1e59a9e72` readable modem firmware, `ca5c32973` rmtfs UIO
+* **FastRPC / ADSP**
+  * `1b7cd42d2` `99e80a477` ADSP channel and config, `4864e1922`
+    `5334a0552` the `adsprpc-smd` alias, `7b26d4a99` `665f41ffa` `6fba49f53`
+    node name and session, `bf89009c3` `10a0ef91f` `69c93372f` `a526ed9a1`
+    `08a2f4293` the CAF ioctl ABI
+* **USB / adb**
+  * `f630f7c07` init-driven USB handoff, `a06241c69` vendor USB controller,
+    `722ab760e` the diag gadget leaves the UDC to adb, `921e51c86` USB HAL
+    FunctionFS watch
+* **CPU power and clocks**
+  * Drivers: `59c0759f2` `46d59808d` `1a5fed588` `a59ea727b` `8d144a023`
+    `1ddc32a1e` `b0005e33e` SAW4, APC rail, CPR4, APCS clock
+  * Bindings and DT: `1024916e1` `af20876a3` `b8bcb3a31` `a944aed50`
+    `284c97fb3` `80bdaea4d`
+  * Bring-up fixes: `8302be7ba` `e4edec31e` `9ce7525b9` `416a20928`
+    `6d047e8db` SPM regmap, `e15fd57a5` `53581f568` `ba2423683` `558c7aede`
+    APCC handoff and range, `407c84d38` cpufreq-dt, `60d89889e` APCS mailbox
+  * Tuning: `345b585b5` CPU/GPU overclock, `d5d8a9782` shared cooling device
+* **Interconnect and DDR bandwidth**
+  * `4463e397e` NoC fabrics on, `2ab6633b0` fabric state sync, `6d554885e`
+    fabrics held at maximum, `6f844d075` CPU DDR bandwidth with frequency,
+    `17a65d7c8` `3a16f8cb3` `b2134864e` the power HAL's DDR bandwidth device
+* **Charging**
+  * `d2c01d412` QPNP fuel gauge and charger, `353b9bb70` PMI8950 VADC
+    channels, `27b6590a1` battery supply label
+* **Input**
+  * Touch: `8c533557b` `3533dddf6` `900a730bf` identify retries and reset
+    timing, `7d0cc9a60` double-tap wake
+  * Keys: `5841f8c23` `73f3f9746` `539c21b10` `a8269c845` `206e79244`
+    capacitive keys, `2fce0e4d2` `0594a25e6` recents key
+* **Root — KernelSU-Next**
+  * `ee8b1f258` vendor it, `c4c433375` build it in-tree, `0f39c6ff7` the
+    grant-root soft lockup
+* **SELinux labels for the 6.12 sysfs layout**
+  * `f5416e35a` `7bea83fe8` overlay contexts and relabel grants,
+    `15c6948f8` kgsl attributes, `72b101287` `0b789200b` wakeup statistics
+* **Evidence and build tooling**
+  * pstore/logdump: `ea2850426` `2a900533c` `ee4f0bff6` `ac32929e5`
+    `4cf3cabc4` `0ad385b31` `e87ca57ef`, `1e3cdeabe` panic on hard lockup
+  * Init and build: `5d406d440` `379c0589d` `677e57dab` `c33b36364`
+    `8f238506a` `5bf753710` `b55eb9f2e` `271fbc67b` `a8fc36128`
+
 ## The port in full: 231 commits, 2026-10-06 → 2026-10-18
 
 This is the whole journey, not just the GPU endgame. It spans **two branches**

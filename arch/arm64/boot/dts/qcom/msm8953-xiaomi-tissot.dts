@@ -13,6 +13,7 @@
 #include "msm8953-xiaomi-tissot-camera.dtsi"
 #include "msm8953-xiaomi-tissot-mdss.dtsi"
 #include "msm8953-xiaomi-tissot-vidc.dtsi"
+#include "msm8953-xiaomi-tissot-thermal.dtsi"
 #include <dt-bindings/leds/common.h>
 #include <dt-bindings/input/linux-event-codes.h>
 
@@ -26,6 +27,33 @@
 	chassis-type = "handset";
 	qcom,msm-id = <293 0>;
 	qcom,board-id = <0x1000b 0x00>;
+
+	cpus {
+		idle-states {
+			entry-method = "psci";
+
+			/* Core-only states and timings from CAF msm8953-pm.dtsi. */
+			tissot_cpu_sleep_0: cpu-sleep-0 {
+				compatible = "arm,idle-state";
+				idle-state-name = "standalone-power-collapse";
+				arm,psci-suspend-param = <0x40000003>;
+				entry-latency-us = <136>;
+				exit-latency-us = <180>;
+				min-residency-us = <901>;
+				local-timer-stop;
+			};
+
+			tissot_cpu_sleep_1: cpu-sleep-1 {
+				compatible = "arm,idle-state";
+				idle-state-name = "standalone-power-collapse";
+				arm,psci-suspend-param = <0x40000003>;
+				entry-latency-us = <179>;
+				exit-latency-us = <362>;
+				min-residency-us = <401>;
+				local-timer-stop;
+			};
+		};
+	};
 
 	gpio-keys {
 		compatible = "gpio-keys";
@@ -820,6 +848,16 @@
 	qcom,gpu-quirk-lmloadkill-disable;
 
 	/*
+	 * The thermal zone kgsl's temp attribute reports
+	 * (kgsl_pwrctrl.c temp_show(), /sys/class/kgsl/kgsl-3d0/temp). The
+	 * donor's msm8953 gpu node had none, so the file read INT_MIN
+	 * (-2147483648) there as well; apps that show the GPU temperature
+	 * read it. tsens_tz_sensor15 is the zone on the GPU's TSENS sensor
+	 * (msm8953-xiaomi-tissot-thermal.dtsi).
+	 */
+	qcom,tzone-names = "tsens_tz_sensor15";
+
+	/*
 	 * Donor GPU clock names, verbatim from the 4.19 gpu node
 	 * (msm8953-gpu.dtsi:128-130). _get_clocks() matches DT clock-names
 	 * against the driver's table (kgsl_pwrctrl.c:37-56) and skips every
@@ -1032,6 +1070,38 @@
 			iommus = <&gpu_iommu 0>;
 		};
 	};
+};
+
+&CPU0 {
+	cpu-idle-states = <&tissot_cpu_sleep_0>;
+};
+
+&CPU1 {
+	cpu-idle-states = <&tissot_cpu_sleep_0>;
+};
+
+&CPU2 {
+	cpu-idle-states = <&tissot_cpu_sleep_0>;
+};
+
+&CPU3 {
+	cpu-idle-states = <&tissot_cpu_sleep_0>;
+};
+
+&CPU4 {
+	cpu-idle-states = <&tissot_cpu_sleep_1>;
+};
+
+&CPU5 {
+	cpu-idle-states = <&tissot_cpu_sleep_1>;
+};
+
+&CPU6 {
+	cpu-idle-states = <&tissot_cpu_sleep_1>;
+};
+
+&CPU7 {
+	cpu-idle-states = <&tissot_cpu_sleep_1>;
 };
 
 /* earlycon: stdout-path lets bare `earlycon` auto-match the UART (see

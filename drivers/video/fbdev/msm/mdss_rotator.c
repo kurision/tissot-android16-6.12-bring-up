@@ -221,10 +221,22 @@ static void mdss_rotator_set_clk_rate(struct mdss_rot_mgr *mgr,
 		clk_rate = clk_round_rate(clk, rate);
 		if (IS_ERR_VALUE(clk_rate)) {
 			pr_err("unable to round rate err=%ld\n", clk_rate);
-		} else if (clk_rate != clk_get_rate(clk)) {
-			ret = clk_set_rate(clk, clk_rate);
+		} else {
+			/*
+			 * The rotator's core clock is the MDP core clock the
+			 * display also sets. The donor's rotator voted through
+			 * its own voter clock (clk_mdss_rotator_vote_clk), and
+			 * the clock ran at the higher vote. A clk_set_rate()
+			 * here replaced the display's rate with the rotator's
+			 * (50 MHz for a video frame), and the panel underran
+			 * into its underflow colour until the display's next
+			 * rate change. A minimum rate is this consumer's vote,
+			 * and the clock framework keeps the display's request
+			 * above it.
+			 */
+			ret = clk_set_min_rate(clk, clk_rate);
 			if (IS_ERR_VALUE((unsigned long)ret)) {
-				pr_err("clk_set_rate failed, err:%d\n", ret);
+				pr_err("clk_set_min_rate failed, err:%d\n", ret);
 			} else {
 				pr_debug("rotator clk rate=%lu\n", clk_rate);
 				MDSS_XLOG(clk_rate);
@@ -292,6 +304,9 @@ static int mdss_rotator_clk_ctrl(struct mdss_rot_mgr *mgr, int enable)
 				clk_disable_unprepare(clk);
 			}
 		}
+		/* An idle rotator no longer holds the core clock up. */
+		if (!enable)
+			clk_set_min_rate(mgr->rot_clk[MDSS_CLK_ROTATOR_CORE], 0);
 		mutex_lock(&mgr->bus_lock);
 		if (enable) {
 			/* Active+Sleep */

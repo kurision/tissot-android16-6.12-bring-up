@@ -290,6 +290,17 @@ enum {
 	MSM_FRONTEND_DAI_VOICE2_STUB,
 	MSM_FRONTEND_DAI_VOICEMMODE1,
 	MSM_FRONTEND_DAI_VOICEMMODE2,
+	/*
+	 * The legacy voice front ends, from the donor's audio-legacy
+	 * routing: the ROM's mixer paths route calls through them
+	 * ("PRI_MI2S_RX_Voice Mixer CSVoice"), and msm8952.c selects them
+	 * with qcom,use-legacy-voice-cpu-dais. Appended so that the ids
+	 * above, and MSM_FRONTEND_DAI_MM_SIZE, keep their values.
+	 */
+	MSM_FRONTEND_DAI_CS_VOICE,
+	MSM_FRONTEND_DAI_VOICE2,
+	MSM_FRONTEND_DAI_VOLTE,
+	MSM_FRONTEND_DAI_VOWLAN,
 	MSM_FRONTEND_DAI_MAX,
 };
 
