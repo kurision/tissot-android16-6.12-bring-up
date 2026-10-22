@@ -922,27 +922,25 @@ static int msm_vidc_load_regulator_table(
 	int rc = 0;
 	struct platform_device *pdev = res->pdev;
 	struct regulator_set *regulators = &res->regulator_set;
-	struct device_node *domains_parent_node = NULL;
-	struct property *domains_property = NULL;
-	int reg_count = 0;
+	struct device_node *np = pdev->dev.of_node;
+	int reg_count, i;
 
 	regulators->count = 0;
 	regulators->regulator_tbl = NULL;
 
-	domains_parent_node = pdev->dev.of_node;
-	for_each_property_of_node(domains_parent_node, domains_property) {
-		const char *search_string = "-supply";
-		char *supply;
-		bool matched = false;
-
-		/* check if current property is possibly a regulator */
-		supply = strnstr(domains_property->name, search_string,
-				strlen(domains_property->name) + 1);
-		matched = supply && (*(supply + strlen(search_string)) == '\0');
-		if (!matched)
-			continue;
-
-		reg_count++;
+	/*
+	 * The donor found the rails as "<name>-supply" properties naming
+	 * GDSC regulators, and a rail whose GDSC node had
+	 * "qcom,support-hw-trigger" could be handed to the firmware for
+	 * power collapse. This kernel's GDSCs are power domains: the rails
+	 * are the "power-domain-names" entries, in the order the donor
+	 * enabled them ("venus" before "venus-core0"), and the domains the
+	 * firmware may collapse are listed in "qcom,hw-trigger-domains".
+	 */
+	reg_count = of_property_count_strings(np, "power-domain-names");
+	if (reg_count <= 0) {
+		dprintk(VIDC_DBG, "No power domains found");
+		return 0;
 	}
 
 	regulators->regulator_tbl = devm_kzalloc(&pdev->dev,
@@ -956,45 +954,26 @@ static int msm_vidc_load_regulator_table(
 		goto err_reg_tbl_alloc;
 	}
 
-	for_each_property_of_node(domains_parent_node, domains_property) {
-		const char *search_string = "-supply";
-		char *supply;
-		bool matched = false;
-		struct device_node *regulator_node = NULL;
-		struct regulator_info *rinfo = NULL;
+	for (i = 0; i < reg_count; i++) {
+		struct regulator_info *rinfo;
+		const char *name;
 
-		/* check if current property is possibly a regulator */
-		supply = strnstr(domains_property->name, search_string,
-				strlen(domains_property->name) + 1);
-		matched = supply && (supply[strlen(search_string)] == '\0');
-		if (!matched)
-			continue;
+		rc = of_property_read_string_index(np, "power-domain-names",
+				i, &name);
+		if (rc)
+			goto err_reg_name_alloc;
 
-		/* make sure prop isn't being misused */
-		regulator_node = of_parse_phandle(domains_parent_node,
-				domains_property->name, 0);
-		if (IS_ERR(regulator_node)) {
-			dprintk(VIDC_WARN, "%s is not a phandle\n",
-					domains_property->name);
-			continue;
-		}
-		regulators->count++;
-
-		/* populate regulator info */
-		rinfo = &regulators->regulator_tbl[regulators->count - 1];
-		rinfo->name = devm_kzalloc(&pdev->dev,
-			(supply - domains_property->name) + 1, GFP_KERNEL);
+		rinfo = &regulators->regulator_tbl[regulators->count++];
+		rinfo->name = devm_kstrdup(&pdev->dev, name, GFP_KERNEL);
 		if (!rinfo->name) {
 			rc = -ENOMEM;
 			dprintk(VIDC_ERR,
 					"Failed to alloc memory for regulator name\n");
 			goto err_reg_name_alloc;
 		}
-		strscpy(rinfo->name, domains_property->name,
-			(supply - domains_property->name) + 1);
 
-		rinfo->has_hw_power_collapse = of_property_read_bool(
-			regulator_node, "qcom,support-hw-trigger");
+		rinfo->has_hw_power_collapse = of_property_match_string(np,
+				"qcom,hw-trigger-domains", name) >= 0;
 
 		dprintk(VIDC_DBG, "Found regulator %s: h/w collapse = %s\n",
 				rinfo->name,

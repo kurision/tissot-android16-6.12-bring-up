@@ -88,8 +88,13 @@ struct buffer_usage_set {
 	u32 count;
 };
 
+/*
+ * A power rail of the core. The donor drove the Venus GDSCs as
+ * regulators; on this kernel they are power domains, and pd is the
+ * virtual device dev_pm_domain_attach_by_name() returns for one.
+ */
 struct regulator_info {
-	struct regulator *regulator;
+	struct device *pd;
 	bool has_hw_power_collapse;
 	char *name;
 };

@@ -26,8 +26,9 @@
 #include <linux/iommu.h>
 #include <linux/iopoll.h>
 #include <linux/of.h>
+#include <linux/pm_domain.h>
 #include <linux/pm_qos.h>
-#include <linux/regulator/consumer.h>
+#include <linux/pm_runtime.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <soc/qcom/scm.h>
@@ -257,32 +258,22 @@ static void __sim_modify_cmd_packet(u8 *packet, struct venus_hfi_device *device)
 	}
 }
 
+/*
+ * The donor switched a GDSC that supports a hardware trigger between
+ * software control (REGULATOR_MODE_NORMAL) and hardware control
+ * (REGULATOR_MODE_FAST) by hand: hardware control after the firmware
+ * boots, so that the firmware can power collapse the core, and software
+ * control again before turning the GDSC off. On this kernel the GDSC
+ * driver does both for a domain with the HW_CTRL flag, as the Venus
+ * core0 GDSC has (drivers/clk/qcom/gcc-msm8953.c): it hands the GDSC to
+ * the hardware in gdsc_enable() and takes it back in gdsc_disable(),
+ * as upstream Venus relies on. So there is nothing to switch here.
+ */
 static int __acquire_regulator(struct regulator_info *rinfo)
 {
 	int rc = 0;
 
-	if (rinfo->has_hw_power_collapse) {
-		rc = regulator_set_mode(rinfo->regulator,
-				REGULATOR_MODE_NORMAL);
-		if (rc) {
-			/*
-			 * This is somewhat fatal, but nothing we can do
-			 * about it. We can't disable the regulator w/o
-			 * getting it back under s/w control
-			 */
-			dprintk(VIDC_WARN,
-				"Failed to acquire regulator control: %s\n",
-					rinfo->name);
-		} else {
-
-			dprintk(VIDC_DBG,
-					"Acquire regulator control from HW: %s\n",
-					rinfo->name);
-
-		}
-	}
-
-	if (!regulator_is_enabled(rinfo->regulator)) {
+	if (!pm_runtime_active(rinfo->pd)) {
 		dprintk(VIDC_WARN, "Regulator is not enabled %s\n",
 			rinfo->name);
 		WARN_ON(VIDC_DBG_WARN_ENABLE);
@@ -293,23 +284,7 @@ static int __acquire_regulator(struct regulator_info *rinfo)
 
 static int __hand_off_regulator(struct regulator_info *rinfo)
 {
-	int rc = 0;
-
-	if (rinfo->has_hw_power_collapse) {
-		rc = regulator_set_mode(rinfo->regulator,
-				REGULATOR_MODE_FAST);
-		if (rc) {
-			dprintk(VIDC_WARN,
-				"Failed to hand off regulator control: %s\n",
-					rinfo->name);
-		} else {
-			dprintk(VIDC_DBG,
-					"Hand off regulator control to HW: %s\n",
-					rinfo->name);
-		}
-	}
-
-	return rc;
+	return 0;
 }
 
 static int __hand_off_regulators(struct venus_hfi_device *device)
@@ -3823,9 +3798,9 @@ static void __deinit_regulators(struct venus_hfi_device *device)
 	struct regulator_info *rinfo = NULL;
 
 	venus_hfi_for_each_regulator_reverse(device, rinfo) {
-		if (rinfo->regulator) {
-			regulator_put(rinfo->regulator);
-			rinfo->regulator = NULL;
+		if (rinfo->pd) {
+			dev_pm_domain_detach(rinfo->pd, false);
+			rinfo->pd = NULL;
 		}
 	}
 }
@@ -3836,13 +3811,13 @@ static int __init_regulators(struct venus_hfi_device *device)
 	struct regulator_info *rinfo = NULL;
 
 	venus_hfi_for_each_regulator(device, rinfo) {
-		rinfo->regulator = regulator_get(&device->res->pdev->dev,
-				rinfo->name);
-		if (IS_ERR_OR_NULL(rinfo->regulator)) {
-			rc = PTR_ERR(rinfo->regulator) ?: -EBADHANDLE;
-			dprintk(VIDC_ERR, "Failed to get regulator: %s\n",
+		rinfo->pd = dev_pm_domain_attach_by_name(
+				&device->res->pdev->dev, rinfo->name);
+		if (IS_ERR_OR_NULL(rinfo->pd)) {
+			rc = PTR_ERR(rinfo->pd) ?: -ENODEV;
+			dprintk(VIDC_ERR, "Failed to get power domain: %s\n",
 					rinfo->name);
-			rinfo->regulator = NULL;
+			rinfo->pd = NULL;
 			goto err_reg_get;
 		}
 	}
@@ -4007,8 +3982,8 @@ static int __disable_regulator(struct regulator_info *rinfo)
 		goto disable_regulator_failed;
 	}
 
-	rc = regulator_disable(rinfo->regulator);
-	if (rc) {
+	rc = pm_runtime_put_sync(rinfo->pd);
+	if (rc < 0) {
 		dprintk(VIDC_WARN,
 			"Failed to disable %s: %d\n",
 			rinfo->name, rc);
@@ -4048,7 +4023,7 @@ static int __enable_regulators(struct venus_hfi_device *device)
 	dprintk(VIDC_DBG, "Enabling regulators\n");
 
 	venus_hfi_for_each_regulator(device, rinfo) {
-		rc = regulator_enable(rinfo->regulator);
+		rc = pm_runtime_resume_and_get(rinfo->pd);
 		if (rc) {
 			dprintk(VIDC_ERR,
 					"Failed to enable %s: %d\n",
