@@ -204,18 +204,25 @@
 		pinctrl-1 = <&cdc_pdm_comp_lines_sus>;
 	};
 
+	/*
+	 * The primary MI2S is the internal codec's, on the CDC PDM lines.
+	 * The quinary MI2S is the speaker amplifier's, and LPASS routes it
+	 * to the TLMM's primary MI2S pins (csr_gp_io_mux_quin_ctl), so the
+	 * pin groups are not the ones the names suggest. As the donor's
+	 * msm8953-audio.dtsi has them.
+	 */
 	cdc_pri_mi2s_gpios: msm_cdc_pinctrl_pri_mi2s_gpios {
 		compatible = "qcom,msm-cdc-pinctrl";
 		pinctrl-names = "aud_active", "aud_sleep";
-		pinctrl-0 = <&pri_tlmm_lines_act>;
-		pinctrl-1 = <&pri_tlmm_lines_sus>;
+		pinctrl-0 = <&cdc_pdm_lines_act &cdc_pdm_lines_2_act>;
+		pinctrl-1 = <&cdc_pdm_lines_sus &cdc_pdm_lines_2_sus>;
 	};
 
 	cdc_quin_mi2s_gpios: msm_cdc_pinctrl_quin_mi2s_gpios {
 		compatible = "qcom,msm-cdc-pinctrl";
 		pinctrl-names = "aud_active", "aud_sleep";
-		pinctrl-0 = <&cdc_pdm_lines_act>;
-		pinctrl-1 = <&cdc_pdm_lines_sus>;
+		pinctrl-0 = <&pri_tlmm_lines_act &pri_tlmm_ws_act>;
+		pinctrl-1 = <&pri_tlmm_lines_sus &pri_tlmm_ws_sus>;
 	};
 
 	/*
@@ -601,25 +608,60 @@
 		};
 	};
 
-	/* The primary MI2S lines. */
+	/*
+	 * The TLMM's primary MI2S lines, which carry the quinary MI2S to the
+	 * speaker amplifier: the bit clock and data, and the word select.
+	 */
 	pri_tlmm_lines {
 		pri_tlmm_lines_act: pri_tlmm_lines_act {
 			mux {
-				pins = "gpio88", "gpio91", "gpio93";
+				pins = "gpio91", "gpio93";
+				function = "pri_mi2s";
 			};
 
 			config {
-				pins = "gpio88", "gpio91", "gpio93";
+				pins = "gpio91", "gpio93";
+				drive-strength = <8>;
 			};
 		};
 
 		pri_tlmm_lines_sus: pri_tlmm_lines_sus {
 			mux {
-				pins = "gpio88", "gpio91", "gpio93";
+				pins = "gpio91", "gpio93";
+				function = "pri_mi2s";
 			};
 
 			config {
-				pins = "gpio88", "gpio91", "gpio93";
+				pins = "gpio91", "gpio93";
+				drive-strength = <2>;
+				bias-pull-down;
+			};
+		};
+	};
+
+	pri_tlmm_ws {
+		pri_tlmm_ws_act: pri_tlmm_ws_act {
+			mux {
+				pins = "gpio92";
+				function = "pri_mi2s_ws";
+			};
+
+			config {
+				pins = "gpio92";
+				drive-strength = <8>;
+			};
+		};
+
+		pri_tlmm_ws_sus: pri_tlmm_ws_sus {
+			mux {
+				pins = "gpio92";
+				function = "pri_mi2s_ws";
+			};
+
+			config {
+				pins = "gpio92";
+				drive-strength = <2>;
+				bias-pull-down;
 			};
 		};
 	};
@@ -646,6 +688,33 @@
 
 			config {
 				pins = "gpio69", "gpio73", "gpio74";
+				drive-strength = <2>;
+				bias-disable;
+			};
+		};
+	};
+
+	cdc_pdm_lines_2 {
+		cdc_pdm_lines_2_act: pdm_lines_2_on {
+			mux {
+				pins = "gpio70", "gpio71", "gpio72";
+				function = "cdc_pdm0";
+			};
+
+			config {
+				pins = "gpio70", "gpio71", "gpio72";
+				drive-strength = <8>;
+			};
+		};
+
+		cdc_pdm_lines_2_sus: pdm_lines_2_off {
+			mux {
+				pins = "gpio70", "gpio71", "gpio72";
+				function = "cdc_pdm0";
+			};
+
+			config {
+				pins = "gpio70", "gpio71", "gpio72";
 				drive-strength = <2>;
 				bias-disable;
 			};
