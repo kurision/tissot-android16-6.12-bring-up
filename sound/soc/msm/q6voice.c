@@ -4183,6 +4183,15 @@ static int voice_send_cvp_channel_info_v2(struct voice_data *v,
 	if (v->async_err > 0) {
 		pr_err("%s: DSP returned error[%s] handle = %d\n", __func__,
 		       adsp_err_get_err_str(v->async_err), cvp_handle);
+		/* What the DSP rejected, to compare with the donor's values */
+		pr_err("%s: param 0x%x channels %u bits %u map %u %u %u %u\n",
+		       __func__, channel_info_param_data->param_id,
+		       channel_info->num_channels,
+		       channel_info->bits_per_sample,
+		       channel_info->channel_mapping[0],
+		       channel_info->channel_mapping[1],
+		       channel_info->channel_mapping[2],
+		       channel_info->channel_mapping[3]);
 		ret = adsp_err_get_lnx_err_code(v->async_err);
 		goto done;
 	}
