@@ -1924,6 +1924,16 @@ static int is_wakeup_dir(const char *name)
 }
 
 /*
+ * Read a node's current SELinux label.
+ *
+ * The policy fragment names the kgsl directory itself, and this worker
+ * only ever sets labels on regular files, never on a directory. A
+ * matching label on the directory is therefore proof that the genfscon
+ * landed, and the file walk is unnecessary.
+ */
+static int read_selinux_label(const char *path, char *buf, size_t size);
+
+/*
  * Walk the platform devices for the per-device wakeup directories. The
  * devices are at different depths (the remoteproc is directly under
  * soc@0, the PMIC is under spmi-0/0-02/...), so this is a bounded walk
@@ -1962,10 +1972,28 @@ static int relabel_wakeups(const char *root, unsigned int depth)
 			continue;
 		if (lstat(child, &st) || !S_ISDIR(st.st_mode))
 			continue;
-		if (is_wakeup_dir(entry->d_name))
+		if (is_wakeup_dir(entry->d_name)) {
+			char label[64];
+
+			/*
+			 * A directory that already carries the label is
+			 * proof that the genfscon of the policy landed,
+			 * and then the files under it carry it as well:
+			 * the label of an object is the longest matching
+			 * genfscon of its path, and the genfscon of the
+			 * directory covers its subtree. Walking the files
+			 * then buys nothing and costs an audit record for
+			 * every file, because the policy does not let this
+			 * domain set a label.
+			 */
+			if (!read_selinux_label(child, label, sizeof label) &&
+			    !strcmp(label, DIAG_WAKEUP_LABEL))
+				continue;
+
 			set += relabel_dir(child, DIAG_WAKEUP_LABEL, 0);
-		else
+		} else {
 			set += relabel_wakeups(child, depth + 1);
+		}
 	}
 	closedir(dir);
 	return set;
