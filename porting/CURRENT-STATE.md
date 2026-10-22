@@ -1,4 +1,4 @@
-# Current state of the tissot port — 2026-10-21
+# Current state of the tissot port — 2026-10-22
 
 This is the authoritative statement of what the port does today. Every other
 document in `porting/` is either evidence for a claim made here or the
@@ -59,6 +59,8 @@ root feature is unaffected.
 | The `adsprpcd` CAF ioctl layer | In the kernel, one command missing | the port decodes CAF's ioctl numbering; on the phone the daemon now fails on exactly one command, `GETINFO`, whose handler is committed but not in the flashed image |
 | Wi-Fi | Working on run304, persistent fix not yet booted | the NV blob was staged at `/data/vendor/wifi/firmware` and the interface associated; `CONFIG_EXTRA_FIRMWARE` in `7c1515865` makes that a kernel built-in for the next run |
 | Cellular, Bluetooth | Bluetooth working on run334; modem offline | the `smd_pkt` driver, the WCNSS device tree node, the config change and the initramfs MSS start are in the run334 image; `/dev/smd2`/`/dev/smd3` and the QTI HAL are up and the controller is `ON`. The modem is still `offline` (`remoteproc0`, `mba.mbn`), `gsm.sim.state` is empty; the initramfs `firmware_class.path` write failed with `errno=13` so the MSS start was never reached, and the reset cause is unverified. See [findings/2026-10-21-bt-modem-bringup.md](findings/2026-10-21-bt-modem-bringup.md) |
+| Audio playback | Working on run344/run346 | the speaker path plays: the HAL opens the deep buffer stream with the donor's parameters (`acdb_dev_id 1058`, `snd_device_be_idx 52`, the mixer path `deep-buffer-playback speaker`) and the DEEP_BUFFER thread writes frames. See [findings/2026-10-22-audio-playback-run344.md](findings/2026-10-22-audio-playback-run344.md) |
+| Hardware video decode | Being ported | the ROM's OMX service needs CAF's `vidc_3x`; the driver and its user space interface are in the tree, the device tree and the switch-over are not. See [findings/2026-10-22-vidc3x-port-state.md](findings/2026-10-22-vidc3x-port-state.md) |
 | Cameras | Failing | see `FAILING-COMPONENTS.md` |
 
 ## What is open, and what is known about it
@@ -568,6 +570,41 @@ audio-driven `system_server` load.
 Consequently, do not tune `schedutil` or the OPP table to make the idle
 frequency fall.  The actionable item is the audio link (section 4), or a
 deliberate no-audio configuration that stops the framework retry.
+
+### 11. The audio playback works; the low latency path and the hardware video are not there yet
+
+**The speaker path works** (run344, run346): the ROM's audio HAL opens the
+deep buffer stream with the same parameters as on the donor
+(`app_type 69936`, `acdb_dev_id 1058`, `snd_device_be_idx 52`, the mixer
+path `deep-buffer-playback speaker`), the DEEP_BUFFER thread of
+`dumpsys media.audio_flinger` writes frames (310080 frames in 6.5 s), and
+the kernel log of a full playback run has no warning, no BUG and no call
+trace. The two fixes that got it there were the `dma_buf_vunmap()`
+argument type (`d67199a80`) and the `copy_{from,to}_iter()` return value
+(`b250002a2`).
+
+**Two more bugs of the same class came out of the boot that tested them**
+(`fdfca326d`, `4698570a2`): the q6 platform's delay callback asked the DSP
+for the path delay from the pointer path, which is under the PCM stream
+lock with interrupts disabled - a "BUG: scheduling while atomic" that froze
+the phone half a second into the first playback; and a fortify warning
+about a copy into a zero-length array member that cannot overflow.
+
+**The low latency path is still broken, and the reason was only found
+afterwards**: the vendor HAL opens the front end by PCM device *number*,
+and the port's dai link table had a different order than the donor's, so
+the low latency usecase opened the MultiMedia9 front end (number 12 on
+the port) instead of MultiMedia5 (number 12 on the donor), and then wrote
+the mixer control for MultiMedia5. The Media9 front end has no route to a
+back end, so the prepare failed and the HAL logged "pcm_prepare returned
+-1" (`ecad3d95c`).
+
+**The hardware video decode is not there yet.** The ROM's OMX service
+needs CAF's `vidc_3x`; the driver, its governors and its user space
+interface are in the tree, and the user space interface is checked
+against the donor's with a script. What is left is the bus bandwidth
+voting, the power domain, the device tree, the switch-over from the
+upstream Venus driver, and the boot test.
 
 ## The order of the remaining work
 
