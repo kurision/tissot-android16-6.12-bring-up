@@ -640,48 +640,64 @@
 	clocks = <&apcc APCC_CPU0_CLK>;
 	clock-names = "cpu";
 	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
 };
 
 &CPU1 {
 	clocks = <&apcc APCC_CPU0_CLK>;
 	clock-names = "cpu";
 	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
 };
 
 &CPU2 {
 	clocks = <&apcc APCC_CPU0_CLK>;
 	clock-names = "cpu";
 	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
 };
 
 &CPU3 {
 	clocks = <&apcc APCC_CPU0_CLK>;
 	clock-names = "cpu";
 	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
 };
 
 &CPU4 {
 	clocks = <&apcc APCC_CPU4_CLK>;
 	clock-names = "cpu";
 	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
 };
 
 &CPU5 {
 	clocks = <&apcc APCC_CPU4_CLK>;
 	clock-names = "cpu";
 	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
 };
 
 &CPU6 {
 	clocks = <&apcc APCC_CPU4_CLK>;
 	clock-names = "cpu";
 	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
 };
 
 &CPU7 {
 	clocks = <&apcc APCC_CPU4_CLK>;
 	clock-names = "cpu";
 	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
 };
 /*
  * CPU operating points.
@@ -695,6 +711,18 @@
  *
  * All eight cores share one policy. Either CPU clock ID controls the same
  * transaction for both cluster muxes and CCI.
+ *
+ * opp-peak-kBps is the DDR bandwidth the CPU asks for at each frequency,
+ * voted on the CPU's interconnect path by the OPP core on every
+ * frequency change. The values are CAF's msm8953 cpubw table
+ * (cpubw-cpufreq cpu-to-dev-map, 652.8 MHz -> 1611 MB/s, 1036.8 -> 3221,
+ * 1401.6 -> 5859, 1689.6 -> 6445, 1804.8 and up -> 7104), looked up the
+ * way CAF did (governor_memlat.c core_to_dev_freq(): the first entry at
+ * or above the CPU frequency, the last one above the table), in kB/s
+ * (MB is 2^20 bytes in CAF's devfreq_devbw.c). The donor
+ * (../oc-test 676e1fda9e3a) replaced this mapping with a "performance"
+ * governor, which holds the DDR at its maximum whenever the CPU is
+ * active; this restores CAF's behaviour.
  */
 &{/} {
 	msm8953_cpu_opp: opp-table {
@@ -703,30 +731,37 @@
 
 		opp-652800000 {
 			opp-hz = /bits/ 64 <652800000>;
+			opp-peak-kBps = <1689255>;
 		};
 
 		opp-1036800000 {
 			opp-hz = /bits/ 64 <1036800000>;
+			opp-peak-kBps = <3377463>;
 		};
 
 		opp-1401600000 {
 			opp-hz = /bits/ 64 <1401600000>;
+			opp-peak-kBps = <6143606>;
 		};
 
 		opp-1689600000 {
 			opp-hz = /bits/ 64 <1689600000>;
+			opp-peak-kBps = <6758072>;
 		};
 
 		opp-1804800000 {
 			opp-hz = /bits/ 64 <1804800000>;
+			opp-peak-kBps = <7449083>;
 		};
 
 		opp-1958400000 {
 			opp-hz = /bits/ 64 <1958400000>;
+			opp-peak-kBps = <7449083>;
 		};
 
 		opp-2016000000 {
 			opp-hz = /bits/ 64 <2016000000>;
+			opp-peak-kBps = <7449083>;
 		};
 	};
 };
