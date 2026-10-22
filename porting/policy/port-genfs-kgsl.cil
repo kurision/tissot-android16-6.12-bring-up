@@ -69,6 +69,56 @@
 (genfscon sysfs "/devices/platform/soc/soc:qcom,cpu-cpu-ddr-bw/soc:qcom,cpu-cpu-ddr-bw" (u object_r sysfs_devfreq_dir ((s0) (s0))))
 
 ;; ---------------
+;; The per-device wakeup statistics on 6.12: label them with the type the
+;; ROM's policy already has for them.
+;;
+;; The 4.19 kernel had one set of counters under
+;;
+;;   /sys/devices/virtual/wakeup/wakeupN/
+;;
+;; and the ROM's policy labels that path sysfs_wakeup and lets the
+;; suspend service read it:
+;;
+;;   (allow system_suspend sysfs_wakeup (file (ioctl read getattr lock
+;;                                            map open watch watch_reads)))
+;;
+;; 6.12 has the counters per device, under
+;;
+;;   /sys/devices/platform/soc@0/<device>/wakeup/wakeupN/
+;;
+;; and the ROM's policy has no path for them, so they land on the generic
+;; sysfs type.  The suspend service is then denied, the snapshot fails,
+;; the ROM's checkpoint commit fails, and system_server asks for a
+;; reboot with the reason "Checkpoint commit failed".  That is the
+;; reboot loop the port has been fighting since run302
+;; (porting/CURRENT-STATE.md, "The checkpoint reboot loop"), and it is
+;; what the phone does today: every boot ends with
+;;
+;;   reboot: DIAG: kernel_restart_prepare enter cmd=Checkpoint commit failed
+;;   ramoops: DIAG: orderly reset action=1 pid=1 comm=init command=Checkpoint commit failed
+;;
+;; after 70 to 85 seconds.
+;;
+;; A literal path is a prefix match here: security/selinux/ss/services.c
+;; compares with strncmp() unless POLICYDB_CAP_GENFS_SECLABEL_WILDCARD is
+;; set, and this policy does not set it
+;; (/sys/fs/selinux/policy_capabilities/genfs_seclabel_wildcard is 0).
+;; So the paths are spelled out.  The label of the "wakeup" directory
+;; covers the wakeupN directories and the attributes under them.
+;;
+;; The list is the one the running phone has: the remoteproc's and the
+;; PMICs' wakeup directories under /sys/devices/platform.
+(genfscon sysfs "/devices/platform/soc@0/c200000.remoteproc/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-00/200f000.spmi:pmic@0:pon@800/200f000.spmi:pmic@0:pon@800:pwrkey/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-00/200f000.spmi:pmic@0:pon@800/200f000.spmi:pmic@0:pon@800:resin/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-00/200f000.spmi:pmic@0:rtc@6000/rtc/rtc0/alarmtimer.0.auto/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-00/200f000.spmi:pmic@0:rtc@6000/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-01/200f000.spmi:pmic@1:anlg-cdc@f000/msm_digital_codec/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-01/200f000.spmi:pmic@1:anlg-cdc@f000/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-02/200f000.spmi:pmic@2:qcom,fg/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-02/200f000.spmi:pmic@2:qcom,qpnp-smbcharger/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+
+;; ---------------
 ;; qrtr-ns on 6.12: the userspace QRTR name service binds its fixed
 ;; name-service port.  qrtr_port_assign() in net/qrtr/af_qrtr.c requires CAP_NET_ADMIN
 ;; for any port below QRTR_MIN_EPH_SOCKET (0x4000), and the qrtr domain is
