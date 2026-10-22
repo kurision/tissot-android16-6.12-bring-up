@@ -2360,10 +2360,10 @@ static int32_t q6asm_callback(struct apr_client_data *data, void *priv)
 	}
 	case ASM_DATA_EVENT_EOS:
 	case ASM_DATA_EVENT_RENDERED_EOS:
-		pr_info_ratelimited("%s: EOS received session=%d opcode=%#x token=%#x src=%u dest=%u\n",
-				    __func__, ac->session,
-				    data->opcode, data->token,
-				    data->src_port, data->dest_port);
+		pr_debug("%s: EOS ACK received: rxed session %d opcode 0x%x token 0x%x src %d dest %d\n",
+				__func__, ac->session,
+				data->opcode, data->token,
+				data->src_port, data->dest_port);
 		break;
 	case ASM_SESSION_EVENTX_OVERFLOW:
 		pr_debug("%s: ASM_SESSION_EVENTX_OVERFLOW session %d opcode 0x%x token 0x%x src %d dest %d\n",
@@ -10644,8 +10644,7 @@ static int __q6asm_cmd_nowait(struct audio_client *ac, int cmd,
 		hdr.opcode = ASM_SESSION_CMD_PAUSE;
 		break;
 	case CMD_EOS:
-		pr_info_ratelimited("%s: EOS send session=%d stream=%u token=%#x\n",
-				    __func__, ac->session, stream_id, hdr.token);
+		pr_debug("%s: CMD_EOS\n", __func__);
 		hdr.opcode = ASM_DATA_CMD_EOS;
 		break;
 	case CMD_CLOSE:
