@@ -248,8 +248,10 @@ static const struct v4l2_ioctl_ops msm_v4l2_ioctl_ops = {
 	/*
 	 * 6.12 has no vidioc_enum_fmt_vid_{cap,out}_mplane: the core
 	 * dispatches the mplane types to the vid_cap and vid_out
-	 * handlers (drivers/media/v4l2-core/v4l2-ioctl.c).
+	 * handlers (drivers/media/v4l2-core/v4l2-ioctl.c v4l_enum_fmt()).
 	 */
+	.vidioc_enum_fmt_vid_cap = msm_v4l2_enum_fmt,
+	.vidioc_enum_fmt_vid_out = msm_v4l2_enum_fmt,
 	.vidioc_s_fmt_vid_cap_mplane = msm_v4l2_s_fmt,
 	.vidioc_s_fmt_vid_out_mplane = msm_v4l2_s_fmt,
 	.vidioc_g_fmt_vid_cap_mplane = msm_v4l2_g_fmt,
@@ -544,6 +546,16 @@ static int msm_vidc_probe_vidc_device(struct platform_device *pdev)
 	core->vdev[MSM_VIDC_DECODER].vdev.fops = &msm_v4l2_vidc_fops;
 	core->vdev[MSM_VIDC_DECODER].vdev.ioctl_ops = &msm_v4l2_ioctl_ops;
 	core->vdev[MSM_VIDC_DECODER].vdev.vfl_dir = VFL_DIR_M2M;
+	/*
+	 * 6.12 refuses to register a video device without device_caps
+	 * (drivers/media/v4l2-core/v4l2-dev.c __video_register_device()),
+	 * and decides from them which ioctls are valid.  They are the
+	 * capabilities msm_vdec_querycap() and msm_venc_querycap()
+	 * report.
+	 */
+	core->vdev[MSM_VIDC_DECODER].vdev.device_caps =
+		V4L2_CAP_VIDEO_CAPTURE_MPLANE | V4L2_CAP_VIDEO_OUTPUT_MPLANE |
+		V4L2_CAP_STREAMING;
 	core->vdev[MSM_VIDC_DECODER].type = MSM_VIDC_DECODER;
 	core->vdev[MSM_VIDC_DECODER].vdev.v4l2_dev = &core->v4l2_dev;
 	rc = video_register_device(&core->vdev[MSM_VIDC_DECODER].vdev,
@@ -568,6 +580,9 @@ static int msm_vidc_probe_vidc_device(struct platform_device *pdev)
 	core->vdev[MSM_VIDC_ENCODER].vdev.fops = &msm_v4l2_vidc_fops;
 	core->vdev[MSM_VIDC_ENCODER].vdev.ioctl_ops = &msm_v4l2_ioctl_ops;
 	core->vdev[MSM_VIDC_ENCODER].vdev.vfl_dir = VFL_DIR_M2M;
+	core->vdev[MSM_VIDC_ENCODER].vdev.device_caps =
+		V4L2_CAP_VIDEO_CAPTURE_MPLANE | V4L2_CAP_VIDEO_OUTPUT_MPLANE |
+		V4L2_CAP_STREAMING;
 	core->vdev[MSM_VIDC_ENCODER].type = MSM_VIDC_ENCODER;
 	core->vdev[MSM_VIDC_ENCODER].vdev.v4l2_dev = &core->v4l2_dev;
 	rc = video_register_device(&core->vdev[MSM_VIDC_ENCODER].vdev,
