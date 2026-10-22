@@ -17,6 +17,7 @@
 
 #include <linux/log2.h>
 #include <linux/platform_device.h>
+#include <linux/stddef.h>
 #include <linux/types.h>
 #include <media/msm_vidc.h>
 #include "msm_vidc_resources.h"
@@ -579,7 +580,10 @@ struct hal_uncompressed_plane_actual {
 struct hal_uncompressed_plane_actual_info {
 	enum hal_buffer buffer_type;
 	u32 num_planes;
-	struct hal_uncompressed_plane_actual rg_plane_format[1];
+	union {
+		struct hal_uncompressed_plane_actual __rg_plane_format_one;
+		DECLARE_FLEX_ARRAY(struct hal_uncompressed_plane_actual, rg_plane_format);
+	};
 };
 
 struct hal_uncompressed_plane_constraints {
@@ -681,7 +685,10 @@ struct hal_display_picture_buffer_count {
 
 struct hal_mb_error_map {
 	u32 error_map_size;
-	u8 rg_error_map[1];
+	union {
+		u8 __rg_error_map_one;
+		DECLARE_FLEX_ARRAY(u8, rg_error_map);
+	};
 };
 
 struct hal_request_iframe {
@@ -870,7 +877,10 @@ struct hal_metadata_pass_through {
 struct hal_uncompressed_format_supported {
 	enum hal_buffer buffer_type;
 	u32 format_entries;
-	u32 rg_format_info[1];
+	union {
+		u32 __rg_format_info_one;
+		DECLARE_FLEX_ARRAY(u32, rg_format_info);
+	};
 };
 
 enum hal_interlace_format {
@@ -895,7 +905,10 @@ enum hal_chroma_site {
 
 struct hal_properties_supported {
 	u32 num_properties;
-	u32 rg_properties[1];
+	union {
+		u32 __rg_properties_one;
+		DECLARE_FLEX_ARRAY(u32, rg_properties);
+	};
 };
 
 enum hal_capability {
@@ -928,7 +941,10 @@ struct hal_capability_supported {
 
 struct hal_capability_supported_info {
 	u32 num_capabilities;
-	struct hal_capability_supported rg_data[1];
+	union {
+		struct hal_capability_supported __rg_data_one;
+		DECLARE_FLEX_ARRAY(struct hal_capability_supported, rg_data);
+	};
 };
 
 struct hal_nal_stream_format_supported {
@@ -941,7 +957,10 @@ struct hal_nal_stream_format_select {
 
 struct hal_multi_view_format {
 	u32 views;
-	u32 rg_view_order[1];
+	union {
+		u32 __rg_view_order_one;
+		DECLARE_FLEX_ARRAY(u32, rg_view_order);
+	};
 };
 
 enum hal_buffer_layout_type {
@@ -1483,7 +1502,10 @@ struct hal_cmd_sys_get_property_packet {
 	u32 size;
 	u32 packet_type;
 	u32 num_properties;
-	u32 rg_property_data[1];
+	union {
+		u32 __rg_property_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_property_data);
+	};
 };
 
 #define call_hfi_op(q, op, args...)			\

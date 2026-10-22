@@ -15,6 +15,9 @@
 #ifndef __H_VIDC_HFI_HELPER_H__
 #define __H_VIDC_HFI_HELPER_H__
 
+#include <linux/stddef.h>
+#include <linux/types.h>
+
 #define HFI_COMMON_BASE				(0)
 #define HFI_OX_BASE					(0x01000000)
 
@@ -471,7 +474,10 @@ struct hfi_capability_supported {
 
 struct hfi_capability_supported_info {
 	u32 num_capabilities;
-	struct hfi_capability_supported rg_data[1];
+	union {
+		struct hfi_capability_supported __rg_data_one;
+		DECLARE_FLEX_ARRAY(struct hfi_capability_supported, rg_data);
+	};
 };
 
 #define HFI_DEBUG_MSG_LOW					0x00000001
@@ -588,7 +594,10 @@ struct hfi_3x_multi_stream {
 
 struct hfi_multi_view_format {
 	u32 views;
-	u32 rg_view_order[1];
+	union {
+		u32 __rg_view_order_one;
+		DECLARE_FLEX_ARRAY(u32, rg_view_order);
+	};
 };
 
 #define HFI_MULTI_SLICE_OFF				(HFI_COMMON_BASE + 0x1)
@@ -627,7 +636,10 @@ struct hfi_profile_level {
 
 struct hfi_profile_level_supported {
 	u32 profile_count;
-	struct hfi_profile_level rg_profile_level[1];
+	union {
+		struct hfi_profile_level __rg_profile_level_one;
+		DECLARE_FLEX_ARRAY(struct hfi_profile_level, rg_profile_level);
+	};
 };
 
 struct hfi_quality_vs_speed {
@@ -755,7 +767,10 @@ struct hfi_uncompressed_format_select {
 struct hfi_uncompressed_format_supported {
 	u32 buffer_type;
 	u32 format_entries;
-	u32 rg_format_info[1];
+	union {
+		u32 __rg_format_info_one;
+		DECLARE_FLEX_ARRAY(u32, rg_format_info);
+	};
 };
 
 struct hfi_uncompressed_plane_actual {
@@ -766,7 +781,10 @@ struct hfi_uncompressed_plane_actual {
 struct hfi_uncompressed_plane_actual_info {
 	u32 buffer_type;
 	u32 num_planes;
-	struct hfi_uncompressed_plane_actual rg_plane_format[1];
+	union {
+		struct hfi_uncompressed_plane_actual __rg_plane_format_one;
+		DECLARE_FLEX_ARRAY(struct hfi_uncompressed_plane_actual, rg_plane_format);
+	};
 };
 
 struct hfi_uncompressed_plane_constraints {
@@ -779,7 +797,10 @@ struct hfi_uncompressed_plane_constraints {
 struct hfi_uncompressed_plane_info {
 	u32 format;
 	u32 num_planes;
-	struct hfi_uncompressed_plane_constraints rg_plane_format[1];
+	union {
+		struct hfi_uncompressed_plane_constraints __rg_plane_format_one;
+		DECLARE_FLEX_ARRAY(struct hfi_uncompressed_plane_constraints, rg_plane_format);
+	};
 };
 
 struct hfi_codec_supported {
@@ -789,7 +810,10 @@ struct hfi_codec_supported {
 
 struct hfi_properties_supported {
 	u32 num_properties;
-	u32 rg_properties[1];
+	union {
+		u32 __rg_properties_one;
+		DECLARE_FLEX_ARRAY(u32, rg_properties);
+	};
 };
 
 struct hfi_max_sessions_supported {
@@ -836,12 +860,18 @@ struct hfi_resource_ocmem_requirement {
 
 struct hfi_resource_ocmem_requirement_info {
 	u32 num_entries;
-	struct hfi_resource_ocmem_requirement rg_requirements[1];
+	union {
+		struct hfi_resource_ocmem_requirement __rg_requirements_one;
+		DECLARE_FLEX_ARRAY(struct hfi_resource_ocmem_requirement, rg_requirements);
+	};
 };
 
 struct hfi_property_sys_image_version_info_type {
 	u32 string_size;
-	u8  str_image_version[1];
+	union {
+		u8 __str_image_version_one;
+		DECLARE_FLEX_ARRAY(u8, str_image_version);
+	};
 };
 
 struct hfi_venc_config_advanced {
@@ -995,7 +1025,10 @@ struct hfi_cmd_sys_set_resource_packet {
 	u32 packet_type;
 	u32 resource_handle;
 	u32 resource_type;
-	u32 rg_resource_data[1];
+	union {
+		u32 __rg_resource_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_resource_data);
+	};
 };
 
 struct hfi_cmd_sys_release_resource_packet {
@@ -1009,14 +1042,20 @@ struct hfi_cmd_sys_set_property_packet {
 	u32 size;
 	u32 packet_type;
 	u32 num_properties;
-	u32 rg_property_data[1];
+	union {
+		u32 __rg_property_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_property_data);
+	};
 };
 
 struct hfi_cmd_sys_get_property_packet {
 	u32 size;
 	u32 packet_type;
 	u32 num_properties;
-	u32 rg_property_data[1];
+	union {
+		u32 __rg_property_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_property_data);
+	};
 };
 
 struct hfi_cmd_sys_session_init_packet {
@@ -1039,7 +1078,10 @@ struct hfi_cmd_sys_set_buffers_packet {
 	u32 buffer_type;
 	u32 buffer_size;
 	u32 num_buffers;
-	u32 rg_buffer_addr[1];
+	union {
+		u32 __rg_buffer_addr_one;
+		DECLARE_FLEX_ARRAY(u32, rg_buffer_addr);
+	};
 };
 
 struct hfi_cmd_session_set_property_packet {
@@ -1047,7 +1089,7 @@ struct hfi_cmd_session_set_property_packet {
 	u32 packet_type;
 	u32 session_id;
 	u32 num_properties;
-	u32 rg_property_data[0];
+	u32 rg_property_data[];
 };
 
 struct hfi_cmd_session_set_buffers_packet {
@@ -1059,7 +1101,10 @@ struct hfi_cmd_session_set_buffers_packet {
 	u32 extra_data_size;
 	u32 min_buffer_size;
 	u32 num_buffers;
-	u32 rg_buffer_info[1];
+	union {
+		u32 __rg_buffer_info_one;
+		DECLARE_FLEX_ARRAY(u32, rg_buffer_info);
+	};
 };
 
 struct hfi_cmd_session_get_sequence_header_packet {
@@ -1075,7 +1120,10 @@ struct hfi_cmd_session_sync_process_packet {
 	u32 packet_type;
 	u32 session_id;
 	u32 sync_id;
-	u32 rg_data[1];
+	union {
+		u32 __rg_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_data);
+	};
 };
 
 struct hfi_msg_event_notify_packet {
@@ -1085,7 +1133,10 @@ struct hfi_msg_event_notify_packet {
 	u32 event_id;
 	u32 event_data1;
 	u32 event_data2;
-	u32 rg_ext_event_data[1];
+	union {
+		u32 __rg_ext_event_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_ext_event_data);
+	};
 };
 
 struct hfi_msg_release_buffer_ref_event_packet {
@@ -1099,7 +1150,10 @@ struct hfi_msg_sys_init_done_packet {
 	u32 packet_type;
 	u32 error_type;
 	u32 num_properties;
-	u32 rg_property_data[1];
+	union {
+		u32 __rg_property_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_property_data);
+	};
 };
 
 struct hfi_msg_sys_pc_prep_done_packet {
@@ -1121,7 +1175,10 @@ struct hfi_msg_sys_session_init_done_packet {
 	u32 session_id;
 	u32 error_type;
 	u32 num_properties;
-	u32 rg_property_data[1];
+	union {
+		u32 __rg_property_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_property_data);
+	};
 };
 
 struct hfi_msg_sys_session_end_done_packet {
@@ -1147,7 +1204,10 @@ struct hfi_msg_sys_debug_packet {
 	u32 msg_size;
 	u32 time_stamp_hi;
 	u32 time_stamp_lo;
-	u8 rg_msg_data[1];
+	union {
+		u8 __rg_msg_data_one;
+		DECLARE_FLEX_ARRAY(u8, rg_msg_data);
+	};
 };
 
 struct hfi_msg_sys_coverage_packet {
@@ -1156,7 +1216,10 @@ struct hfi_msg_sys_coverage_packet {
 	u32 msg_size;
 	u32 time_stamp_hi;
 	u32 time_stamp_lo;
-	u8 rg_msg_data[1];
+	union {
+		u8 __rg_msg_data_one;
+		DECLARE_FLEX_ARRAY(u8, rg_msg_data);
+	};
 };
 
 enum HFI_VENUS_QTBL_STATUS {
@@ -1174,7 +1237,10 @@ enum HFI_VENUS_CTRL_INIT_STATUS {
 
 struct hfi_sfr_struct {
 	u32 bufSize;
-	u8 rg_data[1];
+	union {
+		u8 __rg_data_one;
+		DECLARE_FLEX_ARRAY(u8, rg_data);
+	};
 };
 
 struct hfi_cmd_sys_test_ssr_packet {

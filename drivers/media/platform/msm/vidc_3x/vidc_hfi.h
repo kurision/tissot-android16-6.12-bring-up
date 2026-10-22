@@ -114,7 +114,10 @@ struct hfi_extradata_header {
 	u32 port_index;
 	u32 type;
 	u32 data_size;
-	u8 rg_data[1];
+	union {
+		u8 __rg_data_one;
+		DECLARE_FLEX_ARRAY(u8, rg_data);
+	};
 };
 
 #define HFI_INTERLACE_FRAME_PROGRESSIVE					0x01
@@ -306,7 +309,10 @@ struct hfi_buffer_requirements {
 
 struct hfi_data_payload {
 	u32 size;
-	u8 rg_data[1];
+	union {
+		u8 __rg_data_one;
+		DECLARE_FLEX_ARRAY(u8, rg_data);
+	};
 };
 
 struct hfi_enable_picture {
@@ -334,12 +340,18 @@ struct hfi_interlace_format_supported {
 struct hfi_buffer_alloc_mode_supported {
 	u32 buffer_type;
 	u32 num_entries;
-	u32 rg_data[1];
+	union {
+		u32 __rg_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_data);
+	};
 };
 
 struct hfi_mb_error_map {
 	u32 error_map_size;
-	u8 rg_error_map[1];
+	union {
+		u8 __rg_error_map_one;
+		DECLARE_FLEX_ARRAY(u8, rg_error_map);
+	};
 };
 
 struct hfi_metadata_pass_through {
@@ -483,7 +495,10 @@ struct hfi_cmd_session_empty_buffer_compressed_packet {
 	u32 input_tag;
 	u32 packet_buffer;
 	u32 extra_data_buffer;
-	u32 rgData[1];
+	union {
+		u32 __rgData_one;
+		DECLARE_FLEX_ARRAY(u32, rgData);
+	};
 };
 
 struct hfi_cmd_session_empty_buffer_uncompressed_plane0_packet {
@@ -502,7 +517,10 @@ struct hfi_cmd_session_empty_buffer_uncompressed_plane0_packet {
 	u32 input_tag;
 	u32 packet_buffer;
 	u32 extra_data_buffer;
-	u32 rgData[1];
+	union {
+		u32 __rgData_one;
+		DECLARE_FLEX_ARRAY(u32, rgData);
+	};
 };
 
 struct hfi_cmd_session_empty_buffer_uncompressed_plane1_packet {
@@ -511,7 +529,10 @@ struct hfi_cmd_session_empty_buffer_uncompressed_plane1_packet {
 	u32 filled_len;
 	u32 offset;
 	u32 packet_buffer2;
-	u32 rgData[1];
+	union {
+		u32 __rgData_one;
+		DECLARE_FLEX_ARRAY(u32, rgData);
+	};
 };
 
 struct hfi_cmd_session_empty_buffer_uncompressed_plane2_packet {
@@ -520,7 +541,10 @@ struct hfi_cmd_session_empty_buffer_uncompressed_plane2_packet {
 	u32 filled_len;
 	u32 offset;
 	u32 packet_buffer3;
-	u32 rgData[1];
+	union {
+		u32 __rgData_one;
+		DECLARE_FLEX_ARRAY(u32, rgData);
+	};
 };
 
 struct hfi_cmd_session_fill_buffer_packet {
@@ -534,7 +558,10 @@ struct hfi_cmd_session_fill_buffer_packet {
 	u32 output_tag;
 	u32 packet_buffer;
 	u32 extra_data_buffer;
-	u32 rgData[1];
+	union {
+		u32 __rgData_one;
+		DECLARE_FLEX_ARRAY(u32, rgData);
+	};
 };
 
 struct hfi_cmd_session_flush_packet {
@@ -561,7 +588,10 @@ struct hfi_cmd_session_get_property_packet {
 	u32 packet_type;
 	u32 session_id;
 	u32 num_properties;
-	u32 rg_property_data[1];
+	union {
+		u32 __rg_property_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_property_data);
+	};
 };
 
 struct hfi_cmd_session_release_buffer_packet {
@@ -573,7 +603,10 @@ struct hfi_cmd_session_release_buffer_packet {
 	u32 extra_data_size;
 	int response_req;
 	u32 num_buffers;
-	u32 rg_buffer_info[1];
+	union {
+		u32 __rg_buffer_info_one;
+		DECLARE_FLEX_ARRAY(u32, rg_buffer_info);
+	};
 };
 
 struct hfi_cmd_session_release_resources_packet {
@@ -612,7 +645,10 @@ struct hfi_msg_sys_property_info_packet {
 	u32 size;
 	u32 packet_type;
 	u32 num_properties;
-	u32 rg_property_data[1];
+	union {
+		u32 __rg_property_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_property_data);
+	};
 };
 
 struct hfi_msg_session_load_resources_done_packet {
@@ -668,7 +704,10 @@ struct hfi_msg_session_empty_buffer_done_packet {
 	u32 input_tag;
 	u32 packet_buffer;
 	u32 extra_data_buffer;
-	u32 rgData[1];
+	union {
+		u32 __rgData_one;
+		DECLARE_FLEX_ARRAY(u32, rgData);
+	};
 };
 
 struct hfi_msg_session_fill_buffer_done_compressed_packet {
@@ -690,7 +729,7 @@ struct hfi_msg_session_fill_buffer_done_compressed_packet {
 	u32 picture_type;
 	u32 packet_buffer;
 	u32 extra_data_buffer;
-	u32 rgData[0];
+	u32 rgData[];
 };
 
 struct hfi_msg_session_fbd_uncompressed_plane0_packet {
@@ -719,7 +758,7 @@ struct hfi_msg_session_fbd_uncompressed_plane0_packet {
 	u32 picture_type;
 	u32 packet_buffer;
 	u32 extra_data_buffer;
-	u32 rgData[0];
+	u32 rgData[];
 };
 
 struct hfi_msg_session_fill_buffer_done_uncompressed_plane1_packet {
@@ -728,7 +767,7 @@ struct hfi_msg_session_fill_buffer_done_uncompressed_plane1_packet {
 	u32 filled_len;
 	u32 offset;
 	u32 packet_buffer2;
-	u32 rgData[0];
+	u32 rgData[];
 };
 
 struct hfi_msg_session_fill_buffer_done_uncompressed_plane2_packet {
@@ -737,7 +776,7 @@ struct hfi_msg_session_fill_buffer_done_uncompressed_plane2_packet {
 	u32 filled_len;
 	u32 offset;
 	u32 packet_buffer3;
-	u32 rgData[0];
+	u32 rgData[];
 };
 
 struct hfi_msg_session_parse_sequence_header_done_packet {
@@ -746,7 +785,10 @@ struct hfi_msg_session_parse_sequence_header_done_packet {
 	u32 session_id;
 	u32 error_type;
 	u32 num_properties;
-	u32 rg_property_data[1];
+	union {
+		u32 __rg_property_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_property_data);
+	};
 };
 
 struct hfi_msg_session_property_info_packet {
@@ -754,7 +796,10 @@ struct hfi_msg_session_property_info_packet {
 	u32 packet_type;
 	u32 session_id;
 	u32 num_properties;
-	u32 rg_property_data[1];
+	union {
+		u32 __rg_property_data_one;
+		DECLARE_FLEX_ARRAY(u32, rg_property_data);
+	};
 };
 
 struct hfi_msg_session_release_resources_done_packet {
@@ -770,11 +815,17 @@ struct hfi_msg_session_release_buffers_done_packet {
 	u32 session_id;
 	u32 error_type;
 	u32 num_buffers;
-	u32 rg_buffer_info[1];
+	union {
+		u32 __rg_buffer_info_one;
+		DECLARE_FLEX_ARRAY(u32, rg_buffer_info);
+	};
 };
 
 struct hfi_extradata_mb_quantization_payload {
-	u8 rg_mb_qp[1];
+	union {
+		u8 __rg_mb_qp_one;
+		DECLARE_FLEX_ARRAY(u8, rg_mb_qp);
+	};
 };
 
 struct hfi_extradata_vc1_pswnd {
@@ -791,7 +842,10 @@ struct hfi_extradata_vc1_framedisp_payload {
 	u32 range_map_y;
 	u32 range_map_uv;
 	u32 num_pan_scan_wnds;
-	struct hfi_extradata_vc1_pswnd rg_ps_wnd[1];
+	union {
+		struct hfi_extradata_vc1_pswnd __rg_ps_wnd_one;
+		DECLARE_FLEX_ARRAY(struct hfi_extradata_vc1_pswnd, rg_ps_wnd);
+	};
 };
 
 struct hfi_extradata_vc1_seqdisp_payload {
@@ -848,7 +902,10 @@ struct hfi_extradata_sliceinfo {
 
 struct hfi_extradata_multislice_info_payload {
 	u32 num_slices;
-	struct hfi_extradata_sliceinfo rg_slice_info[1];
+	union {
+		struct hfi_extradata_sliceinfo __rg_slice_info_one;
+		DECLARE_FLEX_ARRAY(struct hfi_extradata_sliceinfo, rg_slice_info);
+	};
 };
 
 struct hfi_index_extradata_input_crop_payload {
@@ -890,7 +947,10 @@ struct hfi_index_extradata_aspect_ratio_payload {
 };
 struct hfi_extradata_panscan_wndw_payload {
 	u32 num_window;
-	struct hfi_extradata_vc1_pswnd wnd[1];
+	union {
+		struct hfi_extradata_vc1_pswnd __wnd_one;
+		DECLARE_FLEX_ARRAY(struct hfi_extradata_vc1_pswnd, wnd);
+	};
 };
 
 struct hfi_extradata_frame_type_payload {
