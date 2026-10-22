@@ -201,9 +201,10 @@ config QCOM_SUBSYSTEM_COMPAT
 	  load, and the subsystem restart notification.
 
 	  This provides the firmware load the way this port's own upstream
-	  Venus driver does it.  The restart notification is a no-op: a
-	  Venus crash is not reported to the driver, and the driver cannot
-	  recover from one.
+	  Venus driver does it.  The restart notification is a no-op; the
+	  driver recovers from a Venus crash by itself, by releasing the
+	  core and loading the firmware again.  The donor's ramdump on
+	  crash is not provided.
 
 	  Say Y here if the CAF video codec is enabled.
 

@@ -9,10 +9,16 @@
  * the reserved memory the device tree names, and
  * qcom_scm_pas_auth_and_reset() to let the secure world start it.
  *
- * The subsystem restart notification is a no-op.  There is no subsystem
- * framework here to register with, so a Venus crash is not reported to
- * the driver and the driver cannot recover from one.  That is a
- * documented limitation of this port.
+ * The subsystem restart notification is a no-op, and a Venus crash does
+ * not need it: the driver recovers by itself.  On SYS_ERROR,
+ * handle_sys_error() releases the core (__unload_fw() ->
+ * msm_subsystem_put(), which shuts the firmware down), and the next
+ * session's core init loads and starts it again (__load_fw() ->
+ * msm_subsystem_get_with_fwname()).  The donor's subsystem_crashed()
+ * only asked for a ramdump on the next put
+ * (../oc-test/drivers/soc/qcom/subsystem_restart.c:1287), so the ramdump
+ * is what is lost.  The notifier is used only by venus_boot.c, for the
+ * non-secure PIL, which msm8953 does not use.
  */
 #ifndef _SOC_QCOM_MSM_SUBSYSTEM_COMPAT_H
 #define _SOC_QCOM_MSM_SUBSYSTEM_COMPAT_H

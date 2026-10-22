@@ -14,9 +14,12 @@
  *    and qcom_scm_pas_auth_and_reset() to let the secure world start it.
  *
  *  - the subsystem restart notification is a no-op, because there is no
- *    framework to register with.  A Venus crash is therefore not
- *    reported to the driver, and the driver cannot recover from one.
- *    That is a documented limitation of this port.
+ *    framework to register with.  A Venus crash does not need it: the
+ *    driver releases the core on SYS_ERROR, which shuts the firmware
+ *    down through msm_subsystem_put(), and the next session loads it
+ *    again through msm_subsystem_get_with_fwname().  What is lost is
+ *    the donor's ramdump on crash (subsystem_crashed() only set
+ *    do_ramdump_on_put).
  */
 
 #include <linux/device.h>
