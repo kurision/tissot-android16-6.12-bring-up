@@ -4,6 +4,7 @@
  * Copyright (c) 2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #include <linux/slab.h>
+#include <dsp/q6_init.h>
 #include <linux/kthread.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -4444,7 +4445,8 @@ static int voice_get_avcs_version_per_service(uint32_t service_id)
 		return -EINVAL;
 	}
 
-	if (of_machine_is_compatible("qcom,sdm630") ||
+	if (msm_enable_legacy_adsp_hacks ||
+	    of_machine_is_compatible("qcom,sdm630") ||
 	    of_machine_is_compatible("qcom,sdm636") ||
 	    of_machine_is_compatible("qcom,sdm660")) {
 		common.is_avcs_version_queried = true;

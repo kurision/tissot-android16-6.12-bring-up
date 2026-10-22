@@ -26,6 +26,11 @@
 	chassis-type = "handset";
 	qcom,msm-id = <293 0>;
 	qcom,board-id = <0x1000b 0x00>;
+	/*
+	 * The donor's mi8953 audio.dtsi: the DSP library uses the v3 ASM
+	 * PCM formats and CVP version 1 this ADSP firmware supports.
+	 */
+	qcom,enable-legacy-adsp-hacks;
 
 	cpus {
 		idle-states {
