@@ -823,18 +823,16 @@ static int msm_vidc_populate_bus(struct device *dev,
 		goto err_bus;
 	}
 
-	rc = of_property_read_u32(dev->of_node, "qcom,bus-master",
-			&bus->master);
-	if (rc) {
-		dprintk(VIDC_ERR, "'qcom,bus-master' not found in node\n");
-		goto err_bus;
-	}
-
-	rc = of_property_read_u32(dev->of_node, "qcom,bus-slave", &bus->slave);
-	if (rc) {
-		dprintk(VIDC_ERR, "'qcom,bus-slave' not found in node\n");
-		goto err_bus;
-	}
+	/*
+	 * The donor named the path by its msm-bus master and slave ids.
+	 * This kernel votes through the interconnect framework, which takes
+	 * the path from the node's "interconnects" property (__init_bus()),
+	 * so the ids are only kept for the log when a tree still has them.
+	 */
+	bus->master = -1;
+	bus->slave = -1;
+	of_property_read_u32(dev->of_node, "qcom,bus-master", &bus->master);
+	of_property_read_u32(dev->of_node, "qcom,bus-slave", &bus->slave);
 
 	rc = of_property_read_string(dev->of_node, "qcom,mode",
 			&bus->mode);

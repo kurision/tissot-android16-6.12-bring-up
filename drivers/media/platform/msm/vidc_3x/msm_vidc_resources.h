@@ -15,6 +15,7 @@
 #ifndef __MSM_VIDC_RESOURCES_H__
 #define __MSM_VIDC_RESOURCES_H__
 
+#include <linux/interconnect.h>
 #include <linux/platform_device.h>
 #include <media/msm_vidc.h>
 #define MAX_BUFFER_TYPES 32
@@ -117,7 +118,7 @@ struct bus_info {
 	int slave;
 	unsigned int range[2];
 	struct device *dev;
-	struct msm_bus_client_handle *client;
+	struct icc_path *path;
 	bool is_prfm_gov_used;
 	const char *mode;
 };

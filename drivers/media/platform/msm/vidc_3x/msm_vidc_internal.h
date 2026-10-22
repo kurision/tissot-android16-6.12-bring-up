@@ -22,8 +22,6 @@
 #include <linux/completion.h>
 #include <linux/wait.h>
 #include <linux/workqueue.h>
-#include <linux/msm-bus.h>
-#include <linux/msm-bus-board.h>
 #include <linux/kref.h>
 #include <media/v4l2-dev.h>
 #include <media/v4l2-device.h>

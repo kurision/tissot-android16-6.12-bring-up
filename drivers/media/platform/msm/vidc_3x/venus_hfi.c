@@ -767,10 +767,12 @@ static int __vote_bandwidth(struct bus_info *bus,
 	ab = *freq * 1000;
 	dprintk(VIDC_PROF, "Voting bus %s to ab %llu\n", bus->name, ab);
 	/*
-	 * The port's msm-bus shim votes with the index of the bus in
-	 * the table, not with a bandwidth in bytes per second.
+	 * The donor voted ab in bytes per second through
+	 * msm_bus_scale_update_bw(client, ab, 0). The frequency is in kBps
+	 * (qcom,bus-range-kbps, and ab = freq * 1000), which is the unit of
+	 * the interconnect framework; the instantaneous vote stays 0.
 	 */
-	rc = msm_bus_scale_client_update_request(bus->client, bus->index);
+	rc = icc_set_bw(bus->path, *freq, 0);
 	if (rc)
 		dprintk(VIDC_ERR, "Failed voting bus %s to ab %llu, rc=%d\n",
 				bus->name, ab, rc);
@@ -3776,8 +3778,8 @@ static void __deinit_bus(struct venus_hfi_device *device)
 	device->bus_vote = DEFAULT_BUS_VOTE;
 
 	venus_hfi_for_each_bus_reverse(device, bus) {
-		msm_bus_scale_unregister(bus->client);
-		bus->client = NULL;
+		icc_put(bus->path);
+		bus->path = NULL;
 	}
 }
 
@@ -3790,15 +3792,22 @@ static int __init_bus(struct venus_hfi_device *device)
 		return -EINVAL;
 
 	venus_hfi_for_each_bus(device, bus) {
-		bus->client = msm_bus_scale_register(bus->master, bus->slave,
-				bus->name, false);
-		if (IS_ERR_OR_NULL(bus->client)) {
-			rc = PTR_ERR(bus->client) ?: -EBADHANDLE;
-			dprintk(VIDC_ERR, "Failed to register bus %s: %d\n",
+		/*
+		 * The bus node's own "interconnects" property is the path.
+		 * A node without one gets a NULL path, on which every vote
+		 * succeeds without effect, as on upstream Venus.
+		 */
+		bus->path = of_icc_get(bus->dev, NULL);
+		if (IS_ERR(bus->path)) {
+			rc = PTR_ERR(bus->path);
+			dprintk(VIDC_ERR, "Failed to get the path of bus %s: %d\n",
 					bus->name, rc);
-			bus->client = NULL;
+			bus->path = NULL;
 			goto err_add_dev;
 		}
+		if (!bus->path)
+			dprintk(VIDC_WARN, "Bus %s has no interconnect path\n",
+					bus->name);
 	}
 
 	device->bus_vote = DEFAULT_BUS_VOTE;
