@@ -256,6 +256,14 @@ config QCOM_SMSM
 	  Say yes here to support the Qualcomm Shared Memory State Machine.
 	  The state machine is represented by bits in shared memory.
 
+config QCOM_RUN_QUEUE_STATS
+	bool "Qualcomm deferred timer for the vendor IRQ balancer"
+	depends on SMP && SYSFS
+	help
+	  Provides /sys/devices/system/cpu/cpu0/rq-stats/def_timer_ms, the
+	  deferred sleep that Qualcomm's msm_irqbalance daemon polls. The
+	  daemon exits without it.
+
 config QCOM_SOCINFO
 	tristate "Qualcomm socinfo driver"
 	depends on QCOM_SMEM
