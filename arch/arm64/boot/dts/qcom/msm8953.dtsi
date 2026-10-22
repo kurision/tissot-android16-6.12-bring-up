@@ -453,6 +453,22 @@
 		ranges = <0 0 0 0xffffffff>;
 		compatible = "simple-bus";
 
+		/*
+		 * The modem's remote storage memory, as the vendor
+		 * rmt_storage daemon finds it: a UIO device named after
+		 * reg-names ("rmtfs"), see drivers/uio/msm_sharedmem.c.
+		 * The region is the rmtfs carve-out reserved above
+		 * (rmtfs@f2d00000). The donor's node is the same with
+		 * address 0, which made the driver allocate it at probe
+		 * (../oc-test/arch/arm64/boot/dts/vendor/qcom/msm8953.dtsi:333).
+		 */
+		qcom,rmtfs_sharedmem@f2d00000 {
+			compatible = "qcom,sharedmem-uio";
+			reg = <0xf2d00000 0x180000>;
+			reg-names = "rmtfs";
+			qcom,client-id = <1>;
+		};
+
 		rpm_msg_ram: sram@60000 {
 			compatible = "qcom,rpm-msg-ram";
 			reg = <0x00060000 0x8000>;

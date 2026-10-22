@@ -135,3 +135,20 @@
 ;; 0440/0550 system-owned modes: run339 also records a DAC denial. Do not
 ;; grant kernel DAC bypass capabilities; fix the firmware mount permissions.
 (allow kernel firmware_file (file (open read getattr)))
+
+;; ---------------
+;; The modem's remote storage memory on 6.12: label the UIO device with the
+;; type the ROM already grants rmt_storage.
+;;
+;; The vendor file_contexts label it under the CAF 4.19 path
+;;
+;;   /sys/devices(/platform)?/soc/[a-f0-9]+.qcom,rmtfs_sharedmem/uio/uio[0-9]+(/.*)?
+;;     u:object_r:sysfs_uio_file:s0
+;;
+;; (porting/drafts/vendor_file_contexts.ack:528,536).  This kernel creates
+;; the device under soc@0 (drivers/uio/msm_sharedmem.c, the
+;; qcom,rmtfs_sharedmem@f2d00000 node of msm8953.dtsi), so that regex does
+;; not match and the files the vendor labels for the daemon (the uio
+;; directory and its maps) would land on the generic sysfs type.  A prefix
+;; label covers the uio directory and everything under it.
+(genfscon sysfs "/devices/platform/soc@0/f2d00000.qcom,rmtfs_sharedmem/uio" (u object_r sysfs_uio_file ((s0) (s0))))
