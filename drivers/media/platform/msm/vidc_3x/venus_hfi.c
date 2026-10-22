@@ -1549,7 +1549,7 @@ static int __iface_cmdq_write_relaxed(struct venus_hfi_device *device,
 
 	if (cmd_packet->packet_type == HFI_CMD_SESSION_EMPTY_BUFFER &&
 				!is_clock_bus_voted(device))
-		dprintk(VIDC_ERR, "%s: bus %llu bps or clock %u MHz\n",
+		dprintk(VIDC_ERR, "%s: bus %lu bps or clock %u MHz\n",
 				__func__, device->bus_vote.total_bw_ddr,
 					device->clk_freq);
 
@@ -3614,7 +3614,7 @@ static int __init_regs_and_interrupts(struct venus_hfi_device *device,
 
 	hal->irq = res->irq;
 	hal->firmware_base = res->firmware_base;
-	hal->register_base = devm_ioremap_nocache(&res->pdev->dev,
+	hal->register_base = devm_ioremap(&res->pdev->dev,
 			res->register_base, res->register_size);
 	hal->register_size = res->register_size;
 	if (!hal->register_base) {
@@ -4300,11 +4300,8 @@ static inline int __resume(struct venus_hfi_device *device)
 	__set_threshold_registers(device);
 
 	if (device->res->pm_qos_latency_us) {
-#ifdef CONFIG_SMP
-		device->qos.type = PM_QOS_REQ_AFFINE_IRQ;
-		device->qos.irq = device->hal_data->irq;
-#endif
-		pm_qos_add_request(&device->qos, PM_QOS_CPU_DMA_LATENCY,
+		/* As in venus_hfi_core_init(): a plain CPU latency vote. */
+		cpu_latency_qos_add_request(&device->qos,
 				device->res->pm_qos_latency_us);
 	}
 	dprintk(VIDC_INFO, "Resumed from power collapse\n");
