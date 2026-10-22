@@ -1413,6 +1413,27 @@ static int msm_vidc_setup_context_bank(struct context_bank_info *cb,
 	dma_set_max_seg_size(dev, (u32)DMA_BIT_MASK(32));
 	dma_set_seg_boundary(dev, (unsigned long)~0UL);
 
+	/*
+	 * Venus can only reach the bank's virtual-addr-pool. The donor's
+	 * IOMMU layer kept the IOVAs inside it through the node's
+	 * qcom,iommu-dma-addr-pool; 6.12 has no such property and its
+	 * dma-iommu allocates top-down from the DMA mask, which gave the
+	 * firmware its queues at 0xffc00000, where it cannot use them. Cap
+	 * the mask at the end of the pool, as the upstream Venus driver
+	 * caps it (venus/core.c, dma_mask); msm_dma_get_device_address()
+	 * rejects a mapping below the start.
+	 */
+	if (cb->addr_range.size) {
+		u64 end = (u64)cb->addr_range.start + cb->addr_range.size - 1;
+
+		rc = dma_set_mask_and_coherent(dev, end);
+		if (rc) {
+			dprintk(VIDC_ERR, "%s: cannot limit %s to %#llx: %d\n",
+				__func__, dev_name(dev), end, rc);
+			goto remove_cb;
+		}
+	}
+
 	dprintk(VIDC_DBG, "Attached %s and created mapping\n", dev_name(dev));
 	dprintk(VIDC_DBG,
 		"Context bank name:%s, buffer_type: %#x, is_secure: %d, address range start: %#x, size: %#x, dev: %pK, mapping: %pK",

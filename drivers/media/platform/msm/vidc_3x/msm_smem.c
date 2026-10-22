@@ -131,6 +131,18 @@ static int msm_dma_get_device_address(struct dma_buf *dbuf, unsigned long align,
 			goto mem_map_sg_failed;
 		}
 
+		/*
+		 * The DMA mask bounds the top of the bank's pool; the
+		 * firmware cannot use an address below its start either.
+		 */
+		if (cb->addr_range.size && *iova < cb->addr_range.start) {
+			dprintk(VIDC_ERR,
+				"%s: iova %pad below the %s pool at %#x\n",
+				__func__, iova, cb->name, cb->addr_range.start);
+			rc = -ENOMEM;
+			goto mem_map_sg_failed;
+		}
+
 		mapping_info->dev = cb->dev;
 		mapping_info->domain = cb->domain;
 		mapping_info->table = table;
