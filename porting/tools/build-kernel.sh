@@ -479,7 +479,7 @@ fragment=pathlib.Path('porting/policy/port-genfs-kgsl.cil').read_bytes()
 assert new['policy_append_sha256'] == hashlib.sha256(fragment).hexdigest(), \
     'the kgsl genfs fragment was not appended to the ramdisk policy'
 symbols=subprocess.check_output([os.environ['LLVM_NM'],'-a','out/vmlinux'],text=True)
-for name in ['ramoops_witness_write','ramoops_stage_write','ramoops_reset_note',
+for name in ['ramoops_stage_write','ramoops_reset_note',
 	     'kgsl_timeline_signal','snd_pcm_add_volume_ctls','snd_soc_info_multi_ext']:
     assert name in symbols, name
 config=(s/f'{run}-embedded.config').read_text()

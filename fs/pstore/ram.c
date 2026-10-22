@@ -39,8 +39,6 @@
 #include <linux/sched/signal.h>
 #include <linux/interrupt.h>
 #include <linux/irqflags.h>
-#include <trace/events/signal.h>
-#include <trace/events/sched.h>
 #endif
 #include <linux/fs.h>
 #include <linux/kthread.h>
@@ -629,16 +627,9 @@ static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
 #define RAMOOPS_SNAP_PAYLOAD_OFFSET	(RAMOOPS_SNAP_OFFSET + PAGE_SIZE)
 #define RAMOOPS_SNAP_SLOT_STRIDE	(PAGE_SIZE + SZ_1M)
 #define RAMOOPS_SNAP_SLOTS		2
-#define RAMOOPS_SNAP_INTERVAL_MS	500
-/*
- * The periodic snapshot is on again: the audio bring-up hangs before the
- * userspace, and this is the only channel that survives a hang. It copies
- * the live reservation to the "logdump" block device every two seconds
- * without any process, so the console log of a boot that never reaches
- * init is still there to be read. It is off again once the hang is
- * understood.
- */
-#define RAMOOPS_PERIODIC_SNAPSHOTS	1
+#define RAMOOPS_SNAP_INTERVAL_MS	2000
+/* Legacy bring-up polling is off; panic and orderly-reset capture stay live. */
+#define RAMOOPS_PERIODIC_SNAPSHOTS	0
 /*
  * run225: once the first KGSL stage record lands, shorten the cadence so the
  * last sample falls inside the pre-reset blind window (~150 ms wide). The
@@ -758,7 +749,6 @@ struct ramoops_snapper {
 	void *reset_buf;
 	struct notifier_block reset_nb;
 	bool reset_registered;
-	bool process_registered;
 };
 
 static struct ramoops_snapper ramoops_snapper;
@@ -1088,155 +1078,6 @@ out:
 }
 
 /*
- * Opt-in process/signal evidence: tracepoint callbacks only, no
- * signal-delivery or exit-path changes. Enabled by ramoops.reset_capture.
- * Callbacks only filter, read fields and printk: no allocation, I/O,
- * sleeps, locks or storage flush.
- *
- * run265: the per-event signal print is gone, and only the counts are
- * kept. PowerManagerService retries a failing binder transaction and the
- * kernel raises SIGBUS on it every time, thousands of times a minute; the
- * unbounded print turned the 1 MiB console ring into nothing but signal
- * records (6081 of the 13764 messages in the recovered run265 logdump were
- * signal_generate, and in the final two seconds of the console 237 of 237
- * messages were signal records), so the kgsl evidence the ring exists to
- * hold had been evicted long before the snapshot.
- *
- * The counts are the part worth keeping: the first occurrence of each
- * signal number is printed once, so the sender is known, and the tally per
- * signal number is printed when the capture stops. The counters are plain
- * integers updated without a lock; a torn diagnostic count costs nothing
- * but a wrong number in a log, and a lock here would be in the signal path.
- */
-#define RAMOOPS_SIG_DIAG_MAX	64
-#define RAMOOPS_EXIT_DIAG_FIRST	128
-#define RAMOOPS_EXIT_DIAG_EVERY	256
-
-static unsigned int ramoops_diag_sig_count[RAMOOPS_SIG_DIAG_MAX];
-static bool ramoops_diag_sig_seen[RAMOOPS_SIG_DIAG_MAX];
-static unsigned int ramoops_diag_exit_printed;
-static unsigned int ramoops_diag_exit_total;
-
-static void ramoops_diag_signal_generate(void *unused, int sig,
-					 struct kernel_siginfo *info,
-					 struct task_struct *task,
-					 int group, int result)
-{
-	int code;
-	bool first = false;
-
-	(void)unused;
-	switch (sig) {
-	case SIGHUP:
-	case SIGINT:
-	case SIGQUIT:
-	case SIGILL:
-	case SIGABRT:
-	case SIGFPE:
-	case SIGKILL:
-	case SIGSEGV:
-	case SIGTERM:
-	case SIGBUS:
-	case SIGSYS:
-		break;
-	default:
-		return;
-	}
-	if (task->flags & PF_KTHREAD)
-		return;
-	if (sig <= 0 || sig >= RAMOOPS_SIG_DIAG_MAX)
-		return;
-
-	ramoops_diag_sig_count[sig]++;
-	if (!ramoops_diag_sig_seen[sig]) {
-		ramoops_diag_sig_seen[sig] = true;
-		first = true;
-	}
-	if (!first)
-		return;
-
-	/* Same sentinel contract as TP_STORE_SIGINFO; never dereference. */
-	if (info == SEND_SIG_NOINFO)
-		code = SI_USER;
-	else if (info == SEND_SIG_PRIV)
-		code = SI_KERNEL;
-	else
-		code = info->si_code;
-	pr_info("DIAG signal_first sig=%d code=%d count=%u sender_pid=%d sender_tgid=%d sender_comm=%.16s target_pid=%d target_tgid=%d target_comm=%.16s group=%d result=%d\n",
-		sig, code, ramoops_diag_sig_count[sig],
-		task_pid_nr(current), task_tgid_nr(current),
-		current->comm, task_pid_nr(task), task_tgid_nr(task),
-		task->comm, group, result);
-}
-
-static void ramoops_diag_process_exit(void *unused, struct task_struct *task)
-{
-	unsigned int group_exit;
-
-	(void)unused;
-	if (task->flags & PF_KTHREAD)
-		return;
-	if (task_pid_nr(task) != task_tgid_nr(task))
-		return;
-	ramoops_diag_exit_total++;
-	if (ramoops_diag_exit_printed >= RAMOOPS_EXIT_DIAG_FIRST &&
-	    (ramoops_diag_exit_printed % RAMOOPS_EXIT_DIAG_EVERY))
-		return;
-	ramoops_diag_exit_printed++;
-	group_exit = (unsigned int)!!(READ_ONCE(task->signal->flags) & SIGNAL_GROUP_EXIT);
-	pr_info("DIAG process_exit pid=%d tgid=%d comm=%.16s exit_code=0x%x group_exit_code=0x%x group_exit=%u\n",
-		task_pid_nr(task), task_tgid_nr(task), task->comm,
-		READ_ONCE(task->exit_code),
-		READ_ONCE(task->signal->group_exit_code), group_exit);
-}
-
-static void ramoops_process_trace_start(struct ramoops_snapper *s)
-{
-	int err;
-
-	err = register_trace_signal_generate(ramoops_diag_signal_generate, NULL);
-	if (err) {
-		pr_warn("DIAG process capture unavailable: signal probe errno=%d\n",
-			err);
-		return;
-	}
-	err = register_trace_sched_process_exit(ramoops_diag_process_exit, NULL);
-	if (err) {
-		unregister_trace_signal_generate(ramoops_diag_signal_generate,
-						 NULL);
-		tracepoint_synchronize_unregister();
-		pr_warn("DIAG process capture unavailable: exit probe errno=%d\n",
-			err);
-		return;
-	}
-	s->process_registered = true;
-	pr_info("DIAG process capture active\n");
-}
-
-static void ramoops_process_trace_stop(struct ramoops_snapper *s)
-{
-	unsigned int sig, total = 0;
-
-	if (!s->process_registered)
-		return;
-	unregister_trace_sched_process_exit(ramoops_diag_process_exit, NULL);
-	unregister_trace_signal_generate(ramoops_diag_signal_generate, NULL);
-	tracepoint_synchronize_unregister();
-	s->process_registered = false;
-
-	/* The counts are the part that must not be lost by the sampling. */
-	for (sig = 1; sig < RAMOOPS_SIG_DIAG_MAX; sig++) {
-		if (!ramoops_diag_sig_count[sig])
-			continue;
-		total += ramoops_diag_sig_count[sig];
-		pr_info("DIAG signal_count sig=%d count=%u\n", sig,
-			ramoops_diag_sig_count[sig]);
-	}
-	pr_info("DIAG capture totals: signals=%u exits=%u exits_printed=%u\n",
-		total, ramoops_diag_exit_total, ramoops_diag_exit_printed);
-}
-
-/*
  * The thread retries the open because MMC block devices register at
  * device_initcall, long after ramoops probes at postcore_initcall.
  */
@@ -1384,10 +1225,7 @@ static int ramoops_snap_thread(void *unused)
 #define RAMOOPS_WITNESS_OFFSET	0x3f00000ULL
 #define RAMOOPS_WITNESS_LEN	512
 
-/*
- * QSEE trace ring (snapshot45 diagnostic): one FUA write per record so it
- * survives a reset. The record format is defined in drivers/misc/qseecom.c.
- */
+/* Formerly the QSEE trace ring; kept as the end of the stage region. */
 #define RAMOOPS_QTRACE_OFFSET	0x3f10000ULL
 #define RAMOOPS_QTRACE_SLOTS	128
 
@@ -1463,18 +1301,6 @@ static int ramoops_witness_write_at(u64 offset, blk_opf_t opf,
 	bio_put(bio);
 	return err;
 }
-
-int ramoops_witness_write(const void *data, size_t len)
-{
-	int err;
-
-	mutex_lock(&ramoops_witness_lock);
-	err = ramoops_witness_write_at(RAMOOPS_WITNESS_OFFSET, REQ_OP_WRITE,
-				       data, len);
-	mutex_unlock(&ramoops_witness_lock);
-	return err;
-}
-EXPORT_SYMBOL_GPL(ramoops_witness_write);
 
 /*
  * Stage records occupy the gap between the witness and the QSEE ring.
@@ -1661,57 +1487,6 @@ void ramoops_reset_note(const char *what)
 }
 EXPORT_SYMBOL_GPL(ramoops_reset_note);
 
-int ramoops_qtrace_write(u64 seq, const void *data, size_t len)
-{
-	int err;
-
-	mutex_lock(&ramoops_witness_lock);
-	err = ramoops_witness_write_at(RAMOOPS_QTRACE_OFFSET +
-			(seq % RAMOOPS_QTRACE_SLOTS) * RAMOOPS_WITNESS_LEN,
-			REQ_OP_WRITE | REQ_SYNC | REQ_FUA, data, len);
-	mutex_unlock(&ramoops_witness_lock);
-	return err;
-}
-EXPORT_SYMBOL_GPL(ramoops_qtrace_write);
-
-int ramoops_witness_read(void *data, size_t len)
-{
-	struct bio *bio;
-	int err;
-
-	if (len > RAMOOPS_WITNESS_LEN)
-		return -EINVAL;
-	mutex_lock(&ramoops_witness_lock);
-	err = ramoops_witness_open();
-	if (err)
-		goto out;
-	memset(ramoops_witness_buf, 0, RAMOOPS_WITNESS_LEN);
-
-	bio = bio_alloc(ramoops_witness_bdev, 1, REQ_OP_READ,
-			GFP_KERNEL | __GFP_NOFAIL);
-	if (!bio) {
-		err = -ENOMEM;
-		goto out;
-	}
-	if (bio_add_page(bio, vmalloc_to_page(ramoops_witness_buf),
-			 RAMOOPS_WITNESS_LEN, 0) != RAMOOPS_WITNESS_LEN) {
-		bio_put(bio);
-		err = -EIO;
-		goto out;
-	}
-	bio->bi_iter.bi_sector = RAMOOPS_WITNESS_OFFSET >> SECTOR_SHIFT;
-	bio->bi_iter.bi_size = RAMOOPS_WITNESS_LEN;
-	submit_bio_wait(bio);
-	err = blk_status_to_errno(bio->bi_status);
-	if (!err)
-		memcpy(data, ramoops_witness_buf, len);
-	bio_put(bio);
-out:
-	mutex_unlock(&ramoops_witness_lock);
-	return err;
-}
-EXPORT_SYMBOL_GPL(ramoops_witness_read);
-
 static void ramoops_snap_start(struct ramoops_context *cxt)
 {
 	struct ramoops_snapper *s = &ramoops_snapper;
@@ -1759,7 +1534,6 @@ static void ramoops_snap_start(struct ramoops_context *cxt)
 		} else {
 			pr_warn("DIAG: reset buffer unavailable; capture disabled\n");
 		}
-		ramoops_process_trace_start(s);
 	}
 	wake_up_process(s->task);
 }
@@ -1769,7 +1543,6 @@ static void ramoops_snap_stop(void)
 {
 	struct ramoops_snapper *s = &ramoops_snapper;
 
-	ramoops_process_trace_stop(s);
 	if (s->reset_registered) {
 		unregister_reboot_notifier(&s->reset_nb);
 		s->reset_registered = false;

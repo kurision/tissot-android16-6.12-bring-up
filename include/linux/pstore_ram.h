@@ -58,10 +58,7 @@ void ramoops_diag_mark(loff_t slot, u32 tag, u32 val);
 void ramoops_reset_note(const char *what);
 
 /* Tissot diagnostic records in the reserved logdump partition. */
-int ramoops_witness_write(const void *data, size_t len);
-int ramoops_witness_read(void *data, size_t len);
 int ramoops_stage_write(unsigned int slot, const void *data, size_t len);
-int ramoops_qtrace_write(u64 seq, const void *data, size_t len);
 
 /* Disjoint records in the existing Tissot diagnostic page, committed last. */
 #define RAMOOPS_RESET_MARK_OFFSET	0x100
