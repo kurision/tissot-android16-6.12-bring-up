@@ -5,15 +5,6 @@
 
 #ifndef __Q6_INIT_H__
 #define __Q6_INIT_H__
-
-/*
- * The donor's qcom,enable-legacy-adsp-hacks (mi8953 audio.dtsi): the
- * msm8953 ADSP firmware predates the v4 ASM PCM formats and CVP API
- * version 2, so the DSP library falls back to the v3 formats and
- * CVP version 1 when the device tree root has the property.
- */
-extern bool msm_enable_legacy_adsp_hacks;
-
 int adsp_err_init(void);
 int adm_init(void);
 int afe_init(void);

@@ -5,25 +5,14 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/of.h>
 #include <dsp/q6_init.h>
 
 static bool msm_dsplib_off;
 module_param(msm_dsplib_off, bool, 0644);
 MODULE_PARM_DESC(msm_dsplib_off, "do not initialise the DSP library");
 
-bool msm_enable_legacy_adsp_hacks;
-
 static int __init audio_q6_init(void)
 {
-	struct device_node *root = of_find_node_by_path("/");
-
-	msm_enable_legacy_adsp_hacks =
-		of_property_read_bool(root, "qcom,enable-legacy-adsp-hacks");
-	of_node_put(root);
-	pr_info("audio: legacy ADSP hacks %s\n",
-		msm_enable_legacy_adsp_hacks ? "on" : "off");
-
 	if (msm_dsplib_off) {
 		pr_info("DIAG: the DSP library is off by the command line\n");
 		return 0;
