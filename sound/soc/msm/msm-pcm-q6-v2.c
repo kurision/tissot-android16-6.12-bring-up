@@ -1845,7 +1845,8 @@ static int msm_pcm_chmap_ctl_put(struct snd_kcontrol *kcontrol,
 		if (rtd) {
 			if (component) {
 				fe_id = rtd->dai_link->id;
-				chmixer_pspd = pdata ?
+				chmixer_pspd = pdata &&
+					fe_id < MSM_FRONTEND_DAI_MM_SIZE ?
 					pdata->chmixer_pspd[fe_id][SESSION_TYPE_RX] : NULL;
 
 				if (chmixer_pspd && chmixer_pspd->enable) {
@@ -2722,6 +2723,18 @@ static int msm_pcm_add_channel_mixer_controls(struct snd_soc_pcm_runtime *rtd)
 		pr_err("%s: platform data not populated\n", __func__);
 		return -EINVAL;
 	}
+
+	/*
+	 * The channel mixer state is kept per MultiMedia front end only
+	 * (pcm_device[] and chmixer_pspd[] are MSM_FRONTEND_DAI_MM_SIZE
+	 * long). The port also puts the VoIP and LSM links on this platform
+	 * (the donor had them on platforms this tree does not build), and
+	 * their ids are past the arrays: indexing with them overwrote
+	 * pdata->lock and the memory after pdata. Those front ends have no
+	 * channel mixer, as msm_pcm_get_chmixer() already says.
+	 */
+	if (rtd->dai_link->id > MSM_FRONTEND_DAI_MM_MAX_ID)
+		return 0;
 
 	if (pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream &&
 		!pdata->chmixer_pspd[rtd->dai_link->id][SESSION_TYPE_RX]) {
