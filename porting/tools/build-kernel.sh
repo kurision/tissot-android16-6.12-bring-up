@@ -398,7 +398,7 @@ BOOT="$OUT_DIR/arch/arm64/boot"
 cat "$BOOT/Image.gz" "$BOOT/dts/qcom/msm8953-xiaomi-tissot.dtb" > "$BOOT/Image.gz-dtb"
 
 # --- the /init, rebuilt from source every time ------------------------------
-"$CROSS_CC" -Os -static -DANDROID_CAPTURE -DANDROID_EARLY_LOGCAT \
+"$CROSS_CC" -Os -static -DANDROID_CAPTURE \
 	-DBOOT_DEADLINE_SECONDS=0 scripts/initramfs-diag/init.c \
 	-o "$SNAP/init-$RUN"
 

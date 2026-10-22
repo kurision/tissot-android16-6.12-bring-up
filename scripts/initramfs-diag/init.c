@@ -337,10 +337,16 @@ static int open_sink(int console, int *usb)
 	return out;
 }
 
+/*
+ * CLOCK_BOOTTIME, not CLOCK_MONOTONIC: the capture deadlines are wall-clock
+ * budgets, and CLOCK_MONOTONIC stops while the phone is suspended, so a
+ * 15-minute capture outlived 20 suspends and kept fsync()ing kmsg into
+ * logdump 22 minutes after boot.
+ */
 static time_t monotonic_seconds(void)
 {
 	struct timespec now;
-	clock_gettime(CLOCK_MONOTONIC, &now);
+	clock_gettime(CLOCK_BOOTTIME, &now);
 	return now.tv_sec;
 }
 
@@ -3219,7 +3225,12 @@ static int launch_android(char **argv)
 			fsync(out);
 		}
 		close(ready[1]);
-		if (dump_log(in, out, 900, 1, &sd, &sampler, primary_remaining)) {
+		/*
+		 * Three minutes covers boot to the lock screen. Every record is
+		 * fsync()ed, so a longer capture costs the eMMC megabytes a
+		 * second for the whole window.
+		 */
+		if (dump_log(in, out, 180, 1, &sd, &sampler, primary_remaining)) {
 			static const char failed[] = "\nDIAG: Android capture failed\n";
 			write_capture(out, &sd, failed, sizeof(failed) - 1, 1,
 				      primary_remaining);
