@@ -18,9 +18,18 @@ config SND_SOC_MSM_WCD9335
 	help
 	  The WCD9335 codec, which is the one fitted to tissot.
 
+config MSM_CDC_PINCTRL
+	tristate "CAF audio pin control"
+	depends on SND_SOC && PINCTRL
+	help
+	  Switches the audio pin groups ("qcom,msm-cdc-pinctrl" nodes)
+	  between their active and sleep states for the machine driver and
+	  the headset helper. Without it the MI2S lines are never muxed.
+
 config SND_SOC_MSM_WCD_MBHC
 	tristate "WCD microphone bias and headset control"
 	depends on SND_SOC
+	select MSM_CDC_PINCTRL
 	select WCD9XXX_CODEC_CORE
 	select SND_SOC_WCD_MBHC_ADC
 	select SND_SOC_WCD_MBHC_LEGACY
@@ -65,6 +74,7 @@ config SND_SOC_DIGITAL_CDC_LEGACY
 config SND_SOC_MSM8952
 	tristate "MSM8952 (SDM450) soundcard"
 	depends on SND_SOC && COMMON_CLK
+	select MSM_CDC_PINCTRL
 	select SND_SOC_MSM_WCD9335
 	select SND_SOC_SDM660_CDC
 	select WCD9XXX_CODEC_CORE

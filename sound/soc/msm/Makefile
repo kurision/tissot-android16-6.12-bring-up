@@ -88,6 +88,13 @@ digital_cdc_dlkm-y := msm-digital-cdc-legacy.o msm-digital-cdc-legacy-regmap.o
 obj-$(CONFIG_SND_SOC_DIGITAL_CDC_LEGACY) += digital_cdc_dlkm.o
 
 #
+# The audio pin groups' active and sleep states. The machine driver and
+# the headset helper switch them by node; CAF registered the driver from
+# the WCD9xxx core, which this board does not build.
+cdc_pinctrl_dlkm-y := msm-cdc-pinctrl.o
+obj-$(CONFIG_MSM_CDC_PINCTRL) += cdc_pinctrl_dlkm.o
+
+#
 # The microphone bias and headset control helper is built: it is not
 # the codec but the headset detect and bias regulator handling, and the
 # analog CDC uses it.
