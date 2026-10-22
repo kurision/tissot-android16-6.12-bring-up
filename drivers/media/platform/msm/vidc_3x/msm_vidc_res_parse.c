@@ -560,7 +560,7 @@ static int msm_vidc_load_cycles_per_mb_table(
 	struct device_node *child_node = NULL;
 	struct platform_device *pdev = res->pdev;
 
-	parent_node = of_find_node_by_name(pdev->dev.of_node,
+	parent_node = of_find_node_by_name(of_node_get(pdev->dev.of_node),
 			"qcom,clock-freq-tbl");
 	if (!parent_node) {
 		dprintk(VIDC_DBG, "Node qcom,clock-freq-tbl not found.\n");
@@ -1085,7 +1085,7 @@ static int msm_vidc_load_bus_table(struct msm_vidc_platform_resources *res)
 	}
 
 	gov_data = res->gov_data;
-	parent_node = of_find_node_by_name(pdev->dev.of_node,
+	parent_node = of_find_node_by_name(of_node_get(pdev->dev.of_node),
 			"qcom,bus-freq-table");
 	if (!parent_node) {
 		dprintk(VIDC_DBG, "Node qcom,bus-freq-table not found.\n");
@@ -1575,7 +1575,8 @@ static int msm_vidc_populate_legacy_context_bank(
 	}
 	pdev = res->pdev;
 
-	domains_parent_node = of_find_node_by_name(pdev->dev.of_node,
+	domains_parent_node = of_find_node_by_name(
+			of_node_get(pdev->dev.of_node),
 			"qcom,vidc-iommu-domains");
 	if (!domains_parent_node) {
 		dprintk(VIDC_DBG,
