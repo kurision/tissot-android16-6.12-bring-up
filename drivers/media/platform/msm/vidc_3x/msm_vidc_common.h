@@ -41,6 +41,8 @@ int msm_comm_set_color_format_constraints(struct msm_vidc_inst *inst,
 		struct msm_vidc_format_constraint *pix_constraint);
 struct buf_queue *msm_comm_get_vb2q(
 		struct msm_vidc_inst *inst, enum v4l2_buf_type type);
+void msm_comm_qbuf_flags(struct v4l2_buffer *b);
+void msm_comm_dqbuf_flags(struct buf_queue *q, struct v4l2_buffer *b);
 int msm_comm_try_state(struct msm_vidc_inst *inst, int state);
 int msm_comm_try_get_bufreqs(struct msm_vidc_inst *inst);
 int msm_comm_try_set_prop(struct msm_vidc_inst *inst,

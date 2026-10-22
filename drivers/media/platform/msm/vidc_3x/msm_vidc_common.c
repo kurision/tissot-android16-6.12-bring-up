@@ -799,6 +799,37 @@ exit:
 	return rc;
 }
 
+/*
+ * V4L2_QCOM_BUF_DROP_FRAME is the bit 6.12 uses for
+ * V4L2_BUF_FLAG_REQUEST_FD (include/uapi/linux/videodev2.h).  The flag
+ * goes from the driver to the client only: the fill buffer done handler
+ * sets it on a decoded frame the firmware dropped.
+ *
+ * On the way out, videobuf2 masks REQUEST_FD off the flags it copies to
+ * the client (V4L2_BUFFER_MASK_FLAGS in videobuf2-v4l2.c
+ * __fill_v4l2_buffer()), so the client would never learn that a frame
+ * was dropped; msm_comm_dqbuf_flags() puts the bit back from the
+ * buffer's own flags.
+ *
+ * On the way in, videobuf2 reads the bit as "this buffer belongs to a
+ * request" and rejects it with -EBADR on a queue without requests
+ * (vb2_queue_or_prepare_buf()), so a client that hands a dequeued
+ * buffer's flags back would fail to queue it; msm_comm_qbuf_flags()
+ * clears the bit, which the driver never reads on a queued buffer.
+ */
+void msm_comm_qbuf_flags(struct v4l2_buffer *b)
+{
+	b->flags &= ~V4L2_QCOM_BUF_DROP_FRAME;
+}
+
+void msm_comm_dqbuf_flags(struct buf_queue *q, struct v4l2_buffer *b)
+{
+	struct vb2_buffer *vb = vb2_get_buffer(&q->vb2_bufq, b->index);
+
+	if (vb && (to_vb2_v4l2_buffer(vb)->flags & V4L2_QCOM_BUF_DROP_FRAME))
+		b->flags |= V4L2_QCOM_BUF_DROP_FRAME;
+}
+
 struct buf_queue *msm_comm_get_vb2q(
 		struct msm_vidc_inst *inst, enum v4l2_buf_type type)
 {

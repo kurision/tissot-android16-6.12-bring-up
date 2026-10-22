@@ -4628,6 +4628,7 @@ int msm_venc_qbuf(struct msm_vidc_inst *inst, struct v4l2_buffer *b)
 		return -EINVAL;
 	}
 	mutex_lock(&q->lock);
+	msm_comm_qbuf_flags(b);
 	rc = vb2_qbuf(&q->vb2_bufq, NULL, b);
 	mutex_unlock(&q->lock);
 	if (rc)
@@ -4648,6 +4649,8 @@ int msm_venc_dqbuf(struct msm_vidc_inst *inst, struct v4l2_buffer *b)
 	}
 	mutex_lock(&q->lock);
 	rc = vb2_dqbuf(&q->vb2_bufq, b, true);
+	if (!rc)
+		msm_comm_dqbuf_flags(q, b);
 	mutex_unlock(&q->lock);
 	if (rc)
 		dprintk(VIDC_DBG, "Failed to dqbuf, %d\n", rc);

@@ -1054,6 +1054,7 @@ int msm_vdec_qbuf(struct msm_vidc_inst *inst, struct v4l2_buffer *b)
 	 * codec does not use the media controller, and the requests
 	 * API is not used either, so there is none to pass.
 	 */
+	msm_comm_qbuf_flags(b);
 	rc = vb2_qbuf(&q->vb2_bufq, NULL, b);
 	mutex_unlock(&q->lock);
 
@@ -1075,6 +1076,8 @@ int msm_vdec_dqbuf(struct msm_vidc_inst *inst, struct v4l2_buffer *b)
 	}
 	mutex_lock(&q->lock);
 	rc = vb2_dqbuf(&q->vb2_bufq, b, true);
+	if (!rc)
+		msm_comm_dqbuf_flags(q, b);
 	mutex_unlock(&q->lock);
 	if (rc)
 		dprintk(VIDC_DBG, "Failed to dqbuf, %d\n", rc);
