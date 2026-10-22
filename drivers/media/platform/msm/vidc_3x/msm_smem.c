@@ -103,7 +103,15 @@ static int msm_dma_get_device_address(struct dma_buf *dbuf, unsigned long align,
 		 *		DMA_ATTR_IOMMU_USE_UPSTREAM_HINT;
 		 */
 
-		table = dma_buf_map_attachment(attach, DMA_BIDIRECTIONAL);
+		/*
+		 * The dma-buf locking convention: an importer that does not
+		 * hold the reservation lock uses the _unlocked variants,
+		 * which take it; the plain ones expect the caller to hold
+		 * it (drivers/dma-buf/dma-buf.c dma_resv_assert_held()).
+		 * This driver never takes it.
+		 */
+		table = dma_buf_map_attachment_unlocked(attach,
+							DMA_BIDIRECTIONAL);
 		if (IS_ERR_OR_NULL(table)) {
 			rc = PTR_ERR(table) ?: -ENOMEM;
 			dprintk(VIDC_ERR, "Failed to map table\n");
@@ -138,7 +146,7 @@ static int msm_dma_get_device_address(struct dma_buf *dbuf, unsigned long align,
 
 	return 0;
 mem_map_sg_failed:
-	dma_buf_unmap_attachment(attach, table, DMA_BIDIRECTIONAL);
+	dma_buf_unmap_attachment_unlocked(attach, table, DMA_BIDIRECTIONAL);
 mem_map_table_failed:
 	dma_buf_detach(dbuf, attach);
 mem_buf_size_mismatch:
@@ -166,7 +174,7 @@ static int msm_dma_put_device_address(u32 flags,
 	}
 
 	trace_msm_smem_buffer_iommu_op_start("UNMAP", 0, 0, 0, 0, 0);
-	dma_buf_unmap_attachment(mapping_info->attach,
+	dma_buf_unmap_attachment_unlocked(mapping_info->attach,
 		mapping_info->table, DMA_BIDIRECTIONAL);
 	dma_buf_detach(mapping_info->buf, mapping_info->attach);
 	trace_msm_smem_buffer_iommu_op_end("UNMAP", 0, 0, 0, 0, 0);
@@ -491,9 +499,10 @@ static int alloc_dma_mem(size_t size, u32 align, u32 flags,
 		dma_buf_begin_cpu_access(dbuf, DMA_BIDIRECTIONAL);
 		/*
 		 * 6.12's dma_buf_vmap() returns the error code and fills
-		 * the map in; the address is in map.vaddr.
+		 * the map in; the address is in map.vaddr.  The _unlocked
+		 * variant takes the reservation lock, as above.
 		 */
-		if (dma_buf_vmap(dbuf, &mem->map)) {
+		if (dma_buf_vmap_unlocked(dbuf, &mem->map)) {
 			dprintk(VIDC_ERR,
 				"Failed to map shared mem in kernel\n");
 			rc = -EIO;
@@ -530,8 +539,8 @@ static int free_dma_mem(struct msm_smem *mem)
 	}
 
 	if (mem->map.vaddr) {
-		dma_buf_vunmap(mem->dma_buf, &mem->map);
-		mem->map.vaddr = NULL;
+		dma_buf_vunmap_unlocked(mem->dma_buf, &mem->map);
+		iosys_map_clear(&mem->map);
 		dma_buf_end_cpu_access(mem->dma_buf, DMA_BIDIRECTIONAL);
 	}
 
