@@ -215,6 +215,19 @@ static int qcom_icc_rpm_set(struct qcom_icc_node *qn, u64 *bw)
 	for (rpm_ctx = 0; rpm_ctx < QCOM_SMD_RPM_STATE_NUM; rpm_ctx++) {
 		bw_bps = icc_units_to_bps(bw[rpm_ctx]);
 
+		/*
+		 * The RPM keeps the last request per resource, and this is
+		 * called for both ends of every path on every icc_set_bw(),
+		 * whether or not the node's sum changed. A peak-only vote
+		 * (a CPU's per-OPP DDR vote) never changes the sum, yet each
+		 * frequency change sent the same values again: on tissot
+		 * about 600 votes and 940 RPM acknowledgment interrupts a
+		 * second while the CPU scaled, which kept CPUs 4-7 out of
+		 * their deep idle state.
+		 */
+		if (qn->rpm_bw_valid[rpm_ctx] && qn->rpm_bw[rpm_ctx] == bw_bps)
+			continue;
+
 		if (qn->mas_rpm_id != -1) {
 			ret = qcom_icc_rpm_smd_send(rpm_ctx,
 						    RPM_BUS_MASTER_REQ,
@@ -238,6 +251,10 @@ static int qcom_icc_rpm_set(struct qcom_icc_node *qn, u64 *bw)
 				return ret;
 			}
 		}
+
+		/* Cache the value only after the RPM has accepted it */
+		qn->rpm_bw[rpm_ctx] = bw_bps;
+		qn->rpm_bw_valid[rpm_ctx] = true;
 	}
 
 	return 0;
