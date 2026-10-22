@@ -8,6 +8,9 @@
 #include <linux/of_platform.h>
 #include <linux/msm_kgsl.h>
 #include <linux/of_device.h>
+#include <linux/cpu.h>
+#include <linux/interrupt.h>
+#include <linux/irq.h>
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
@@ -750,6 +753,145 @@ void kgsl_pwrctrl_set_constraint(struct kgsl_device *device,
 	}
 }
 EXPORT_SYMBOL(kgsl_pwrctrl_set_constraint);
+
+/*
+ * The GPU's CPU latency vote (pm_qos_active_latency while the GPU runs,
+ * pm_qos_wakeup_latency while it wakes) is for the CPU that takes the GPU
+ * interrupt. CAF voted it as a PM_QOS_REQ_AFFINE_IRQ request, which
+ * applied it only to the CPUs in that interrupt's affinity mask; 6.12 has
+ * no such request type, and a global request kept every CPU out of the
+ * idle states the vote rules out (on tissot CPUs 4-7's cpu-sleep-1, 541 us,
+ * against the 501 us active vote) whenever the GPU ran. A resume latency
+ * request on each CPU device does what the affine request did: cpuidle
+ * takes the lower of a CPU's own resume latency and the global limit.
+ * The CPUs follow the interrupt's affinity, which msm_irqbalance moves.
+ */
+static void _cpu_latency_apply(struct kgsl_pwrctrl *pwr)
+{
+	/* PM_QOS_DEFAULT_VALUE is -1 on this kernel; "no limit" is a release too */
+	bool release = pwr->cpu_qos_value < 0 ||
+		       pwr->cpu_qos_value >= PM_QOS_CPU_LATENCY_DEFAULT_VALUE;
+	int cpu;
+
+	for_each_possible_cpu(cpu) {
+		s32 target = PM_QOS_RESUME_LATENCY_NO_CONSTRAINT;
+
+		if (!dev_pm_qos_request_active(&pwr->cpu_qos[cpu]))
+			continue;
+		if (!release && cpumask_test_cpu(cpu, &pwr->cpu_qos_mask))
+			target = pwr->cpu_qos_value;
+		dev_pm_qos_update_request(&pwr->cpu_qos[cpu], target);
+	}
+}
+
+static void _cpu_latency_affinity_notify(struct irq_affinity_notify *notify,
+					 const cpumask_t *mask)
+{
+	struct kgsl_pwrctrl *pwr = container_of(notify, struct kgsl_pwrctrl,
+						cpu_qos_notify);
+	struct kgsl_device *device = container_of(pwr, struct kgsl_device,
+						  pwrctrl);
+
+	mutex_lock(&pwr->cpu_qos_lock);
+	cpumask_copy(&pwr->cpu_qos_mask, mask);
+	_cpu_latency_apply(pwr);
+	mutex_unlock(&pwr->cpu_qos_lock);
+
+	dev_info(device->dev, "CPU latency vote follows CPUs %*pbl\n",
+		 cpumask_pr_args(mask));
+}
+
+static void _cpu_latency_affinity_release(struct kref *ref)
+{
+}
+
+/**
+ * kgsl_pwrctrl_cpu_latency_init() - Add the per-CPU latency requests
+ * @device: Pointer to the kgsl_device struct
+ *
+ * Return: 0 on success or a negative error code.
+ */
+int kgsl_pwrctrl_cpu_latency_init(struct kgsl_device *device)
+{
+	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
+	const struct cpumask *affinity;
+	int cpu, ret;
+
+	pwr->cpu_qos = kcalloc(nr_cpu_ids, sizeof(*pwr->cpu_qos), GFP_KERNEL);
+	if (!pwr->cpu_qos)
+		return -ENOMEM;
+
+	mutex_init(&pwr->cpu_qos_lock);
+	pwr->cpu_qos_value = PM_QOS_DEFAULT_VALUE;
+
+	affinity = irq_get_affinity_mask(pwr->interrupt_num);
+	cpumask_copy(&pwr->cpu_qos_mask, affinity ? affinity : cpu_possible_mask);
+
+	for_each_possible_cpu(cpu) {
+		struct device *cpu_dev = get_cpu_device(cpu);
+
+		if (!cpu_dev)
+			continue;
+		ret = dev_pm_qos_add_request(cpu_dev, &pwr->cpu_qos[cpu],
+					     DEV_PM_QOS_RESUME_LATENCY,
+					     PM_QOS_RESUME_LATENCY_NO_CONSTRAINT);
+		if (ret < 0)
+			dev_warn(device->dev, "no CPU%d latency request: %d\n",
+				 cpu, ret);
+	}
+
+	pwr->cpu_qos_notify.notify = _cpu_latency_affinity_notify;
+	pwr->cpu_qos_notify.release = _cpu_latency_affinity_release;
+	ret = irq_set_affinity_notifier(pwr->interrupt_num,
+					&pwr->cpu_qos_notify);
+	if (ret)
+		dev_warn(device->dev,
+			 "GPU IRQ affinity not followed (%d); vote stays on CPUs %*pbl\n",
+			 ret, cpumask_pr_args(&pwr->cpu_qos_mask));
+
+	return 0;
+}
+
+/**
+ * kgsl_pwrctrl_cpu_latency_exit() - Remove the per-CPU latency requests
+ * @device: Pointer to the kgsl_device struct
+ */
+void kgsl_pwrctrl_cpu_latency_exit(struct kgsl_device *device)
+{
+	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
+	int cpu;
+
+	if (!pwr->cpu_qos)
+		return;
+
+	irq_set_affinity_notifier(pwr->interrupt_num, NULL);
+
+	for_each_possible_cpu(cpu)
+		if (dev_pm_qos_request_active(&pwr->cpu_qos[cpu]))
+			dev_pm_qos_remove_request(&pwr->cpu_qos[cpu]);
+
+	kfree(pwr->cpu_qos);
+	pwr->cpu_qos = NULL;
+}
+
+/**
+ * kgsl_pwrctrl_cpu_latency_set() - Vote the GPU's CPU latency
+ * @device: Pointer to the kgsl_device struct
+ * @value: the allowed CPU latency in microseconds, or PM_QOS_DEFAULT_VALUE
+ * to drop the vote
+ */
+void kgsl_pwrctrl_cpu_latency_set(struct kgsl_device *device, s32 value)
+{
+	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
+
+	if (!pwr->cpu_qos)
+		return;
+
+	mutex_lock(&pwr->cpu_qos_lock);
+	pwr->cpu_qos_value = value;
+	_cpu_latency_apply(pwr);
+	mutex_unlock(&pwr->cpu_qos_lock);
+}
 
 /**
  * kgsl_pwrctrl_update_l2pc() - Update existing qos request
@@ -2967,8 +3109,7 @@ _slumber(struct kgsl_device *device)
 		 * 501 us vote stayed for the rest of the boot and kept CPUs
 		 * 4-7 out of cpu-sleep-1 (541 us) whenever the GPU was idle.
 		 */
-		cpu_latency_qos_update_request(&device->pwrctrl.pm_qos_req_dma,
-					       PM_QOS_DEFAULT_VALUE);
+		kgsl_pwrctrl_cpu_latency_set(device, PM_QOS_DEFAULT_VALUE);
 		break;
 	case KGSL_STATE_SUSPEND:
 		complete_all(&device->hwaccess_gate);

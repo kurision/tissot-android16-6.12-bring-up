@@ -7,6 +7,7 @@
 #define __KGSL_PWRCTRL_H
 
 #include <linux/clk.h>
+#include <linux/interrupt.h>
 #include <linux/pm_qos.h>
 #include <soc/qcom/cx_ipeak.h>
 
@@ -155,7 +156,12 @@ struct gpu_cx_ipeak_client {
  * @l2pc_cpus_mask - mask to avoid L2PC on masked CPUs
  * @l2pc_update_queue - Boolean flag to avoid L2PC on masked CPUs at queue time
  * @l2pc_cpus_qos - qos structure to avoid L2PC on CPUs
- * @pm_qos_req_dma - the power management quality of service structure
+ * @cpu_qos - per-CPU resume latency requests, nr_cpu_ids entries; the GPU's
+ * CPU latency vote, applied to the CPUs the GPU interrupt is affine to
+ * @cpu_qos_mask - the CPUs the vote applies to (the GPU interrupt's affinity)
+ * @cpu_qos_value - the current vote in microseconds, or PM_QOS_DEFAULT_VALUE
+ * @cpu_qos_lock - serialises the vote against an affinity change
+ * @cpu_qos_notify - follows the GPU interrupt's affinity
  * @pm_qos_active_latency - allowed CPU latency in microseconds when active
  * @pm_qos_cpu_mask_latency - allowed CPU mask latency in microseconds
  * @input_disable - To disable GPU wakeup on touch input event
@@ -215,7 +221,11 @@ struct kgsl_pwrctrl {
 	unsigned int l2pc_cpus_mask;
 	bool l2pc_update_queue;
 	struct pm_qos_request l2pc_cpus_qos;
-	struct pm_qos_request pm_qos_req_dma;
+	struct dev_pm_qos_request *cpu_qos;
+	struct cpumask cpu_qos_mask;
+	s32 cpu_qos_value;
+	struct mutex cpu_qos_lock; /* protects cpu_qos, its mask and value */
+	struct irq_affinity_notify cpu_qos_notify;
 	unsigned int pm_qos_active_latency;
 	unsigned int pm_qos_cpu_mask_latency;
 	unsigned int pm_qos_wakeup_latency;
@@ -287,6 +297,9 @@ int kgsl_active_count_wait(struct kgsl_device *device, int count);
 void kgsl_pwrctrl_busy_time(struct kgsl_device *device, u64 time, u64 busy);
 void kgsl_pwrctrl_set_constraint(struct kgsl_device *device,
 			struct kgsl_pwr_constraint *pwrc, uint32_t id);
+int kgsl_pwrctrl_cpu_latency_init(struct kgsl_device *device);
+void kgsl_pwrctrl_cpu_latency_exit(struct kgsl_device *device);
+void kgsl_pwrctrl_cpu_latency_set(struct kgsl_device *device, s32 value);
 void kgsl_pwrctrl_update_l2pc(struct kgsl_device *device,
 			unsigned long timeout_us);
 int kgsl_pwrctrl_set_default_gpu_pwrlevel(struct kgsl_device *device);

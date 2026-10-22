@@ -5476,11 +5476,12 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	spin_lock_init(&device->timelines_lock);
 
 	/*
-	 * adreno_start/stop update this request; 6.12 has no per-IRQ
-	 * affine request type, so it applies to all CPUs.
+	 * adreno_start() and _slumber() vote through these; see
+	 * kgsl_pwrctrl_cpu_latency_init() for why they are per CPU.
 	 */
-	cpu_latency_qos_add_request(&device->pwrctrl.pm_qos_req_dma,
-				    PM_QOS_DEFAULT_VALUE);
+	status = kgsl_pwrctrl_cpu_latency_init(device);
+	if (status)
+		goto error_close_mmu;
 
 	/* Initialize the snapshot engine */
 	kgsl_device_snapshot_init(device);
@@ -5517,7 +5518,7 @@ void kgsl_device_platform_remove(struct kgsl_device *device)
 
 	kgsl_pwrctrl_uninit_sysfs(device);
 
-	cpu_latency_qos_remove_request(&device->pwrctrl.pm_qos_req_dma);
+	kgsl_pwrctrl_cpu_latency_exit(device);
 
 	idr_destroy(&device->context_idr);
 	idr_destroy(&device->timelines);
