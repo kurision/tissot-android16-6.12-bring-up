@@ -41,14 +41,6 @@ enum btsco_rates {
 	RATE_16KHZ_ID,
 };
 
-/* dummy definition of deprecated FE DAI's*/
-enum {
-	MSM_FRONTEND_DAI_CS_VOICE = 39,
-	MSM_FRONTEND_DAI_VOICE2,
-	MSM_FRONTEND_DAI_VOLTE,
-	MSM_FRONTEND_DAI_VOWLAN,
-};
-
 static int msm8952_auxpcm_rate = 8000;
 static int msm_btsco_rate = BTSCO_RATE_8KHZ;
 static int msm_btsco_ch = 1;
@@ -3708,6 +3700,38 @@ static struct snd_soc_card *msm8952_populate_sndcard_dailinks(
 	len1 = ARRAY_SIZE(msm8952_dai);
 	memcpy(msm8952_dai_links, msm8952_dai, sizeof(msm8952_dai));
 	dailink = msm8952_dai_links;
+
+	/*
+	 * As the donor does: with qcom,use-legacy-voice-cpu-dais the voice
+	 * links use the legacy front ends, which the ROM's mixer paths route
+	 * ("PRI_MI2S_RX_Voice Mixer CSVoice", "Voice_Tx Mixer ..."). Without
+	 * it CS voice ran on VoiceMMode1, which those paths never connect,
+	 * so preparing the call's PCM failed with -EINVAL.
+	 */
+	if (of_property_read_bool(dev->of_node,
+				  "qcom,use-legacy-voice-cpu-dais")) {
+		int i;
+
+		dev_info(dev, "%s(): Use legacy voice cpu dais\n", __func__);
+		for (i = 0; i < len1; i++) {
+			switch (dailink[i].id) {
+			case MSM_FRONTEND_DAI_CS_VOICE:
+				dailink[i].cpus->dai_name = "CS-VOICE";
+				break;
+			case MSM_FRONTEND_DAI_VOICE2:
+				dailink[i].cpus->dai_name = "Voice2";
+				break;
+			case MSM_FRONTEND_DAI_VOLTE:
+				dailink[i].cpus->dai_name = "VoLTE";
+				break;
+			case MSM_FRONTEND_DAI_VOWLAN:
+				dailink[i].cpus->dai_name = "VoWLAN";
+				break;
+			default:
+				break;
+			}
+		}
+	}
 
 	if (snd_card_val == INT_SND_CARD) {
 		memcpy(dailink + len1, msm_int_be_dai, sizeof(msm_int_be_dai));

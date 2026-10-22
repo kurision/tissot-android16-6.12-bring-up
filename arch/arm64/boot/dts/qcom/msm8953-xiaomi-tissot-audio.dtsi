@@ -78,6 +78,12 @@
 		status = "okay";
 		compatible = "qcom,msm8952-audio-codec";
 		qcom,model = "msm8953-snd-card-mtp";
+		/*
+		 * The donor's tissot audio.dtsi: the ROM's mixer paths route
+		 * calls through the legacy voice front ends (CS-VOICE, Voice2,
+		 * VoLTE, VoWLAN).
+		 */
+		qcom,use-legacy-voice-cpu-dais;
 		reg = <0xc051000 0x4>,
 			<0xc051004 0x4>,
 			<0xc055000 0x4>,
