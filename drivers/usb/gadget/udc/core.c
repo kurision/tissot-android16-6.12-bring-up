@@ -1719,8 +1719,6 @@ static void gadget_unbind_driver(struct device *dev)
 int usb_gadget_register_driver_owner(struct usb_gadget_driver *driver,
 		struct module *owner, const char *mod_name)
 {
-	struct usb_udc *udc;
-	bool any = false;
 	int ret;
 
 	if (!driver || !driver->bind || !driver->setup)
@@ -1741,19 +1739,6 @@ int usb_gadget_register_driver_owner(struct usb_gadget_driver *driver,
 	if (!driver->is_bound) {
 		if (driver->match_existing_only) {
 			pr_warn("%s: couldn't find an available UDC or it's busy\n",
-					driver->function);
-			/* DEBUG run123: name the reason, udc_lock held */
-			pr_warn("%s: DIAG123 wanted UDC '%s'\n", driver->function,
-				driver->udc_name ?: "(any)");
-			list_for_each_entry(udc, &udc_list, list) {
-				any = true;
-				pr_warn("%s: DIAG123 udc %s bound=%s\n",
-					driver->function, dev_name(&udc->dev),
-					udc->driver ? (udc->driver->function ?: "?") :
-					"none");
-			}
-			if (!any)
-				pr_warn("%s: DIAG123 no UDC registered\n",
 					driver->function);
 			ret = -EBUSY;
 		} else {
