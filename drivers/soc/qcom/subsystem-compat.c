@@ -61,7 +61,7 @@ void *msm_subsystem_get_with_fwname(struct device *dev, const char *name,
 	struct device_node *node;
 	struct reserved_mem *rmem;
 	const struct firmware *mdt;
-	size_t fw_size;
+	ssize_t fw_size;
 	char fwname[64];
 	int ret;
 
