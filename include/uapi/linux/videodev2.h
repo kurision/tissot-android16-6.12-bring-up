@@ -829,6 +829,11 @@ struct v4l2_pix_format {
 #define V4L2_PIX_FMT_PISP_COMP2_BGGR	v4l2_fourcc('P', 'C', '2', 'B') /* PiSP 8-bit mode 2 compressed BGGR bayer */
 #define V4L2_PIX_FMT_PISP_COMP2_MONO	v4l2_fourcc('P', 'C', '2', 'M') /* PiSP 8-bit mode 2 compressed monochrome */
 
+/* The pixel formats the CAF video codec's capability table uses. */
+#define V4L2_PIX_FMT_DIVX       v4l2_fourcc('D', 'I', 'V', 'X') /* DIVX  */
+#define V4L2_PIX_FMT_DIVX_311   v4l2_fourcc('D', 'I', 'V', '3') /* DIVX311 */
+#define V4L2_PIX_FMT_HEVC_HYBRID v4l2_fourcc('H', 'V', 'C', 'H')
+
 /*
  * Qualcomm pixel formats used by the CAF video codec (vidc_3x).
  *
@@ -922,6 +927,37 @@ struct v4l2_pix_format {
 	v4l2_fourcc('P', '0', '1', '0') /* Y/CbCr 4:2:0 P10 */
 #define V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010_VENUS \
 	v4l2_fourcc('Q', 'P', '1', '0') /* Y/CbCr 4:2:0 P10 Venus*/
+
+/*
+ * Decoder commands of the CAF video codec, with the donor's values.
+ * They are the private commands of the V4L2 "dec" ioctl class.
+ */
+#define V4L2_DEC_CMD_START       (0)
+#define V4L2_DEC_CMD_STOP        (1)
+#define V4L2_DEC_CMD_PAUSE       (2)
+#define V4L2_DEC_CMD_RESUME      (3)
+#define V4L2_CMD_FLUSH      (4)
+#define V4L2_CMD_SESSION_CONTINUE (5)
+#define V4L2_DEC_QCOM_CMD_RECONFIG_HINT  (6)
+
+/* Flags for V4L2_DEC_CMD_START */
+#define V4L2_DEC_CMD_START_MUTE_AUDIO	(1 << 0)
+
+/* Flags for V4L2_DEC_CMD_PAUSE */
+#define V4L2_DEC_CMD_PAUSE_TO_BLACK	(1 << 0)
+
+/* Flags for V4L2_DEC_CMD_STOP */
+#define V4L2_DEC_CMD_STOP_TO_BLACK	(1 << 0)
+#define V4L2_DEC_CMD_STOP_IMMEDIATELY	(1 << 1)
+
+/* Flags for V4L2_CMD_FLUSH */
+#define V4L2_CMD_FLUSH_OUTPUT  (1 << 0)
+#define V4L2_CMD_FLUSH_CAPTURE (1 << 1)
+
+#define V4L2_QCOM_CMD_FLUSH	V4L2_CMD_FLUSH
+#define V4L2_QCOM_CMD_SESSION_CONTINUE	V4L2_CMD_SESSION_CONTINUE
+#define V4L2_QCOM_CMD_FLUSH_OUTPUT	V4L2_CMD_FLUSH_OUTPUT
+#define V4L2_QCOM_CMD_FLUSH_CAPTURE	V4L2_CMD_FLUSH_CAPTURE
 
 /* SDR formats - used only for Software Defined Radio devices */
 #define V4L2_SDR_FMT_CU8          v4l2_fourcc('C', 'U', '0', '8') /* IQ u8 */
@@ -1321,6 +1357,24 @@ static inline __u64 v4l2_timeval_to_ns(const struct timeval *tv)
 #define V4L2_BUF_FLAG_LAST			0x00100000
 /* request_fd is valid */
 #define V4L2_BUF_FLAG_REQUEST_FD		0x00800000
+
+/*
+ * Buffer flags and event flags that 6.12 removed, with the values the
+ * donor has.  The CAF video codec uses them, and the vendor OMX service
+ * is compiled against the donor's values, so they are ABI here.
+ */
+#define V4L2_BUF_FLAG_END_OF_SUBFRAME		0x00000080
+#define V4L2_BUF_FLAG_CODECCONFIG		0x00020000
+#define V4L2_BUF_FLAG_DATA_CORRUPT		0x00400000
+#define V4L2_BUF_INPUT_UNSUPPORTED		0x01000000
+#define V4L2_BUF_FLAG_EOS			0x02000000
+#define V4L2_BUF_FLAG_READONLY		0x04000000
+#define V4L2_BUF_FLAG_PERF_MODE		0x20000000
+
+/* Event flags of the CAF video codec. */
+#define V4L2_EVENT_BITDEPTH_FLAG	0x1
+#define V4L2_EVENT_PICSTRUCT_FLAG	0x2
+#define V4L2_EVENT_COLOUR_SPACE_FLAG	0x4
 
 /*
  * Buffer flags used by the CAF video codec (vidc_3x).  The values

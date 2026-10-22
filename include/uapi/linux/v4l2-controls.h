@@ -414,6 +414,7 @@ enum v4l2_mpeg_video_bitrate_mode {
 enum v4l2_mpeg_video_header_mode {
 	V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE			= 0,
 	V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME	= 1,
+	V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_I_FRAME	= 2,
 
 };
 #define V4L2_CID_MPEG_VIDEO_MAX_REF_PIC			(V4L2_CID_CODEC_BASE+217)
@@ -425,6 +426,7 @@ enum v4l2_mpeg_video_multi_slice_mode {
 	V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE		= 0,
 	V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_MB		= 1,
 	V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_BYTES	= 2,
+	V4L2_MPEG_VIDEO_MULTI_SLICE_GOB			= 3,
 #ifndef __KERNEL__
 	/* Kept for backwards compatibility reasons. Stupid typo... */
 	V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_MB		= 1,
@@ -4332,6 +4334,15 @@ enum v4l2_mpeg_vidc_video_h264_vui_timing_info {
 	V4L2_MPEG_VIDC_VIDEO_H264_VUI_TIMING_INFO_DISABLED = 0,
 	V4L2_MPEG_VIDC_VIDEO_H264_VUI_TIMING_INFO_ENABLED = 1
 };
+/*
+ * The CAF video codec's controls are MPEG-class controls.  6.12
+ * keeps the V4L2_CTRL_CLASS_MPEG name for user space only, so the
+ * kernel side uses V4L2_CTRL_CLASS_CODEC, which is the same value.
+ */
+#ifdef __KERNEL__
+#define V4L2_CTRL_CLASS_MPEG		V4L2_CTRL_CLASS_CODEC
+#endif
+
 /* MPEG-compression definitions kept for backwards compatibility */
 #ifndef __KERNEL__
 #define V4L2_CTRL_CLASS_MPEG            V4L2_CTRL_CLASS_CODEC
