@@ -596,6 +596,16 @@
 	qcom,gpu-quirk-lmloadkill-disable;
 
 	/*
+	 * The thermal zone kgsl's temp attribute reports
+	 * (kgsl_pwrctrl.c temp_show(), /sys/class/kgsl/kgsl-3d0/temp). The
+	 * donor's msm8953 gpu node had none, so the file read INT_MIN
+	 * (-2147483648) there as well; apps that show the GPU temperature
+	 * read it. gpu-thermal is the msm8953.dtsi zone on the GPU's TSENS
+	 * sensor.
+	 */
+	qcom,tzone-names = "gpu-thermal";
+
+	/*
 	 * Donor GPU clock names, verbatim from the 4.19 gpu node
 	 * (msm8953-gpu.dtsi:128-130). _get_clocks() matches DT clock-names
 	 * against the driver's table (kgsl_pwrctrl.c:37-56) and skips every
