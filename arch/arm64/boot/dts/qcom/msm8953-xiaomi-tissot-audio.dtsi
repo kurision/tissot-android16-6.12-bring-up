@@ -116,9 +116,16 @@
 		 * looks the names up in this list and takes the phandle at
 		 * that index, and this kernel's ASoC matches a link's codec
 		 * by its device node.
+		 *
+		 * The speaker is not on the CDC: it is the MAX98927 on the
+		 * quinary MI2S, which the ROM's speaker paths route to
+		 * (QUIN_MI2S_RX Audio Mixer). The donor's machine driver put
+		 * it on that link by board id; here it is named.
 		 */
-		asoc-codec-names = "msm-dig-codec", "analog-codec";
-		asoc-codec = <&msm_digital_codec>, <&pmic_analog_codec>;
+		asoc-codec-names = "msm-dig-codec", "analog-codec",
+				   "quin-spk-amp";
+		asoc-codec = <&msm_digital_codec>, <&pmic_analog_codec>,
+			     <&max98927_codec>;
 
 		/*
 		 * The platform and CPU DAI names the machine driver uses. This

@@ -28,6 +28,12 @@
 
 #define MSM_INT_DIGITAL_CODEC "msm-dig-codec"
 #define PMIC_INT_ANALOG_CODEC "analog-codec"
+/*
+ * The speaker amplifier on the quinary MI2S, named in the device tree's
+ * asoc-codec-names list. tissot carries a MAX98927 there.
+ */
+#define MSM_QUIN_SPK_CODEC "quin-spk-amp"
+#define MSM_QUIN_SPK_CODEC_DAI "max98927-aif1"
 #define EXT_SMART_PA "ext-smart-pa"
 
 enum btsco_rates {
@@ -1516,6 +1522,40 @@ static void msm_quat_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
 	}
 }
 
+static bool msm_quin_has_spk_amp(struct snd_soc_pcm_runtime *rtd)
+{
+	return !strcmp(snd_soc_rtd_to_codec(rtd, 0)->name,
+		       MSM_QUIN_SPK_CODEC_DAI);
+}
+
+static int msm_quin_mi2s_snd_hw_params(struct snd_pcm_substream *substream,
+				       struct snd_pcm_hw_params *params)
+{
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	int ret;
+
+	ret = msm_mi2s_snd_hw_params(substream, params);
+	if (ret || !msm_quin_has_spk_amp(rtd) ||
+	    substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
+		return ret;
+
+	/*
+	 * The MI2S bit clock is always two slots of mi2s_rx_bits_per_sample
+	 * (get_mi2s_rx_clk_val()), whatever the channel count and sample
+	 * width of the stream: 16-bit slots for S16_LE and 32-bit slots for
+	 * the 24-bit formats. The amplifier derives its BCLK/LRCLK ratio from
+	 * channels * width otherwise, which is 16 for the mono stream and 48
+	 * for S24_LE, so tell it the slot layout the SoC actually sends.
+	 * Both slots go to the speaker mono mix, as on the donor
+	 * (reg_channel_map "mono" in its max98927.c).
+	 */
+	ret = snd_soc_dai_set_tdm_slot(snd_soc_rtd_to_codec(rtd, 0), 0, 0x3,
+				       2, mi2s_rx_bits_per_sample);
+	if (ret < 0)
+		pr_err("%s: set slots codec dai failed %d\n", __func__, ret);
+	return ret;
+}
+
 static int msm_quin_mi2s_snd_startup(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
@@ -1557,6 +1597,19 @@ static int msm_quin_mi2s_snd_startup(struct snd_pcm_substream *substream)
 		ret = snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_CBS_CFS);
 		if (ret < 0)
 			pr_err("%s: set fmt cpu dai failed\n", __func__);
+	}
+	if (msm_quin_has_spk_amp(rtd)) {
+		/*
+		 * The SoC drives the bit and frame clocks; the amplifier
+		 * takes them as standard I2S.
+		 */
+		ret = snd_soc_dai_set_fmt(snd_soc_rtd_to_codec(rtd, 0),
+					  SND_SOC_DAIFMT_I2S |
+					  SND_SOC_DAIFMT_NB_NF |
+					  SND_SOC_DAIFMT_CBC_CFC);
+		if (ret < 0)
+			pr_err("%s: set fmt codec dai failed %d\n",
+			       __func__, ret);
 	}
 	return ret;
 err:
@@ -1764,7 +1817,7 @@ static struct snd_soc_ops msm8952_quat_mi2s_be_ops = {
 
 static struct snd_soc_ops msm8952_quin_mi2s_be_ops = {
 	.startup = msm_quin_mi2s_snd_startup,
-	.hw_params = msm_mi2s_snd_hw_params,
+	.hw_params = msm_quin_mi2s_snd_hw_params,
 	.shutdown = msm_quin_mi2s_snd_shutdown,
 };
 
@@ -1804,6 +1857,13 @@ struct snd_soc_dai_link_component dlc_tx1[] = {
 	{
 		.of_node = NULL,
 		.dai_name  = "msm_anlg_cdc_i2s_tx1",
+	},
+};
+
+struct snd_soc_dai_link_component dlc_quin_rx[] = {
+	{
+		.of_node = NULL,
+		.dai_name = MSM_QUIN_SPK_CODEC_DAI,
 	},
 };
 
@@ -3122,6 +3182,8 @@ static struct snd_soc_dai_link msm8952_quin_dai_link[] = {
 
 		.name = LPASS_BE_QUIN_MI2S_RX,
 		.stream_name = "Quinary MI2S Playback",
+		.codecs = dlc_quin_rx,
+		.num_codecs = ARRAY_SIZE(dlc_quin_rx),
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_QUINARY_MI2S_RX,
@@ -3447,6 +3509,28 @@ static int msm8952_populate_dai_link_component_of_node(
 		 * check rejects a link with no codec at all, so give the
 		 * backends the dummy codec the front ends already use.
 		 */
+		/*
+		 * The quinary MI2S speaker link: the donor's machine driver
+		 * put tissot's MAX98927 there by board id
+		 * (techpack/audio-legacy/asoc/msm8952.c, the
+		 * XIAOMI_MSM8953_MACH_TISSOT case). Here the device tree names
+		 * the amplifier; a board without one keeps the dummy codec.
+		 */
+		if (dai_link[i].codecs == dlc_quin_rx) {
+			index = of_property_match_string(cdev->of_node,
+							 "asoc-codec-names",
+							 MSM_QUIN_SPK_CODEC);
+			phandle = index < 0 ? NULL :
+				  of_parse_phandle(cdev->of_node,
+						   "asoc-codec", index);
+			if (phandle) {
+				dai_link[i].codecs[0].of_node = phandle;
+			} else {
+				dai_link[i].codecs = NULL;
+				dai_link[i].num_codecs = 0;
+			}
+		}
+
 		if (!dai_link[i].num_codecs) {
 			dai_link[i].codecs = &snd_soc_dummy_dlc;
 			dai_link[i].num_codecs = 1;
