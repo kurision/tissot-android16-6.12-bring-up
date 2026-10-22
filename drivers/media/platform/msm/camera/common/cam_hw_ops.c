@@ -19,6 +19,7 @@
 #include <linux/msm-bus-board.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
+#include <linux/platform_device.h>
 
 /*
  * The regulator corner numbers of the donor's RPM SMD regulator header

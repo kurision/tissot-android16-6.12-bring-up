@@ -1301,7 +1301,7 @@ static int32_t msm_sensor_driver_get_dt_data(struct msm_sensor_ctrl_t *s_ctrl)
 
 	/* Read gpio information */
 	rc = legacy_msm_sensor_driver_get_gpio_data
-		(&(sensordata->power_info.gpio_conf), of_node);
+		(&(sensordata->power_info.gpio_conf), of_node, &pdev->dev);
 	if (rc < 0) {
 		pr_err("failed: legacy_msm_sensor_driver_get_gpio_data rc %d", rc);
 		goto FREE_VREG_DATA;

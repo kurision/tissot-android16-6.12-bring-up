@@ -890,7 +890,7 @@ static int32_t msm_ois_platform_probe(struct platform_device *pdev)
 	}
 
 	rc = legacy_msm_sensor_driver_get_gpio_data(&(msm_ois_t->gconf),
-		(&pdev->dev)->of_node);
+		(&pdev->dev)->of_node, &pdev->dev);
 	if (-ENODEV == rc) {
 		pr_notice("No valid OIS GPIOs data\n");
 	} else if (rc < 0) {

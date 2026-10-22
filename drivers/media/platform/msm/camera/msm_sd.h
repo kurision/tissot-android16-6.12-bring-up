@@ -18,6 +18,8 @@
 #define _MSM_SD_H
 
 #include <media/v4l2-subdev.h>
+#include <linux/gpio/consumer.h>
+#include <linux/of.h>
 #include <media/msmb_camera-legacy.h>
 
 /*
@@ -26,6 +28,12 @@
  * the legacy one, so the flag is always set.
  */
 extern bool camera_legacy_enable;
+
+/*
+ * The donor's camera stack flag: the donor carried two stacks for the
+ * same silicon and chose between them per board.  This tree has only
+ * the legacy one, so the flag is always set.
+ */
 
 /* NOTE: this header file should ONLY be included by subdev drivers */
 
@@ -107,4 +115,35 @@ struct v4l2_subdev *msm_sd_get_subdev(struct v4l2_subdev *sd,
 void msm_sd_put_subdev(struct v4l2_subdev *sd, struct v4l2_subdev *put);
 void legacy_msm_cam_copy_v4l2_subdev_fops(struct v4l2_file_operations *d1);
 
+
+/*
+ * The legacy of_gpio helpers of the kernel are gone in 6.12.  The camera
+ * reads the numbers of the gpios a node names in its "gpios" property:
+ * a qcom tlmm specifier is the phandle of the controller and the flags,
+ * so the property has two cells per gpio.
+ */
+static inline int msm_camera_gpio_count(struct device *dev,
+	struct device_node *np)
+{
+	int count = of_property_count_u32_elems(np, "gpios");
+
+	return count > 0 ? count / 2 : 0;
+}
+
+static inline int msm_camera_gpio_number(struct device *dev,
+	struct device_node *np, int index)
+{
+	struct gpio_desc *desc;
+	int gpio;
+
+	desc = devm_fwnode_gpiod_get_index(dev, of_fwnode_handle(np), NULL,
+		index, GPIOD_ASIS, "camera");
+	if (IS_ERR(desc))
+		return PTR_ERR(desc);
+
+	gpio = desc_to_gpio(desc);
+	devm_gpiod_put(dev, desc);
+
+	return gpio;
+}
 #endif /*_MSM_SD_H */

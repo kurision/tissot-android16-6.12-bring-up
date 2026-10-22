@@ -17,6 +17,7 @@
 #include <linux/of.h>
 #include <linux/of_gpio.h>
 #include <linux/of_platform.h>
+#include <linux/platform_device.h>
 #include <linux/pinctrl/consumer.h>
 #include "msm_sd.h"
 #include "msm_cci.h"
@@ -1876,7 +1877,7 @@ static int32_t msm_cci_init_gpio_params(struct cci_device *cci_dev)
 	struct device_node *of_node = cci_dev->pdev->dev.of_node;
 	struct gpio *gpio_tbl = NULL;
 
-	cci_dev->cci_gpio_tbl_size = tbl_size = of_gpio_count(of_node);
+	cci_dev->cci_gpio_tbl_size = tbl_size = msm_camera_gpio_count(&cci_dev->pdev->dev, of_node);
 	CDBG("%s gpio count %d\n", __func__, tbl_size);
 	if (!tbl_size) {
 		pr_err("%s:%d gpio count 0\n", __func__, __LINE__);
@@ -1891,7 +1892,7 @@ static int32_t msm_cci_init_gpio_params(struct cci_device *cci_dev)
 	}
 
 	for (i = 0; i < tbl_size; i++) {
-		gpio_tbl[i].gpio = of_get_gpio(of_node, i);
+		gpio_tbl[i].gpio = msm_camera_gpio_number(&cci_dev->pdev->dev, of_node, i);
 		CDBG("%s gpio_tbl[%d].gpio = %d\n", __func__, i,
 			gpio_tbl[i].gpio);
 	}

@@ -499,7 +499,7 @@ static int32_t msm_led_get_dt_data(struct device_node *of_node,
 			return -ENOMEM;
 		gconf = power_info->gpio_conf;
 
-		gpio_array_size = of_gpio_count(of_node);
+		gpio_array_size = msm_camera_gpio_count(dev, of_node);
 		CDBG("%s gpio count %d\n", __func__, gpio_array_size);
 
 		if (gpio_array_size) {
@@ -511,7 +511,7 @@ static int32_t msm_led_get_dt_data(struct device_node *of_node,
 				goto ERROR4;
 			}
 			for (i = 0; i < gpio_array_size; i++) {
-				gpio_array[i] = of_get_gpio(of_node, i);
+				gpio_array[i] = msm_camera_gpio_number(dev, of_node, i);
 				CDBG("%s gpio_array[%d] = %d\n", __func__, i,
 					gpio_array[i]);
 			}

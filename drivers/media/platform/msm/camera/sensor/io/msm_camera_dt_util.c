@@ -1439,7 +1439,7 @@ int legacy_msm_cam_sensor_handle_reg_gpio(int seq_val,
 
 int32_t legacy_msm_sensor_driver_get_gpio_data(
 	struct msm_camera_gpio_conf **gpio_conf,
-	struct device_node *of_node)
+	struct device_node *of_node, struct device *dev)
 {
 	int32_t                      rc = 0, i = 0;
 	uint16_t                    *gpio_array = NULL;
@@ -1452,7 +1452,7 @@ int32_t legacy_msm_sensor_driver_get_gpio_data(
 		return -EINVAL;
 	}
 
-	gpio_array_size = of_gpio_count(of_node);
+	gpio_array_size = msm_camera_gpio_count(dev, of_node);
 	CDBG("gpio count %d\n", gpio_array_size);
 	if (gpio_array_size <= 0)
 		return -ENODEV;
@@ -1469,7 +1469,7 @@ int32_t legacy_msm_sensor_driver_get_gpio_data(
 		goto FREE_GPIO_CONF;
 
 	for (i = 0; i < gpio_array_size; i++) {
-		gpio_array[i] = of_get_gpio(of_node, i);
+		gpio_array[i] = msm_camera_gpio_number(dev, of_node, i);
 		CDBG("gpio_array[%d] = %d", i, gpio_array[i]);
 	}
 

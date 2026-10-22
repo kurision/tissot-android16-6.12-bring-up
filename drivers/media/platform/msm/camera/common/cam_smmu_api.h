@@ -17,6 +17,7 @@
 #include <linux/dma-buf.h>
 #include <linux/dma-direction.h>
 #include <linux/of_platform.h>
+#include <linux/platform_device.h>
 #include <linux/iommu.h>
 #include <linux/random.h>
 #include <linux/spinlock_types.h>

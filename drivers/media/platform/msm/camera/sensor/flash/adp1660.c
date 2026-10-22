@@ -77,12 +77,12 @@ static const struct i2c_device_id adp1660_i2c_id[] = {
 
 static int msm_flash_adp1660_i2c_probe(struct i2c_client *client)
 {
-	if (!id) {
-		pr_err("msm_flash_adp1660_i2c_probe: id is NULL");
-		id = adp1660_i2c_id;
-	}
-
-	return legacy_msm_flash_i2c_probe(client, id);
+	/*
+	 * The donor took the device id from the probe's argument; this
+	 * tree's I2C driver has the old probe signature, so the driver's
+	 * own id table is the source.
+	 */
+	return legacy_msm_flash_i2c_probe(client);
 }
 
 static struct i2c_driver adp1660_i2c_driver = {

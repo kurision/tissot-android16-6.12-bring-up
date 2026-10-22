@@ -129,6 +129,10 @@ int32_t legacy_msm_camera_qup_i2c_read_seq(struct msm_camera_i2c_client *client,
 		|| num_byte == 0)
 		return rc;
 
+	buf = kmalloc(client->addr_type + num_byte, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
 	if (num_byte > I2C_REG_DATA_MAX) {
 		S_I2C_DBG("%s: Error num_byte:0x%x exceeds 8K max supported:0x%x\n",
 				__func__, num_byte, I2C_REG_DATA_MAX);
@@ -175,7 +179,7 @@ int32_t legacy_msm_camera_qup_i2c_write(struct msm_camera_i2c_client *client,
 	enum msm_camera_i2c_data_type data_type)
 {
 	int32_t rc = -EFAULT;
-	unsigned char buf[client->addr_type+data_type];
+	unsigned char buf[4];
 	uint8_t len = 0;
 
 	if ((client->addr_type != MSM_CAMERA_I2C_BYTE_ADDR
@@ -222,13 +226,17 @@ int32_t legacy_msm_camera_qup_i2c_write_seq(struct msm_camera_i2c_client *client
 	uint32_t addr, uint8_t *data, uint32_t num_byte)
 {
 	int32_t rc = -EFAULT;
-	unsigned char buf[client->addr_type+num_byte];
+	unsigned char *buf;
 	uint8_t len = 0, i = 0;
 
 	if ((client->addr_type != MSM_CAMERA_I2C_BYTE_ADDR
 		&& client->addr_type != MSM_CAMERA_I2C_WORD_ADDR)
 		|| num_byte == 0)
 		return rc;
+
+	buf = kmalloc(client->addr_type + num_byte, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
 
 	S_I2C_DBG("%s reg addr = 0x%x num bytes: %d\n",
 			  __func__, addr, num_byte);
@@ -259,6 +267,7 @@ int32_t legacy_msm_camera_qup_i2c_write_seq(struct msm_camera_i2c_client *client
 	rc = msm_camera_qup_i2c_txdata(client, buf, len+num_byte);
 	if (rc < 0)
 		S_I2C_DBG("%s fail\n", __func__);
+	kfree(buf);
 	return rc;
 }
 

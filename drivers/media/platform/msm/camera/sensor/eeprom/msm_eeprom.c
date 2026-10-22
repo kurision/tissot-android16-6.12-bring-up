@@ -824,7 +824,13 @@ static int msm_eeprom_i2c_probe(struct i2c_client *client)
 	e_ctrl->eeprom_v4l2_subdev_ops = &msm_eeprom_subdev_ops;
 	e_ctrl->eeprom_mutex = &msm_eeprom_mutex;
 	CDBG("%s client = 0x%pK\n", __func__, client);
-	e_ctrl->eboard_info = (struct msm_eeprom_board_info *)(id->driver_data);
+	/*
+	 * The donor took the board information from the device id the
+	 * probe was called with.  This tree's I2C driver has the old
+	 * probe signature, so the driver's own id table is the source.
+	 */
+	e_ctrl->eboard_info = (struct msm_eeprom_board_info *)
+		(msm_eeprom_i2c_id[0].driver_data);
 	if (!e_ctrl->eboard_info) {
 		pr_err("%s:%d board info NULL\n", __func__, __LINE__);
 		rc = -EINVAL;
@@ -1007,7 +1013,7 @@ static int msm_eeprom_get_dt_data(struct msm_eeprom_ctrl_t *e_ctrl)
 		goto ERROR2;
 	}
 	gconf = power_info->gpio_conf;
-	gpio_array_size = of_gpio_count(of_node);
+	gpio_array_size = msm_camera_gpio_count(&e_ctrl->pdev->dev, of_node);
 	CDBG("%s gpio count %d\n", __func__, gpio_array_size);
 
 	if (gpio_array_size > 0) {
@@ -1018,7 +1024,7 @@ static int msm_eeprom_get_dt_data(struct msm_eeprom_ctrl_t *e_ctrl)
 			goto ERROR3;
 		}
 		for (i = 0; i < gpio_array_size; i++) {
-			gpio_array[i] = of_get_gpio(of_node, i);
+			gpio_array[i] = msm_camera_gpio_number(&e_ctrl->pdev->dev, of_node, i);
 			CDBG("%s gpio_array[%d] = %d\n", __func__, i,
 				gpio_array[i]);
 		}

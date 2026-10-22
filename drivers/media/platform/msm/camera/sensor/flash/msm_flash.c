@@ -178,7 +178,6 @@ int32_t msm_flashlight_create_classdev(struct platform_device *pdev,
 #endif
 
 #if IS_ENABLED(CONFIG_MACH_XIAOMI_MSM8953)
-static int msm_torch_led_num;
 #endif
 
 static int32_t msm_torch_create_classdev(struct platform_device *pdev,
@@ -188,7 +187,6 @@ static int32_t msm_torch_create_classdev(struct platform_device *pdev,
     int32_t i = 0;
     struct msm_flash_ctrl_t *fctrl =
         (struct msm_flash_ctrl_t *)data;
-    int is_ysl = (xiaomi_msm8953_mach_get() == XIAOMI_MSM8953_MACH_YSL);
 
     if (!fctrl) {
         pr_err("Invalid fctrl\n");
@@ -201,21 +199,11 @@ static int32_t msm_torch_create_classdev(struct platform_device *pdev,
             CDBG("%s:%d legacy_msm_torch_brightness_set for torch %d",
                 __func__, __LINE__, i);
             
-            if (is_ysl) {
-                legacy_msm_torch_brightness_set(&msm_torch_led[msm_torch_led_num + i],
-                    LED_OFF);
-            } else {
-                legacy_msm_torch_brightness_set(&msm_torch_led[i],
-                    LED_OFF);
-            }
+            legacy_msm_torch_brightness_set(&msm_torch_led[i],
+                LED_OFF);
 
-            if (is_ysl) {
-                rc = led_classdev_register(&pdev->dev,
-                    &msm_torch_led[msm_torch_led_num + i]);
-            } else {
-                rc = led_classdev_register(&pdev->dev,
-                    &msm_torch_led[i]);
-            }
+            rc = led_classdev_register(&pdev->dev,
+                &msm_torch_led[i]);
             
             if (rc) {
                 pr_err("Failed to register %d led dev. rc = %d\n",
@@ -223,9 +211,6 @@ static int32_t msm_torch_create_classdev(struct platform_device *pdev,
                 return rc;
             }
 
-            if (is_ysl) {
-                msm_torch_led_num++;
-            }
         } else {
             pr_err("Invalid fctrl->torch_trigger[%d]\n", i);
             return -EINVAL;
@@ -477,8 +462,8 @@ static int32_t msm_flash_i2c_release(
 {
 	int32_t rc = 0;
 
-	if ((&flash_ctrl->power_info == NULL) ||
-		(&flash_ctrl->flash_i2c_client == NULL)) {
+	if (!flash_ctrl->power_info.client ||
+		!flash_ctrl->flash_i2c_client) {
 		pr_err("%s:%d failed: %pK %pK\n",
 			__func__, __LINE__, &flash_ctrl->power_info,
 			&flash_ctrl->flash_i2c_client);
@@ -790,8 +775,7 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
     switch (flash_data->cfg_type) {
     case CFG_FLASH_INIT:
         rc = msm_flash_init_prepare(flash_ctrl, flash_data);
-        if (is_vince)
-            flashlight_brightness_value = 0;
+        flashlight_brightness_value = 0;
         break;
     case CFG_FLASH_RELEASE:
         if (flash_ctrl->flash_state != MSM_CAMERA_FLASH_RELEASE) {
@@ -1140,7 +1124,8 @@ static int32_t msm_flash_get_dt_data(struct device_node *of_node,
 
 	/* Read the gpio information from device tree */
 	rc = legacy_msm_sensor_driver_get_gpio_data(
-		&(fctrl->power_info.gpio_conf), of_node);
+		&(fctrl->power_info.gpio_conf), of_node,
+		fctrl->pdev);
 	if (-ENODEV == rc) {
 		pr_notice("No valid flash GPIOs data\n");
 		rc = 0;

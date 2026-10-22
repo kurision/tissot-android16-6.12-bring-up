@@ -68,5 +68,5 @@ int legacy_msm_camera_pinctrl_init
 
 int32_t legacy_msm_sensor_driver_get_gpio_data(
 	struct msm_camera_gpio_conf **gpio_conf,
-	struct device_node *of_node);
+	struct device_node *of_node, struct device *dev);
 #endif

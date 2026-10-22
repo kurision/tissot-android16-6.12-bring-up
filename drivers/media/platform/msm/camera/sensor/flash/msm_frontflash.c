@@ -1017,15 +1017,15 @@ static int32_t msm_frontflash_get_dt_data(struct device_node *of_node,
 
 	/* Read the gpio information from device tree */
 	rc = legacy_msm_sensor_driver_get_gpio_data(
-		&(fctrl->power_info.gpio_conf), of_node);
+		&(fctrl->power_info.gpio_conf), of_node, fctrl->msm_sd.sd.dev);
 	if (rc < 0) {
 		pr_err("%s:%d legacy_msm_sensor_driver_get_gpio_data failed rc %d\n",
 			__func__, __LINE__, rc);
 		return rc;
 	}
 
-	front_pinctrl.en_gpio = of_get_named_gpio_flags(of_node, "gpios",
-                 0, &front_pinctrl.en_gpio_flags);
+	front_pinctrl.en_gpio = msm_camera_gpio_number(fctrl->msm_sd.sd.dev,
+		of_node, 0);
 
 	if (gpio_is_valid(front_pinctrl.en_gpio)) {
         	rc = gpio_request(front_pinctrl.en_gpio, "front_flash_en_gpio");

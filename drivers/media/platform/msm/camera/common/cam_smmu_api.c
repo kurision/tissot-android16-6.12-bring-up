@@ -16,6 +16,7 @@
 #include <linux/dma-direction.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/platform_device.h>
 #include <linux/iommu.h>
 #include <linux/slab.h>
 #include <linux/dma-mapping.h>
