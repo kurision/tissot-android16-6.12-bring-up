@@ -54,7 +54,13 @@ static int devbw_set_bw(struct msm_devbw *d, unsigned long mbps)
 	if (!d->path)
 		return 0;
 
-	ret = icc_set_bw(d->path, kbps, kbps);
+	/*
+	 * Peak only, like the donor: its devfreq_devbw.c voted the
+	 * bandwidth as ib and the governor's ab, which is 0 for the
+	 * governors this node uses. The average is a sum over every
+	 * client of the path, the peak a maximum.
+	 */
+	ret = icc_set_bw(d->path, 0, kbps);
 	if (ret)
 		return ret;
 

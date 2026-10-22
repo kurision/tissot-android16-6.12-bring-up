@@ -2326,33 +2326,45 @@
 		 * table (../oc-test/arch/arm64/boot/dts/vendor/qcom/msm8953.dtsi:1094),
 		 * and the unit is the one the power HAL of the ROM uses
 		 * (769, 5126, 7759 and 9887 in /vendor/etc/powerhint.json).
+		 * The donor's comments give 769 ... 7104; the macro, which
+		 * is the donor's too, gives the values below, which are the
+		 * ones the device reports in available_frequencies.
 		 */
 		ddr_bw_opp_table: opp-table-ddr {
 			compatible = "operating-points-v2";
 
-			BW_OPP_ENTRY( 100, 8); /*  769 MB/s */
-			BW_OPP_ENTRY( 211, 8); /* 1611 MB/s */
-			BW_OPP_ENTRY( 278, 8); /* 2124 MB/s */
+			BW_OPP_ENTRY( 100, 8); /*  762 MB/s */
+			BW_OPP_ENTRY( 211, 8); /* 1609 MB/s */
+			BW_OPP_ENTRY( 278, 8); /* 2120 MB/s */
 			BW_OPP_ENTRY( 384, 8); /* 2929 MB/s */
-			BW_OPP_ENTRY( 428, 8); /* 3221 MB/s */
-			BW_OPP_ENTRY( 556, 8); /* 4248 MB/s */
-			BW_OPP_ENTRY( 671, 8); /* 5126 MB/s */
-			BW_OPP_ENTRY( 748, 8); /* 5712 MB/s */
-			BW_OPP_ENTRY( 806, 8); /* 6152 MB/s */
-			BW_OPP_ENTRY( 846, 8); /* 6445 MB/s */
-			BW_OPP_ENTRY( 930, 8); /* 7104 MB/s */
+			BW_OPP_ENTRY( 428, 8); /* 3265 MB/s */
+			BW_OPP_ENTRY( 556, 8); /* 4241 MB/s */
+			BW_OPP_ENTRY( 671, 8); /* 5119 MB/s */
+			BW_OPP_ENTRY( 748, 8); /* 5706 MB/s */
+			BW_OPP_ENTRY( 806, 8); /* 6149 MB/s */
+			BW_OPP_ENTRY( 846, 8); /* 6454 MB/s */
+			BW_OPP_ENTRY( 930, 8); /* 7095 MB/s */
 		};
 
 		/*
 		 * The devfreq device of the bandwidth. Its "frequency" is
 		 * the bandwidth of the path, the operating points are the
 		 * table above, and the vote goes to the interconnect
-		 * framework, which hands the result to the RPM. The
-		 * governor is the driver's default, "performance", the one
-		 * the donor's node asks for.
+		 * framework, which hands the result to the RPM.
+		 *
+		 * The CPU's own bandwidth follows its frequency
+		 * (opp-peak-kBps in msm8953-cpu.dtsi), so this node only
+		 * carries the power HAL's boosts: "powersave" votes
+		 * min_freq, which the HAL raises for touch and launch
+		 * boosts and lowers again afterwards. The donor's
+		 * "performance" held the DDR at its maximum whenever the
+		 * CPU was active, and its post_boot never switched it (the
+		 * ROM's script targets soc:qcom,cpubw, a node the donor
+		 * renamed in 676e1fda9e3a).
 		 */
 		cpu_cpu_ddr_bw: qcom,cpu-cpu-ddr-bw {
 			compatible = "qcom,devbw";
+			governor = "powersave";
 
 			operating-points-v2 = <&ddr_bw_opp_table>;
 

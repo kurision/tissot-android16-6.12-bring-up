@@ -81,6 +81,7 @@ config MSM_DEVBW
 	depends on INTERCONNECT_QCOM
 	depends on PM_DEVFREQ
 	select DEVFREQ_GOV_PERFORMANCE
+	select DEVFREQ_GOV_POWERSAVE
 	help
 	  This adds the devfreq device of the bandwidth between the
 	  application processor and the memory. Its frequency is the
