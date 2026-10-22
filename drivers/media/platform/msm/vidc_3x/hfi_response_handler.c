@@ -1978,8 +1978,9 @@ static void hfi_process_sys_get_prop_image_version(
 
 	smem_table_ptr = qcom_smem_get(QCOM_SMEM_HOST_ANY,
 				SMEM_IMAGE_VERSION_TABLE, &smem_block_size);
-	if ((smem_image_index_venus + version_string_size) <= smem_block_size &&
-			smem_table_ptr)
+	if (!IS_ERR(smem_table_ptr) &&
+			(smem_image_index_venus + version_string_size) <=
+			smem_block_size)
 		memcpy(smem_table_ptr + smem_image_index_venus,
 				str_image_version, version_string_size);
 }

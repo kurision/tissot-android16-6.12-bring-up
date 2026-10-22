@@ -22,6 +22,14 @@
 #include <media/msm_vidc.h>
 #include "msm_vidc_resources.h"
 
+/*
+ * The SMEM item of the image version table. The donor took it from CAF's
+ * <soc/qcom/smem.h>; upstream has no shared definition and its users
+ * (socinfo.c, the Venus driver's hfi_msgs.c) define it locally.
+ * qcom_smem_get() returns an ERR_PTR, never NULL, on failure.
+ */
+#define SMEM_IMAGE_VERSION_TABLE 469
+
 #define CONTAINS(__a, __sz, __t) ({\
 	int __rc = __t >= __a && \
 			__t < __a + __sz; \

@@ -4411,7 +4411,7 @@ static int venus_hfi_get_fw_info(void *dev, struct hal_fw_info *fw_info)
 	smem_table_ptr = qcom_smem_get(QCOM_SMEM_HOST_ANY,
 					SMEM_IMAGE_VERSION_TABLE,
 					&smem_block_size);
-	if (smem_table_ptr &&
+	if (!IS_ERR(smem_table_ptr) &&
 			((smem_image_index_venus +
 			  VENUS_VERSION_LENGTH) <= smem_block_size))
 		memcpy(version,
