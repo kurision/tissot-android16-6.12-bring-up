@@ -103,7 +103,7 @@ static int msm_devbw_probe(struct platform_device *pdev)
 	 * interconnect provider is a platform device itself, so the
 	 * lookup can fail with -EPROBE_DEFER until it has probed.
 	 */
-	d->path = of_icc_get(dev, "cpu-ddr");
+	d->path = devm_of_icc_get(dev, "cpu-ddr");
 	if (IS_ERR(d->path))
 		return dev_err_probe(dev, PTR_ERR(d->path),
 				     "no cpu-ddr interconnect path\n");
@@ -111,7 +111,7 @@ static int msm_devbw_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, -ENODEV,
 				     "no interconnect path for the cpu\n");
 
-	ret = dev_pm_opp_of_add_table(dev);
+	ret = devm_pm_opp_of_add_table(dev);
 	if (ret)
 		return dev_err_probe(dev, ret, "no operating points\n");
 
@@ -123,23 +123,11 @@ static int msm_devbw_probe(struct platform_device *pdev)
 	if (of_property_read_string(dev->of_node, "governor", &gov_name))
 		gov_name = "performance";
 
-	d->df = devfreq_add_device(dev, p, gov_name, NULL);
-	if (IS_ERR(d->df)) {
-		icc_put(d->path);
-		d->path = NULL;
+	d->df = devm_devfreq_add_device(dev, p, gov_name, NULL);
+	if (IS_ERR(d->df))
 		return PTR_ERR(d->df);
-	}
 
 	return 0;
-}
-
-static void msm_devbw_remove(struct platform_device *pdev)
-{
-	struct msm_devbw *d = dev_get_drvdata(&pdev->dev);
-
-	devfreq_remove_device(d->df);
-	icc_put(d->path);
-	d->path = NULL;
 }
 
 static const struct of_device_id msm_devbw_match[] = {
@@ -149,7 +137,6 @@ static const struct of_device_id msm_devbw_match[] = {
 
 static struct platform_driver msm_devbw_driver = {
 	.probe = msm_devbw_probe,
-	.remove = msm_devbw_remove,
 	.driver = {
 		.name = "msm-devbw",
 		.of_match_table = msm_devbw_match,
