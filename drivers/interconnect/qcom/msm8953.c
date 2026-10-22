@@ -1315,16 +1315,16 @@ static struct platform_driver msm8953_noc_driver = {
 		.name = "qnoc-msm8953",
 		.of_match_table = msm8953_noc_of_match,
 		/*
-		 * The bandwidth of the fabrics is the maximum until the
-		 * state of the interconnect is synchronised, because the
-		 * framework keeps the initial bandwidth of every node as
-		 * the floor of its aggregated bandwidth
-		 * (drivers/interconnect/core.c:293) and this driver cannot
-		 * read it back from the hardware. The synchronisation
-		 * drops the floor, and with it the maximum, so the buses
-		 * run at what the clients asked for.
+		 * No .sync_state yet. Without it the framework keeps every
+		 * node's initial bandwidth, INT_MAX, as the floor of its
+		 * aggregate (drivers/interconnect/core.c:293), so the fabrics
+		 * stay at their maximum. That is what WCNSS, the crypto
+		 * engine behind the secure world's firmware authentication,
+		 * the SD/eMMC controllers, USB and IPA rely on: none of them
+		 * votes on this port. With icc_sync_state the unvoted paths
+		 * dropped, and WLAN and Bluetooth (both on WCNSS) were gone
+		 * from run347 on. Add it back only once those masters vote.
 		 */
-		.sync_state = icc_sync_state,
 	},
 };
 
