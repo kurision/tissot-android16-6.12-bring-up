@@ -526,7 +526,7 @@ static int ion_sgl_sync_range(struct device *dev, struct scatterlist *sgl,
 {
 	int i;
 	struct scatterlist *sg;
-	unsigned int len = 0;
+	unsigned long len = 0, total = 0;
 	dma_addr_t sg_dma_addr;
 
 	for_each_sg(sgl, sg, nents, i) {
@@ -541,20 +541,28 @@ static int ion_sgl_sync_range(struct device *dev, struct scatterlist *sgl,
 		}
 	}
 
+	for_each_sg(sgl, sg, nents, i)
+		total += sg->length;
+	if (offset > total || length > total - offset)
+		return -EINVAL;
+	if (!length)
+		return 0;
+
+	/* A merged DMA segment can cover discontiguous physical chunks. */
 	for_each_sg(sgl, sg, nents, i) {
-		unsigned int sg_offset, sg_left, size = 0;
+		unsigned long sg_offset, sg_left, size;
 
 		if (i == 0)
 			sg_dma_addr = sg_dma_address(sg);
 
-		len += sg_dma_len(sg);
+		len += sg->length;
 		if (len <= offset) {
-			sg_dma_addr += sg_dma_len(sg);
+			sg_dma_addr += sg->length;
 			continue;
 		}
 
 		sg_left = len - offset;
-		sg_offset = sg_dma_len(sg) - sg_left;
+		sg_offset = sg->length - sg_left;
 
 		size = (length < sg_left) ? length : sg_left;
 		if (for_cpu)
@@ -566,7 +574,7 @@ static int ion_sgl_sync_range(struct device *dev, struct scatterlist *sgl,
 
 		offset += size;
 		length -= size;
-		sg_dma_addr += sg_dma_len(sg);
+		sg_dma_addr += sg->length;
 
 		if (length == 0)
 			break;
@@ -628,7 +636,7 @@ static int __ion_dma_buf_begin_cpu_access(struct dma_buf *dmabuf,
 
 		if (sync_only_mapped)
 			ret = ion_sgl_sync_mapped(dev, table->sgl,
-						  table->nents, &buffer->vmas,
+						  table->orig_nents, &buffer->vmas,
 						  direction, true);
 		else
 			dma_sync_sg_for_cpu(dev, table->sgl,
@@ -662,7 +670,7 @@ static int __ion_dma_buf_begin_cpu_access(struct dma_buf *dmabuf,
 
 		if (sync_only_mapped)
 			tmp = ion_sgl_sync_mapped(a->dev, a->table->sgl,
-						  a->table->nents,
+						  a->table->orig_nents,
 						  &buffer->vmas,
 						  direction, true);
 		else
@@ -719,7 +727,7 @@ static int __ion_dma_buf_end_cpu_access(struct dma_buf *dmabuf,
 
 		if (sync_only_mapped)
 			ret = ion_sgl_sync_mapped(dev, table->sgl,
-						  table->nents, &buffer->vmas,
+						  table->orig_nents, &buffer->vmas,
 						  direction, false);
 		else
 			dma_sync_sg_for_device(dev, table->sgl,
@@ -752,7 +760,7 @@ static int __ion_dma_buf_end_cpu_access(struct dma_buf *dmabuf,
 
 		if (sync_only_mapped)
 			tmp = ion_sgl_sync_mapped(a->dev, a->table->sgl,
-						  a->table->nents,
+						  a->table->orig_nents,
 						  &buffer->vmas, direction,
 						  false);
 		else
@@ -818,7 +826,7 @@ static int ion_dma_buf_begin_cpu_access_partial(struct dma_buf *dmabuf,
 		struct device *dev = buffer->heap->priv;
 		struct sg_table *table = buffer->sg_table;
 
-		ret = ion_sgl_sync_range(dev, table->sgl, table->nents,
+		ret = ion_sgl_sync_range(dev, table->sgl, table->orig_nents,
 					 offset, len, dir, true);
 
 		if (!ret)
@@ -845,7 +853,7 @@ static int ion_dma_buf_begin_cpu_access_partial(struct dma_buf *dmabuf,
 			continue;
 		}
 
-		tmp = ion_sgl_sync_range(a->dev, a->table->sgl, a->table->nents,
+		tmp = ion_sgl_sync_range(a->dev, a->table->sgl, a->table->orig_nents,
 					 offset, len, dir, true);
 
 		if (!tmp) {
@@ -897,7 +905,7 @@ static int ion_dma_buf_end_cpu_access_partial(struct dma_buf *dmabuf,
 		struct device *dev = buffer->heap->priv;
 		struct sg_table *table = buffer->sg_table;
 
-		ret = ion_sgl_sync_range(dev, table->sgl, table->nents,
+		ret = ion_sgl_sync_range(dev, table->sgl, table->orig_nents,
 					 offset, len, direction, false);
 
 		if (!ret)
@@ -925,7 +933,7 @@ static int ion_dma_buf_end_cpu_access_partial(struct dma_buf *dmabuf,
 			continue;
 		}
 
-		tmp = ion_sgl_sync_range(a->dev, a->table->sgl, a->table->nents,
+		tmp = ion_sgl_sync_range(a->dev, a->table->sgl, a->table->orig_nents,
 					 offset, len, direction, false);
 
 		if (!tmp) {
