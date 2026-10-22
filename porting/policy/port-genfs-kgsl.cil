@@ -152,3 +152,18 @@
 ;; directory and its maps) would land on the generic sysfs type.  A prefix
 ;; label covers the uio directory and everything under it.
 (genfscon sysfs "/devices/platform/soc@0/f2d00000.qcom,rmtfs_sharedmem/uio" (u object_r sysfs_uio_file ((s0) (s0))))
+
+;; ---------------
+;; The CAF video codec's device names on 6.12: label them with the type the
+;; ROM already gives them.
+;;
+;; The vendor file_contexts label the names under the CAF 4.19 path
+;;
+;;   /sys/devices(/platform)?/soc/[a-f0-9]+.qcom,vidc/video4linux/video[0-9]+/name(/.*)?
+;;     u:object_r:sysfs_graphics:s0
+;;
+;; (porting/drafts/vendor_file_contexts.ack:531).  This kernel creates the
+;; devices under soc@0 (drivers/media/platform/msm/vidc_3x, the
+;; qcom,vidc@1d00000 node of msm8953-xiaomi-tissot-vidc.dtsi), so the regex
+;; does not match.  A prefix label covers the video4linux directory.
+(genfscon sysfs "/devices/platform/soc@0/1d00000.qcom,vidc/video4linux" (u object_r sysfs_graphics ((s0) (s0))))
