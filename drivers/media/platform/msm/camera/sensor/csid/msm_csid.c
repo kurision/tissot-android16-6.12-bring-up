@@ -1096,9 +1096,9 @@ static int csid_probe(struct platform_device *pdev)
 		goto csid_invalid_vreg_data;
 	}
 	new_csid_dev->irq = legacy_msm_camera_get_irq(pdev, "csid");
-	if (!new_csid_dev->irq) {
+	if (IS_ERR(new_csid_dev->irq)) {
 		pr_err("%s: no irq resource?\n", __func__);
-		rc = -ENODEV;
+		rc = PTR_ERR(new_csid_dev->irq);
 		goto csid_invalid_irq;
 	}
 	new_csid_dev->pdev = pdev;

@@ -912,11 +912,11 @@ int legacy_camera_init_v4l2(struct device *dev, unsigned int *session)
 		rc = -ENOMEM;
 		goto mdev_fail;
 	}
-	media_device_init(v4l2_dev->mdev);
 	strscpy(v4l2_dev->mdev->model, MSM_CAMERA_NAME,
 			sizeof(v4l2_dev->mdev->model));
 
 	v4l2_dev->mdev->dev = dev;
+	media_device_init(v4l2_dev->mdev);
 
 	rc = media_device_register(v4l2_dev->mdev);
 	if (WARN_ON(rc < 0))
@@ -940,6 +940,8 @@ int legacy_camera_init_v4l2(struct device *dev, unsigned int *session)
 	pvdev->vdev->ioctl_ops = &camera_v4l2_ioctl_ops;
 	pvdev->vdev->minor     = -1;
 	pvdev->vdev->vfl_type  = VFL_TYPE_VIDEO;
+	pvdev->vdev->device_caps = V4L2_CAP_STREAMING |
+		V4L2_CAP_VIDEO_OUTPUT | V4L2_CAP_VIDEO_CAPTURE;
 	rc = video_register_device(pvdev->vdev,
 		VFL_TYPE_VIDEO, -1);
 	if (WARN_ON(rc < 0))
@@ -964,6 +966,7 @@ register_fail:
 entity_fail:
 	media_device_unregister(v4l2_dev->mdev);
 media_fail:
+	media_device_cleanup(v4l2_dev->mdev);
 	kfree(v4l2_dev->mdev);
 mdev_fail:
 #endif

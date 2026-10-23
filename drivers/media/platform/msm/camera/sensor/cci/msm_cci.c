@@ -2105,9 +2105,9 @@ static int msm_cci_probe(struct platform_device *pdev)
 		goto cci_no_resource;
 	}
 	new_cci_dev->irq = legacy_msm_camera_get_irq(pdev, "cci");
-	if (!new_cci_dev->irq) {
-		pr_err("%s: no irq resource?\n", __func__);
-		rc = -ENODEV;
+	if (IS_ERR(new_cci_dev->irq)) {
+		rc = dev_err_probe(&pdev->dev, PTR_ERR(new_cci_dev->irq),
+				   "failed to get CCI IRQ\n");
 		goto cci_no_resource;
 	}
 	CDBG("%s line %d cci irq start %d end %d\n", __func__,
@@ -2115,14 +2115,15 @@ static int msm_cci_probe(struct platform_device *pdev)
 		(int) new_cci_dev->irq->start,
 		(int) new_cci_dev->irq->end);
 	rc = legacy_msm_camera_register_irq(pdev, new_cci_dev->irq,
-		msm_cci_irq, IRQF_TRIGGER_RISING, "cci", new_cci_dev);
+		msm_cci_irq, IRQF_TRIGGER_RISING | IRQF_NO_AUTOEN, "cci",
+		new_cci_dev);
 	if (rc < 0) {
 		pr_err("%s: irq request fail\n", __func__);
 		rc = -EBUSY;
 		goto cci_release_mem;
 	}
 
-	legacy_msm_camera_enable_irq(new_cci_dev->irq, false);
+	/* msm_cci_init() enables the IRQ only after enabling the clocks. */
 	new_cci_dev->msm_sd.close_seq = MSM_SD_CLOSE_2ND_CATEGORY | 0x6;
 	legacy_msm_sd_register(&new_cci_dev->msm_sd);
 	new_cci_dev->pdev = pdev;

@@ -170,8 +170,8 @@ static int msm_camera_get_clk_info_internal(struct device *dev,
 	return rc;
 
 err4:
-	for (--i; i >= 0; i--)
-		devm_clk_put(dev, (*clk_ptr)[i]);
+	while (i > 0)
+		devm_clk_put(dev, (*clk_ptr)[--i]);
 err3:
 	devm_kfree(dev, rates);
 err2:
@@ -281,8 +281,8 @@ int legacy_msm_camera_get_clk_info_and_rates(
 			sizeof(uint32_t), GFP_KERNEL);
 		if (!rates[i]) {
 			rc = -ENOMEM;
-			for (--i; i >= 0; i--)
-				devm_kfree(&pdev->dev, rates[i]);
+			while (i > 0)
+				devm_kfree(&pdev->dev, rates[--i]);
 			goto err3;
 		}
 	}
@@ -328,8 +328,8 @@ int legacy_msm_camera_get_clk_info_and_rates(
 	return rc;
 
 err5:
-	for (--i; i >= 0; i--)
-		devm_clk_put(&pdev->dev, clks[i]);
+	while (i > 0)
+		devm_clk_put(&pdev->dev, clks[--i]);
 err4:
 	for (i = 0; i < *num_set; i++)
 		devm_kfree(&pdev->dev, rates[i]);
@@ -743,13 +743,27 @@ EXPORT_SYMBOL(legacy_msm_camera_put_regulators);
 struct resource *legacy_msm_camera_get_irq(struct platform_device *pdev,
 							char *irq_name)
 {
+	struct resource *res;
+	int irq;
+
 	if (!pdev || !irq_name) {
 		pr_err("Invalid params\n");
-		return NULL;
+		return ERR_PTR(-EINVAL);
 	}
 
-	CDBG("Get irq for %s\n", irq_name);
-	return platform_get_resource_byname(pdev, IORESOURCE_IRQ, irq_name);
+	irq = platform_get_irq_byname(pdev, irq_name);
+	if (irq < 0)
+		return ERR_PTR(irq);
+
+	/* DT no longer populates IRQ resources; retain the donor's handle. */
+	res = devm_kzalloc(&pdev->dev, sizeof(*res), GFP_KERNEL);
+	if (!res)
+		return ERR_PTR(-ENOMEM);
+	res->start = irq;
+	res->end = irq;
+	res->flags = IORESOURCE_IRQ;
+	res->name = irq_name;
+	return res;
 }
 EXPORT_SYMBOL(legacy_msm_camera_get_irq);
 

@@ -382,8 +382,7 @@ static inline int __msm_sd_register_subdev(struct v4l2_subdev *sd)
 	return 0;
 
 clean_up:
-	if (sd->devnode)
-		video_unregister_device(sd->devnode);
+	v4l2_device_unregister_subdev(sd);
 	return rc;
 }
 
@@ -408,16 +407,22 @@ static void msm_add_sd_in_position(struct msm_sd_subdev *msm_subdev,
 
 int legacy_msm_sd_register(struct msm_sd_subdev *msm_subdev)
 {
+	int rc;
+
 	if (WARN_ON(!msm_subdev))
 		return -EINVAL;
 
 	if (WARN_ON(!msm_v4l2_dev) || WARN_ON(!msm_v4l2_dev->dev))
 		return -EIO;
 
+	rc = __msm_sd_register_subdev(&msm_subdev->sd);
+	if (rc < 0)
+		return rc;
+
 	mutex_lock(&ordered_sd_mtx);
 	msm_add_sd_in_position(msm_subdev, &ordered_sd_list);
 	mutex_unlock(&ordered_sd_mtx);
-	return __msm_sd_register_subdev(&msm_subdev->sd);
+	return 0;
 }
 EXPORT_SYMBOL(legacy_msm_sd_register);
 
@@ -1331,6 +1336,7 @@ static int msm_probe(struct platform_device *pdev)
 	strscpy(msm_v4l2_dev->mdev->model, MSM_CONFIGURATION_NAME,
 			sizeof(msm_v4l2_dev->mdev->model));
 	msm_v4l2_dev->mdev->dev = &(pdev->dev);
+	media_device_init(msm_v4l2_dev->mdev);
 
 	rc = media_device_register(msm_v4l2_dev->mdev);
 	if (WARN_ON(rc < 0))
@@ -1350,13 +1356,14 @@ static int msm_probe(struct platform_device *pdev)
 	if (WARN_ON(rc < 0))
 		goto register_fail;
 
-	media_device_init(msm_v4l2_dev->mdev);
 	strscpy(pvdev->vdev->name, "msm-config", sizeof(pvdev->vdev->name));
 	pvdev->vdev->release  = video_device_release;
 	pvdev->vdev->fops     = &msm_fops;
 	pvdev->vdev->ioctl_ops = &g_msm_ioctl_ops;
 	pvdev->vdev->minor     = -1;
 	pvdev->vdev->vfl_type  = VFL_TYPE_VIDEO;
+	/* The daemon's private configuration/event node is not a stream. */
+	pvdev->vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE;
 	rc = video_register_device(pvdev->vdev,
 		VFL_TYPE_VIDEO, -1);
 	if (WARN_ON(rc < 0))
@@ -1410,6 +1417,7 @@ register_fail:
 entity_fail:
 	media_device_unregister(msm_v4l2_dev->mdev);
 media_fail:
+	media_device_cleanup(msm_v4l2_dev->mdev);
 	kfree(msm_v4l2_dev->mdev);
 mdev_fail:
 #endif
@@ -1418,6 +1426,7 @@ video_fail:
 	kfree(pvdev);
 pvdev_fail:
 	kfree(msm_v4l2_dev);
+	msm_v4l2_dev = NULL;
 probe_end:
 	return rc;
 }
@@ -1431,7 +1440,13 @@ MODULE_DEVICE_TABLE(of, msm_dt_match);
 static struct platform_driver msm_driver = {
 	.probe = msm_probe,
 	.driver = {
-		.name = "msm",
+		/*
+		 * Not "msm": the donor's tree has no other platform
+		 * driver of that name, but CONFIG_DRM_MSM here
+		 * registers one, and our registration would fail with
+		 * -EBUSY before msm_probe() ever runs.
+		 */
+		.name = "msm_cam",
 		.owner = THIS_MODULE,
 		.of_match_table = msm_dt_match,
 	},

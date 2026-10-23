@@ -2630,8 +2630,8 @@ int legacy_msm_vfe47_get_platform_data(struct vfe_device *vfe_dev)
 	}
 
 	vfe_dev->vfe_irq = legacy_msm_camera_get_irq(vfe_dev->pdev, "vfe");
-	if (!vfe_dev->vfe_irq) {
-		rc = -ENODEV;
+	if (IS_ERR(vfe_dev->vfe_irq)) {
+		rc = PTR_ERR(vfe_dev->vfe_irq);
 		goto vfe_irq_fail;
 	}
 

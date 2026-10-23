@@ -514,7 +514,8 @@ int legacy_msm_camera_get_dt_power_setting_data(struct device_node *of_node,
 	ps = kzalloc(sizeof(*ps) * count, GFP_KERNEL);
 	if (!ps) {
 		pr_err("%s failed %d\n", __func__, __LINE__);
-		return -ENOMEM;
+		rc = -ENOMEM;
+		goto ERROR1;
 	}
 	power_setting = ps;
 	power_info->power_setting = ps;
@@ -695,7 +696,8 @@ ERROR2:
 	kfree(array);
 ERROR1:
 	kfree(ps);
-	power_setting_size = 0;
+	power_info->power_setting = NULL;
+	*power_setting_size = 0;
 	return rc;
 }
 
@@ -1596,17 +1598,20 @@ int legacy_msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 					SENSOR_GPIO_MAX);
 				goto power_up_failed;
 			}
-			if (power_setting->seq_val < ctrl->num_vreg)
-				legacy_msm_camera_config_single_vreg(ctrl->dev,
-					&ctrl->cam_vreg
-					[power_setting->seq_val],
-					(struct regulator **)
-					&power_setting->data[0],
-					1);
-			else
+			if (power_setting->seq_val < ctrl->num_vreg) {
+				rc = legacy_msm_camera_config_single_vreg(ctrl->dev,
+									  &ctrl->cam_vreg
+									  [power_setting->seq_val],
+									  (struct regulator **)
+									  &power_setting->data[0],
+									  1);
+				if (rc < 0)
+					goto power_up_failed;
+			} else {
 				pr_err("%s: %d usr_idx:%d dts_idx:%d\n",
 					__func__, __LINE__,
 					power_setting->seq_val, ctrl->num_vreg);
+			}
 
 			rc = legacy_msm_cam_sensor_handle_reg_gpio(
 				power_setting->seq_val,
@@ -1651,6 +1656,11 @@ power_up_failed:
 		power_setting = &ctrl->power_setting[index];
 		CDBG("%s type %d\n", __func__, power_setting->seq_type);
 		switch (power_setting->seq_type) {
+		case SENSOR_CLK:
+			legacy_msm_camera_clk_enable(ctrl->dev, ctrl->clk_info,
+						     ctrl->clk_ptr, ctrl->clk_info_size,
+						     false);
+			break;
 		case SENSOR_GPIO:
 			if (!ctrl->gpio_conf->gpio_num_info)
 				continue;

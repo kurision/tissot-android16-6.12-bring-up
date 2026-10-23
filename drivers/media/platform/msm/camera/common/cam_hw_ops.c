@@ -182,6 +182,13 @@ int legacy_cam_ahb_clk_init(struct platform_device *pdev)
 		.name = "msm_camera_ahb",
 		.num_usecases = data.cnt,
 		.usecase = data.usecases,
+		/*
+		 * The interconnect compat layer looks the client's paths
+		 * up through the device the table was built for; without
+		 * it the vote logs go through a NULL device, and a
+		 * future icc_map entry would hand of_icc_get() NULL.
+		 */
+		.dev = &pdev->dev,
 	};
 
 	data.ahb_client =

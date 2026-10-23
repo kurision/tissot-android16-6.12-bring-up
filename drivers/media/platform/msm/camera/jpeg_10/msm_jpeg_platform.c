@@ -339,9 +339,9 @@ int legacy_msm_jpeg_platform_setup(struct msm_jpeg_device *pgmn_dev)
 
 	/* get the irq resource for the jpeg hardware */
 	jpeg_irq_res = legacy_msm_camera_get_irq(pdev, "jpeg");
-	if (!jpeg_irq_res) {
+	if (IS_ERR(jpeg_irq_res)) {
 		JPEG_PR_ERR("%s: no irq resource?\n", __func__);
-		rc = -ENXIO;
+		rc = PTR_ERR(jpeg_irq_res);
 		goto err_jpeg_irq_res;
 	}
 
@@ -510,4 +510,3 @@ int legacy_msm_jpeg_platform_set_dt_config(struct msm_jpeg_device *pgmn_dev)
 	}
 	return rc;
 }
-

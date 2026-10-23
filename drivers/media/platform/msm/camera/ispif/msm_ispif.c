@@ -2057,8 +2057,8 @@ static int ispif_probe(struct platform_device *pdev)
 	}
 
 	ispif->irq = legacy_msm_camera_get_irq(pdev, "ispif");
-	if (!ispif->irq) {
-		rc = -ENODEV;
+	if (IS_ERR(ispif->irq)) {
+		rc = PTR_ERR(ispif->irq);
 		goto get_irq_fail;
 	}
 	rc = legacy_msm_camera_register_irq(pdev, ispif->irq, msm_io_ispif_irq,

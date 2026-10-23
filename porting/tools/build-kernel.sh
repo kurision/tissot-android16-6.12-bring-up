@@ -89,6 +89,25 @@ NV_FIRMWARE="$FW_DIR/wlan/prima/WCNSS_qcom_wlan_nv.bin"
 # so it is packaged into the ramdisk the same way the WCNSS blobs are.
 VENUS_FW_DIR=${ACK_VENUS_FIRMWARE_DIR:-$REPO/porting/artifacts/firmware-venus}
 
+# Firmware is gitignored and does not follow a branch into a new worktree.
+# Refuse an incomplete staging tree before changing out/.config or building.
+for file in wcnss.mdt wcnss.b00 wcnss.b01 wcnss.b02 wcnss.b04 \
+	    wcnss.b06 wcnss.b09 wcnss.b10 wcnss.b11 wcnss.b12 \
+	    wlan/prima/WCNSS_qcom_wlan_nv.bin; do
+	if [ ! -s "$FW_DIR/$file" ]; then
+		echo "error: missing or empty WCNSS firmware: $FW_DIR/$file" >&2
+		echo "Stage it with pull-wcnss-firmware.sh or set ACK_WCNSS_FIRMWARE_DIR." >&2
+		exit 1
+	fi
+done
+for file in venus.mdt venus.b00 venus.b01 venus.b02 venus.b03 venus.b04; do
+	if [ ! -s "$VENUS_FW_DIR/$file" ]; then
+		echo "error: missing or empty Venus firmware: $VENUS_FW_DIR/$file" >&2
+		echo "Stage it with pull-venus-firmware.sh or set ACK_VENUS_FIRMWARE_DIR." >&2
+		exit 1
+	fi
+done
+
 # --- the base image ---------------------------------------------------------
 # A real, SHA-verified image. Not redistributable, so it is not in the
 # repository: the builder supplies it, or keeps it next to the checkout.
@@ -262,14 +281,9 @@ done
 # switch_root timing and the SELinux path from the WLAN bring-up. Only the
 # NV blob is embedded: wcnss.mdt is still needed before the vendor
 # partition is mounted, and it is packaged into the ramdisk below.
-if [ -f "$NV_FIRMWARE" ]; then
-	scripts/config --file "$OUT_DIR/.config" \
-		--set-str EXTRA_FIRMWARE "wlan/prima/WCNSS_qcom_wlan_nv.bin" \
-		--set-str EXTRA_FIRMWARE_DIR "$(realpath "$FW_DIR")"
-else
-	scripts/config --file "$OUT_DIR/.config" --set-str EXTRA_FIRMWARE ""
-	echo "warning: no NV blob at $NV_FIRMWARE; WLAN will not come up" >&2
-fi
+scripts/config --file "$OUT_DIR/.config" \
+	--set-str EXTRA_FIRMWARE "wlan/prima/WCNSS_qcom_wlan_nv.bin" \
+	--set-str EXTRA_FIRMWARE_DIR "$(realpath "$FW_DIR")"
 "${make_args[@]}" olddefconfig
 scripts/diffconfig "$SNAP/$RUN-prebuild.config" "$OUT_DIR/.config" | tee "$SNAP/$RUN-config.diff"
 for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SLIMBUS ZRAM MSM_SMD_PKT; do
@@ -406,8 +420,8 @@ cat "$BOOT/Image.gz" "$BOOT/dts/qcom/msm8953-xiaomi-tissot.dtb" > "$BOOT/Image.g
 # WCNSS firmware is requested by the remoteproc before the vendor partition
 # is mounted, so it has to come from the ramdisk. The NV blob is built into
 # the kernel, but packing the whole tree keeps the early load working. The
-# directory is optional: without it the image still boots, with WLAN stuck
-# at the old -2 load error.
+# staging tree is required by the preflight above; otherwise both WLAN and
+# Bluetooth lose their WCNSS firmware on a fresh worktree.
 #
 # The UART console is dropped from the command line. The command line comes
 # from the base image, so every image inherits "earlycon console=ttyMSM0,115200"
@@ -417,22 +431,7 @@ cat "$BOOT/Image.gz" "$BOOT/dts/qcom/msm8953-xiaomi-tissot.dtb" > "$BOOT/Image.g
 # (porting/findings/2026-10-21-boot-reset-loop-analysis.md). The tokens are
 # only dropped when the base actually carries them, so a base without them
 # still packages.
-fw_args=()
-if [ -d "$FW_DIR" ]; then
-	test -f "$FW_DIR/wcnss.mdt" || {
-		echo "error: $FW_DIR exists but has no wcnss.mdt" >&2; exit 1; }
-	fw_args=(--firmware-dir "$FW_DIR")
-else
-	echo "warning: no WCNSS firmware in $FW_DIR; WLAN will not load" >&2
-fi
-if [ -d "$VENUS_FW_DIR" ]; then
-	test -f "$VENUS_FW_DIR/venus.mdt" || {
-		echo "error: $VENUS_FW_DIR exists but has no venus.mdt" >&2; exit 1; }
-	fw_args+=(--firmware-dir "$VENUS_FW_DIR")
-else
-	echo "warning: no Venus firmware in $VENUS_FW_DIR;" \
-	     "the video codec will not load its firmware" >&2
-fi
+fw_args=(--firmware-dir "$FW_DIR" --firmware-dir "$VENUS_FW_DIR")
 sha256sum "$BASE_IMAGE" > "$SNAP/$RUN-base.sha256"
 # The command line is inherited from the base image, so it carries whatever
 # console the base was built with. Drop the UART console: see the comment

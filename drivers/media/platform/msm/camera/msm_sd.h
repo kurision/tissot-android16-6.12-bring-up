@@ -118,16 +118,15 @@ void legacy_msm_cam_copy_v4l2_subdev_fops(struct v4l2_file_operations *d1);
 
 /*
  * The legacy of_gpio helpers of the kernel are gone in 6.12.  The camera
- * reads the numbers of the gpios a node names in its "gpios" property:
- * a qcom tlmm specifier is the phandle of the controller and the flags,
- * so the property has two cells per gpio.
+ * counts GPIO specifiers using each provider's #gpio-cells, then reads
+ * the GPIO numbers through the descriptor API.
  */
 static inline int msm_camera_gpio_count(struct device *dev,
 	struct device_node *np)
 {
-	int count = of_property_count_u32_elems(np, "gpios");
+	int count = of_count_phandle_with_args(np, "gpios", "#gpio-cells");
 
-	return count > 0 ? count / 2 : 0;
+	return count > 0 ? count : 0;
 }
 
 static inline int msm_camera_gpio_number(struct device *dev,

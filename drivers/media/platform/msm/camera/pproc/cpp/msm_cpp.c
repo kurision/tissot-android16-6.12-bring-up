@@ -4284,9 +4284,9 @@ static int cpp_probe(struct platform_device *pdev)
 	}
 
 	cpp_dev->irq = legacy_msm_camera_get_irq(pdev, "cpp");
-	if (!cpp_dev->irq) {
+	if (IS_ERR(cpp_dev->irq)) {
 		pr_err("%s: no irq resource?\n", __func__);
-		rc = -ENODEV;
+		rc = PTR_ERR(cpp_dev->irq);
 		goto mem_err;
 	}
 

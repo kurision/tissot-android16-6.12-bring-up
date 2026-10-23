@@ -1381,6 +1381,7 @@ static int fd_probe(struct platform_device *pdev)
 	fd->video.v4l2_dev = &fd->v4l2_dev;
 	fd->video.vfl_dir = VFL_DIR_TX;
 	fd->video.vfl_type = VFL_TYPE_VIDEO;
+	fd->video.device_caps = V4L2_CAP_STREAMING | V4L2_CAP_VIDEO_OUTPUT;
 	strscpy(fd->video.name, MSM_FD_DRV_NAME, sizeof(fd->video.name));
 
 	ret = video_register_device(&fd->video, VFL_TYPE_VIDEO, -1);

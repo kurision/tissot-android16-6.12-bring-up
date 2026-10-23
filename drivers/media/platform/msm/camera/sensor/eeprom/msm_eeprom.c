@@ -14,6 +14,7 @@
 #include <linux/of_gpio.h>
 #include <linux/delay.h>
 #include <linux/crc32.h>
+#include <linux/pstore_ram.h>
 #include "msm_sd.h"
 #include "msm_cci.h"
 #include "msm_eeprom.h"
@@ -1004,7 +1005,7 @@ static int msm_eeprom_get_dt_data(struct msm_eeprom_ctrl_t *e_ctrl)
 			power_info->cam_vreg, power_info->num_vreg,
 			power_info);
 		if (rc < 0)
-			goto ERROR1;
+			goto ERROR2;
 	}
 
 	power_info->gpio_conf = kzalloc(sizeof(struct msm_camera_gpio_conf),
@@ -1053,7 +1054,6 @@ ERROR3:
 	kfree(power_info->gpio_conf);
 ERROR2:
 	kfree(power_info->cam_vreg);
-ERROR1:
 	kfree(power_info->power_setting);
 	return rc;
 }
@@ -1931,8 +1931,14 @@ if (xiaomi_msm8953_mach_get() == XIAOMI_MSM8953_MACH_ROSY) {
     e_ctrl->msm_sd.sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
     snprintf(e_ctrl->msm_sd.sd.name,
         ARRAY_SIZE(e_ctrl->msm_sd.sd.name), "msm_eeprom");
-    media_entity_pads_init(&e_ctrl->msm_sd.sd.entity, 0, NULL);
-    legacy_msm_sd_register(&e_ctrl->msm_sd);
+	rc = media_entity_pads_init(&e_ctrl->msm_sd.sd.entity, 0, NULL);
+	if (rc < 0)
+		goto memdata_free;
+	rc = legacy_msm_sd_register(&e_ctrl->msm_sd);
+	if (rc < 0) {
+		media_entity_cleanup(&e_ctrl->msm_sd.sd.entity);
+		goto memdata_free;
+	}
 
 #ifdef CONFIG_COMPAT
     legacy_msm_cam_copy_v4l2_subdev_fops(&msm_eeprom_v4l2_subdev_fops);
@@ -1949,6 +1955,7 @@ power_down:
     legacy_msm_camera_power_down(power_info, e_ctrl->eeprom_device_type,
         &e_ctrl->i2c_client);
 memdata_free:
+	platform_set_drvdata(pdev, NULL);
     kfree(e_ctrl->cal_data.mapdata);
     kfree(e_ctrl->cal_data.map);
 board_free:
@@ -2042,6 +2049,13 @@ static int __init msm_eeprom_init_module(void)
 	int rc = 0;
 	if (!camera_legacy_enable)
 		return -ENODEV;
+	rc = ramoops_wait_snapshot_ready(10000);
+	if (rc < 0) {
+		pr_err("%s: no flushed logdump snapshot (%d); skipping registration\n",
+		       __func__, rc);
+		return rc;
+	}
+	pr_info("DIAG: logdump snapshot ready; starting EEPROM registration\n");
 	CDBG("%s E\n", __func__);
 	rc = platform_driver_register(&msm_eeprom_platform_driver);
 	CDBG("%s:%d platform rc %d\n", __func__, __LINE__, rc);
@@ -2057,7 +2071,7 @@ static void __exit msm_eeprom_exit_module(void)
 	i2c_del_driver(&msm_eeprom_i2c_driver);
 }
 
-module_init(msm_eeprom_init_module);
+late_initcall(msm_eeprom_init_module);
 module_exit(msm_eeprom_exit_module);
 MODULE_DESCRIPTION("MSM EEPROM driver");
 MODULE_LICENSE("GPL v2");

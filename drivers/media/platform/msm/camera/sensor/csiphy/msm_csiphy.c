@@ -1532,9 +1532,9 @@ static int csiphy_probe(struct platform_device *pdev)
 		}
 	}
 	new_csiphy_dev->irq = legacy_msm_camera_get_irq(pdev, "csiphy");
-	if (!new_csiphy_dev->irq) {
+	if (IS_ERR(new_csiphy_dev->irq)) {
 		pr_err("%s: no irq resource?\n", __func__);
-		rc = -ENODEV;
+		rc = PTR_ERR(new_csiphy_dev->irq);
 		goto csiphy_no_irq_resource;
 	}
 	rc = legacy_msm_camera_register_irq(pdev, new_csiphy_dev->irq,

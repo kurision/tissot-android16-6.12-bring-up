@@ -1238,8 +1238,10 @@ static int jpegdma_probe(struct platform_device *pdev)
 
 	/* get the irq resource */
 	jpegdma->irq = legacy_msm_camera_get_irq(pdev, "jpeg");
-	if (!jpegdma->irq)
+	if (IS_ERR(jpegdma->irq)) {
+		ret = PTR_ERR(jpegdma->irq);
 		goto error_hw_get_irq;
+	}
 
 	switch (pdev->id) {
 	case 3:
@@ -1286,6 +1288,8 @@ static int jpegdma_probe(struct platform_device *pdev)
 	jpegdma->video.v4l2_dev = &jpegdma->v4l2_dev;
 	jpegdma->video.vfl_dir = VFL_DIR_M2M;
 	jpegdma->video.vfl_type = VFL_TYPE_VIDEO;
+	jpegdma->video.device_caps = V4L2_CAP_STREAMING |
+		V4L2_CAP_VIDEO_OUTPUT | V4L2_CAP_VIDEO_CAPTURE;
 	strscpy(jpegdma->video.name, MSM_JPEGDMA_DRV_NAME,
 		sizeof(jpegdma->video.name));
 

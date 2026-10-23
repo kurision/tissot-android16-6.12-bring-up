@@ -553,9 +553,9 @@ int legacy_msm_fd_hw_request_irq(struct platform_device *pdev,
 	int ret;
 
 	fd->irq = legacy_msm_camera_get_irq(pdev, "fd");
-	if (fd->irq_num < 0) {
+	if (IS_ERR(fd->irq)) {
 		dev_err(fd->dev, "Can not get fd core irq resource\n");
-		ret = -ENODEV;
+		ret = PTR_ERR(fd->irq);
 		goto error_irq;
 	}
 

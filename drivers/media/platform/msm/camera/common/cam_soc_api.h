@@ -272,7 +272,8 @@ void legacy_msm_camera_put_regulators(struct platform_device *pdev,
  * @param pdev   : Platform device to get IRQ
  * @param irq_name: Name of the IRQ resource to get from DTSI
  *
- * @return Pointer to resource if success else null
+ * @return Device-managed resource on success, ERR_PTR on failure (including
+ *         -EPROBE_DEFER). The caller must not free the resource.
  */
 
 struct resource *legacy_msm_camera_get_irq(struct platform_device *pdev,
