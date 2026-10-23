@@ -1423,6 +1423,7 @@ static int csiphy_probe(struct platform_device *pdev)
 		GFP_KERNEL);
 	if (!new_csiphy_dev->ctrl_reg) {
 		pr_err("%s:%d kzalloc failed\n", __func__, __LINE__);
+		kfree(new_csiphy_dev);
 		return -ENOMEM;
 	}
 	v4l2_subdev_init(&new_csiphy_dev->msm_sd.sd, &msm_csiphy_subdev_ops);
@@ -1432,20 +1433,14 @@ static int csiphy_probe(struct platform_device *pdev)
 	mutex_init(&new_csiphy_dev->mutex);
 
 	if (pdev->dev.of_node) {
-		of_property_read_u32((&pdev->dev)->of_node,
-			"cell-index", &pdev->id);
+		rc = of_property_read_u32((&pdev->dev)->of_node,
+					  "cell-index", &pdev->id);
+		if (rc < 0)
+			goto csiphy_no_resource;
 		CDBG("%s: device id = %d\n", __func__, pdev->id);
 	}
 
 	new_csiphy_dev->pdev = pdev;
-	new_csiphy_dev->msm_sd.sd.internal_ops = &msm_csiphy_internal_ops;
-	new_csiphy_dev->msm_sd.sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
-	snprintf(new_csiphy_dev->msm_sd.sd.name,
-		ARRAY_SIZE(new_csiphy_dev->msm_sd.sd.name), "msm_csiphy");
-	media_entity_pads_init(&new_csiphy_dev->msm_sd.sd.entity, 0, NULL);
-	new_csiphy_dev->msm_sd.sd.grp_id = MSM_CAMERA_SUBDEV_CSIPHY;
-	new_csiphy_dev->msm_sd.close_seq = MSM_SD_CLOSE_2ND_CATEGORY | 0x4;
-	legacy_msm_sd_register(&new_csiphy_dev->msm_sd);
 
 	new_csiphy_dev->csiphy_3phase = 0;
 	new_csiphy_dev->num_irq_registers = 0x8;
@@ -1505,22 +1500,20 @@ static int csiphy_probe(struct platform_device *pdev)
 		&(new_csiphy_dev->regulator_count));
 	if (rc < 0) {
 		pr_err("%s: get vreg data from dtsi fail\n", __func__);
-		rc = -EFAULT;
 		goto csiphy_no_resource;
 	}
 	/* ToDo: Enable 3phase clock for dynamic clock enable/disable */
 	rc = msm_csiphy_get_clk_info(new_csiphy_dev, pdev);
 	if (rc < 0) {
 		pr_err("%s: msm_csiphy_get_clk_info() failed", __func__);
-		rc =  -EFAULT;
-		goto csiphy_no_resource;
+		goto csiphy_free_vregs;
 	}
 
 	new_csiphy_dev->base = legacy_msm_camera_get_reg_base(pdev, "csiphy", true);
 	if (!new_csiphy_dev->base) {
 		pr_err("%s: no mem resource?\n", __func__);
 		rc = -ENODEV;
-		goto csiphy_no_resource;
+		goto csiphy_put_clocks;
 	}
 
 	if (new_csiphy_dev->hw_dts_version >= CSIPHY_VERSION_V30) {
@@ -1547,6 +1540,20 @@ static int csiphy_probe(struct platform_device *pdev)
 		goto csiphy_no_irq_resource;
 	}
 
+	new_csiphy_dev->csiphy_state = CSIPHY_POWER_DOWN;
+	new_csiphy_dev->msm_sd.sd.internal_ops = &msm_csiphy_internal_ops;
+	new_csiphy_dev->msm_sd.sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+	snprintf(new_csiphy_dev->msm_sd.sd.name,
+		 ARRAY_SIZE(new_csiphy_dev->msm_sd.sd.name), "msm_csiphy");
+	rc = media_entity_pads_init(&new_csiphy_dev->msm_sd.sd.entity, 0, NULL);
+	if (rc < 0)
+		goto csiphy_unregister_irq;
+	new_csiphy_dev->msm_sd.sd.grp_id = MSM_CAMERA_SUBDEV_CSIPHY;
+	new_csiphy_dev->msm_sd.close_seq = MSM_SD_CLOSE_2ND_CATEGORY | 0x4;
+	rc = legacy_msm_sd_register(&new_csiphy_dev->msm_sd);
+	if (rc < 0)
+		goto csiphy_cleanup_entity;
+
 	legacy_msm_cam_copy_v4l2_subdev_fops(&msm_csiphy_v4l2_subdev_fops);
 #ifdef CONFIG_COMPAT
 	msm_csiphy_v4l2_subdev_fops.compat_ioctl32 =
@@ -1554,9 +1561,12 @@ static int csiphy_probe(struct platform_device *pdev)
 #endif
 	new_csiphy_dev->msm_sd.sd.devnode->fops =
 		&msm_csiphy_v4l2_subdev_fops;
-	new_csiphy_dev->csiphy_state = CSIPHY_POWER_DOWN;
 	return 0;
 
+csiphy_cleanup_entity:
+	media_entity_cleanup(&new_csiphy_dev->msm_sd.sd.entity);
+csiphy_unregister_irq:
+	legacy_msm_camera_unregister_irq(pdev, new_csiphy_dev->irq, new_csiphy_dev);
 csiphy_no_irq_resource:
 	if (new_csiphy_dev->hw_dts_version >= CSIPHY_VERSION_V30) {
 		legacy_msm_camera_put_reg_base(pdev, new_csiphy_dev->clk_mux_base,
@@ -1564,7 +1574,15 @@ csiphy_no_irq_resource:
 	}
 csiphy_no_mux_resource:
 	legacy_msm_camera_put_reg_base(pdev, new_csiphy_dev->base, "csiphy", true);
+csiphy_put_clocks:
+	legacy_msm_camera_put_clk_info(pdev,
+				       &new_csiphy_dev->csiphy_all_clk_info,
+				       &new_csiphy_dev->csiphy_all_clk,
+				       new_csiphy_dev->num_all_clk);
+csiphy_free_vregs:
+	kfree(new_csiphy_dev->csiphy_vreg);
 csiphy_no_resource:
+	platform_set_drvdata(pdev, NULL);
 	mutex_destroy(&new_csiphy_dev->mutex);
 	kfree(new_csiphy_dev->ctrl_reg);
 	kfree(new_csiphy_dev);

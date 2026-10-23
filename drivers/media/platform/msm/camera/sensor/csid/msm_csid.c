@@ -1069,7 +1069,6 @@ static int csid_probe(struct platform_device *pdev)
 		&new_csid_dev->csid_clk, &new_csid_dev->num_clk);
 	if (rc < 0) {
 		pr_err("%s: legacy_msm_camera_get_clk_info failed", __func__);
-		rc = -EFAULT;
 		goto csid_no_resource;
 	}
 
@@ -1077,8 +1076,7 @@ static int csid_probe(struct platform_device *pdev)
 		&(new_csid_dev->csid_vreg), &(new_csid_dev->regulator_count));
 	if (rc < 0) {
 		pr_err("%s: get vreg data from dtsi fail\n", __func__);
-		rc = -EFAULT;
-		goto csid_no_resource;
+		goto csid_put_clocks;
 	}
 
 	if ((new_csid_dev->regulator_count < 0) ||
@@ -1086,7 +1084,7 @@ static int csid_probe(struct platform_device *pdev)
 		pr_err("%s: invalid reg count = %d, max is %d\n", __func__,
 			new_csid_dev->regulator_count, MAX_REGULATOR);
 		rc = -EFAULT;
-		goto csid_no_resource;
+		goto csid_invalid_vreg_data;
 	}
 
 	new_csid_dev->base = legacy_msm_camera_get_reg_base(pdev, "csid", true);
@@ -1102,20 +1100,6 @@ static int csid_probe(struct platform_device *pdev)
 		goto csid_invalid_irq;
 	}
 	new_csid_dev->pdev = pdev;
-	new_csid_dev->msm_sd.sd.internal_ops = &msm_csid_internal_ops;
-	new_csid_dev->msm_sd.sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
-	snprintf(new_csid_dev->msm_sd.sd.name,
-			ARRAY_SIZE(new_csid_dev->msm_sd.sd.name), "msm_csid");
-	media_entity_pads_init(&new_csid_dev->msm_sd.sd.entity, 0, NULL);
-	new_csid_dev->msm_sd.sd.grp_id = MSM_CAMERA_SUBDEV_CSID;
-	new_csid_dev->msm_sd.close_seq = MSM_SD_CLOSE_2ND_CATEGORY | 0x5;
-	legacy_msm_sd_register(&new_csid_dev->msm_sd);
-
-#ifdef CONFIG_COMPAT
-	legacy_msm_cam_copy_v4l2_subdev_fops(&msm_csid_v4l2_subdev_fops);
-	msm_csid_v4l2_subdev_fops.compat_ioctl32 = msm_csid_subdev_fops_ioctl32;
-	new_csid_dev->msm_sd.sd.devnode->fops = &msm_csid_v4l2_subdev_fops;
-#endif
 
 	rc = legacy_msm_camera_register_irq(pdev, new_csid_dev->irq,
 		msm_csid_irq, IRQF_TRIGGER_RISING | IRQF_NO_AUTOEN,
@@ -1202,17 +1186,43 @@ static int csid_probe(struct platform_device *pdev)
 		pr_err("%s:%d, invalid hw version : 0x%x", __func__, __LINE__,
 			new_csid_dev->hw_dts_version);
 		rc = -EINVAL;
-		goto csid_invalid_irq;
+		goto csid_unregister_irq;
 	}
 
 	new_csid_dev->csid_state = CSID_POWER_DOWN;
+	new_csid_dev->msm_sd.sd.internal_ops = &msm_csid_internal_ops;
+	new_csid_dev->msm_sd.sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+	snprintf(new_csid_dev->msm_sd.sd.name,
+		 ARRAY_SIZE(new_csid_dev->msm_sd.sd.name), "msm_csid");
+	rc = media_entity_pads_init(&new_csid_dev->msm_sd.sd.entity, 0, NULL);
+	if (rc < 0)
+		goto csid_unregister_irq;
+	new_csid_dev->msm_sd.sd.grp_id = MSM_CAMERA_SUBDEV_CSID;
+	new_csid_dev->msm_sd.close_seq = MSM_SD_CLOSE_2ND_CATEGORY | 0x5;
+	rc = legacy_msm_sd_register(&new_csid_dev->msm_sd);
+	if (rc < 0)
+		goto csid_cleanup_entity;
+
+#ifdef CONFIG_COMPAT
+	legacy_msm_cam_copy_v4l2_subdev_fops(&msm_csid_v4l2_subdev_fops);
+	msm_csid_v4l2_subdev_fops.compat_ioctl32 = msm_csid_subdev_fops_ioctl32;
+	new_csid_dev->msm_sd.sd.devnode->fops = &msm_csid_v4l2_subdev_fops;
+#endif
 	return 0;
 
+csid_cleanup_entity:
+	media_entity_cleanup(&new_csid_dev->msm_sd.sd.entity);
+csid_unregister_irq:
+	legacy_msm_camera_unregister_irq(pdev, new_csid_dev->irq, new_csid_dev);
 csid_invalid_irq:
 	legacy_msm_camera_put_reg_base(pdev, new_csid_dev->base, "csid", true);
 csid_invalid_vreg_data:
 	kfree(new_csid_dev->csid_vreg);
+csid_put_clocks:
+	legacy_msm_camera_put_clk_info(pdev, &new_csid_dev->csid_clk_info,
+				       &new_csid_dev->csid_clk, new_csid_dev->num_clk);
 csid_no_resource:
+	platform_set_drvdata(pdev, NULL);
 	mutex_destroy(&new_csid_dev->mutex);
 	kfree(new_csid_dev->ctrl_reg);
 	kfree(new_csid_dev);
