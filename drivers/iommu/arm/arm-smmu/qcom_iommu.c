@@ -845,8 +845,8 @@ static bool qcom_iommu_has_secure_context(struct qcom_iommu_dev *qcom_iommu)
 static void qcom_iommu_dump_static_routing(struct qcom_iommu_dev *qcom_iommu)
 {
 	void __iomem *gr0;
-	u32 idr0, num_smr;
-	int i;
+	u32 idr0, num_smr, i;
+	int ret;
 
 	if (!of_device_is_compatible(qcom_iommu->dev->of_node,
 				     "qcom,msm8953-iommu"))
@@ -856,22 +856,30 @@ static void qcom_iommu_dump_static_routing(struct qcom_iommu_dev *qcom_iommu)
 	if (!gr0)
 		return;
 
-	pm_runtime_get_sync(qcom_iommu->dev);
-	idr0 = readl_relaxed(gr0);
-	num_smr = (idr0 >> 24) & 0xff;
+	ret = pm_runtime_resume_and_get(qcom_iommu->dev);
+	if (ret < 0) {
+		dev_warn(qcom_iommu->dev,
+			 "static routing: runtime resume failed: %d\n", ret);
+		goto unmap;
+	}
+	idr0 = readl_relaxed(gr0 + ARM_SMMU_GR0_ID0);
+	num_smr = FIELD_GET(ARM_SMMU_ID0_NUMSMRG, idr0);
+	dev_info(qcom_iommu->dev, "static routing: ID0=0x%08x NUMSMRG=%u\n",
+		 idr0, num_smr);
 	for (i = 0; i < num_smr; i++) {
-		u32 smr = readl_relaxed(gr0 + 0x800 + 4 * i);
+		u32 smr = readl_relaxed(gr0 + ARM_SMMU_GR0_SMR(i));
 		u32 s2cr;
 
-		if (!smr)
+		if (!(smr & ARM_SMMU_SMR_VALID))
 			continue;
-		s2cr = readl_relaxed(gr0 + 0xc00 + 4 * i);
+		s2cr = readl_relaxed(gr0 + ARM_SMMU_GR0_S2CR(i));
 		dev_info(qcom_iommu->dev,
-			 "static routing: SMR[%d]=0x%08x S2CR[%d]=0x%08x (cbndx %u type %u)\n",
+			 "static routing: SMR[%u]=0x%08x S2CR[%u]=0x%08x (cbndx %u type %u)\n",
 			 i, smr, i, s2cr, s2cr & 0xff, (s2cr >> 16) & 0x3);
 	}
 	pm_runtime_put_sync(qcom_iommu->dev);
 
+unmap:
 	devm_iounmap(qcom_iommu->dev, gr0);
 }
 
