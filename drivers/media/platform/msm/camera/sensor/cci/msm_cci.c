@@ -2148,17 +2148,18 @@ static int msm_cci_probe(struct platform_device *pdev)
 		goto cci_invalid_vreg_data;
 	}
 
-	rc = of_platform_populate(pdev->dev.of_node, NULL, NULL, &pdev->dev);
-	if (rc)
-		pr_err("%s: failed to add child nodes, rc=%d\n", __func__, rc);
 	new_cci_dev->cci_state = CCI_STATE_DISABLED;
-	g_cci_subdev = &new_cci_dev->msm_sd.sd;
 	for (i = 0; i < MASTER_MAX; i++) {
 		new_cci_dev->write_wq[i] = create_singlethread_workqueue(
 								"msm_cci_wq");
 		if (!new_cci_dev->write_wq[i])
 			pr_err("Failed to create write wq\n");
 	}
+	/* Child probes can synchronously cache the CCI subdevice. */
+	g_cci_subdev = &new_cci_dev->msm_sd.sd;
+	rc = of_platform_populate(pdev->dev.of_node, NULL, NULL, &pdev->dev);
+	if (rc)
+		pr_err("%s: failed to add child nodes, rc=%d\n", __func__, rc);
 	CDBG("%s cci subdev %pK\n", __func__, &new_cci_dev->msm_sd.sd);
 	CDBG("%s line %d\n", __func__, __LINE__);
 	return 0;
