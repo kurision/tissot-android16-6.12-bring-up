@@ -24,6 +24,7 @@
 #include <linux/iommu.h>
 #include <linux/pm_domain.h>
 #include <linux/pm_runtime.h>
+#include <linux/pstore_ram.h>
 #include <linux/timer.h>
 #include <linux/kernel.h>
 #include <linux/workqueue.h>
@@ -995,6 +996,18 @@ static int cpp_enable_power_domain(struct cpp_device *cpp_dev, int enable)
 	return rc < 0 ? rc : 0;
 }
 
+static void cpp_put_power_domain(struct cpp_device *cpp_dev)
+{
+	if (!cpp_dev->power_domain)
+		return;
+
+	if (cpp_dev->power_domain == &cpp_dev->pdev->dev)
+		pm_runtime_disable(cpp_dev->power_domain);
+	else
+		dev_pm_domain_detach(cpp_dev->power_domain, true);
+	cpp_dev->power_domain = NULL;
+}
+
 static int cpp_init_hardware(struct cpp_device *cpp_dev)
 {
 	int rc = 0;
@@ -1093,7 +1106,8 @@ static int cpp_init_hardware(struct cpp_device *cpp_dev)
 
 pwr_collapse_reset:
 	msm_cpp_update_gdscr_status(cpp_dev, false);
-	legacy_msm_camera_unregister_irq(cpp_dev->pdev, cpp_dev->irq, cpp_dev);
+	if (cpp_dev->state != CPP_STATE_BOOT)
+		legacy_msm_camera_unregister_irq(cpp_dev->pdev, cpp_dev->irq, cpp_dev);
 req_irq_fail:
 	legacy_msm_camera_clk_enable(&cpp_dev->pdev->dev, cpp_dev->clk_info,
 		cpp_dev->cpp_clk, cpp_dev->num_clks, false);
@@ -1367,6 +1381,7 @@ static int cpp_open_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 		rc = cpp_init_mem(cpp_dev);
 		if (rc < 0) {
 			pr_err("Error: init memory fail\n");
+			cpp_release_hardware(cpp_dev);
 			cpp_dev->cpp_open_cnt--;
 			cpp_dev->cpp_subscribe_list[i].active = 0;
 			cpp_dev->cpp_subscribe_list[i].vfh = NULL;
@@ -4352,47 +4367,23 @@ static int cpp_probe(struct platform_device *pdev)
 		goto cpp_probe_init_error;
 	}
 
-	cpp_dev->state = CPP_STATE_BOOT;
-	rc = cpp_init_hardware(cpp_dev);
-	if (rc < 0)
-		goto bus_de_init;
-
-	media_entity_pads_init(&cpp_dev->msm_sd.sd.entity, 0, NULL);
-	cpp_dev->msm_sd.sd.grp_id = MSM_CAMERA_SUBDEV_CPP;
-	cpp_dev->msm_sd.sd.entity.name = pdev->name;
-	cpp_dev->msm_sd.close_seq = MSM_SD_CLOSE_3RD_CATEGORY;
-	legacy_msm_sd_register(&cpp_dev->msm_sd);
-	legacy_msm_cam_copy_v4l2_subdev_fops(&legacy_msm_cpp_v4l2_subdev_fops);
-	legacy_msm_cpp_v4l2_subdev_fops.unlocked_ioctl = msm_cpp_subdev_fops_ioctl;
-#ifdef CONFIG_COMPAT
-	legacy_msm_cpp_v4l2_subdev_fops.compat_ioctl32 =
-		msm_cpp_subdev_fops_compat_ioctl;
-#endif
-
-	cpp_dev->msm_sd.sd.devnode->fops = &legacy_msm_cpp_v4l2_subdev_fops;
-
-	legacy_msm_camera_io_w(0x0, cpp_dev->base +
-					   MSM_CPP_MICRO_IRQGEN_MASK);
-	legacy_msm_camera_io_w(0xFFFF, cpp_dev->base +
-					   MSM_CPP_MICRO_IRQGEN_CLR);
-	legacy_msm_camera_io_w(0x80000000, cpp_dev->base + 0xF0);
-	cpp_release_hardware(cpp_dev);
-	cpp_dev->state = CPP_STATE_OFF;
-	msm_cpp_enable_debugfs(cpp_dev);
-
 	msm_queue_init(&cpp_dev->eventData_q, "eventdata");
 	msm_queue_init(&cpp_dev->processing_q, "frame");
 	INIT_LIST_HEAD(&cpp_dev->tasklet_q);
 	tasklet_init(&cpp_dev->cpp_tasklet, legacy_msm_cpp_do_tasklet,
 		(unsigned long)cpp_dev);
 	cpp_dev->timer_wq = create_workqueue("msm_cpp_workqueue");
+	if (!cpp_dev->timer_wq) {
+		rc = -ENOMEM;
+		goto kill_tasklet;
+	}
 	cpp_dev->work = kmalloc(sizeof(struct msm_cpp_work_t),
 		GFP_KERNEL);
 
 	if (!cpp_dev->work) {
 		pr_err("no enough memory\n");
 		rc = -ENOMEM;
-		goto bus_de_init;
+		goto destroy_workqueue;
 	}
 
 	INIT_WORK((struct work_struct *)cpp_dev->work, msm_cpp_do_timeout_work);
@@ -4407,20 +4398,55 @@ static int cpp_probe(struct platform_device *pdev)
 		cpp_timer_callback, 0);
 	cpp_dev->fw_name_bin = NULL;
 	cpp_dev->max_timeout_trial_cnt = MSM_CPP_MAX_TIMEOUT_TRIAL;
-	if (rc == 0)
-		CPP_DBG("SUCCESS.");
-	else
-		CPP_DBG("FAILED.");
-	return rc;
 
-bus_de_init:
+	cpp_dev->state = CPP_STATE_BOOT;
+	rc = cpp_init_hardware(cpp_dev);
+	if (rc < 0)
+		goto free_work;
+
+	legacy_msm_camera_io_w(0x0, cpp_dev->base +
+					   MSM_CPP_MICRO_IRQGEN_MASK);
+	legacy_msm_camera_io_w(0xFFFF, cpp_dev->base +
+					   MSM_CPP_MICRO_IRQGEN_CLR);
+	legacy_msm_camera_io_w(0x80000000, cpp_dev->base + 0xF0);
+	cpp_release_hardware(cpp_dev);
+	cpp_dev->state = CPP_STATE_OFF;
+
+	rc = media_entity_pads_init(&cpp_dev->msm_sd.sd.entity, 0, NULL);
+	if (rc < 0)
+		goto free_work;
+	cpp_dev->msm_sd.sd.grp_id = MSM_CAMERA_SUBDEV_CPP;
+	cpp_dev->msm_sd.sd.entity.name = pdev->name;
+	cpp_dev->msm_sd.close_seq = MSM_SD_CLOSE_3RD_CATEGORY;
+	legacy_msm_cam_copy_v4l2_subdev_fops(&legacy_msm_cpp_v4l2_subdev_fops);
+	legacy_msm_cpp_v4l2_subdev_fops.unlocked_ioctl = msm_cpp_subdev_fops_ioctl;
+#ifdef CONFIG_COMPAT
+	legacy_msm_cpp_v4l2_subdev_fops.compat_ioctl32 =
+		msm_cpp_subdev_fops_compat_ioctl;
+#endif
+	rc = legacy_msm_sd_register(&cpp_dev->msm_sd);
+	if (rc < 0)
+		goto entity_cleanup;
+	cpp_dev->msm_sd.sd.devnode->fops = &legacy_msm_cpp_v4l2_subdev_fops;
+	msm_cpp_enable_debugfs(cpp_dev);
+	CPP_DBG("SUCCESS.");
+	return 0;
+
+entity_cleanup:
+	media_entity_cleanup(&cpp_dev->msm_sd.sd.entity);
+free_work:
+	legacy_cpp_timer.data.cpp_dev = NULL;
+destroy_workqueue:
+	destroy_workqueue(cpp_dev->timer_wq);
+	kfree(cpp_dev->work);
+kill_tasklet:
+	tasklet_kill(&cpp_dev->cpp_tasklet);
 	if (cpp_dev->bus_master_flag)
 		legacy_msm_cpp_deinit_bandwidth_mgr(cpp_dev);
 	else
 		legacy_msm_isp_deinit_bandwidth_mgr(ISP_CPP);
 cpp_probe_init_error:
-	media_entity_cleanup(&cpp_dev->msm_sd.sd.entity);
-	legacy_msm_sd_unregister(&cpp_dev->msm_sd);
+	cpp_put_power_domain(cpp_dev);
 get_reset_err:
 	reset_control_put(cpp_dev->micro_iface_reset);
 get_reg_err:
@@ -4436,6 +4462,8 @@ cpp_base_failed:
 	legacy_msm_camera_put_reg_base(pdev, cpp_dev->camss_cpp_base,
 		"camss_cpp", true);
 
+	platform_set_drvdata(pdev, NULL);
+	mutex_destroy(&cpp_dev->mutex);
 	kfree(cpp_dev);
 	return rc;
 }
@@ -4473,13 +4501,7 @@ static void cpp_device_remove(struct platform_device *dev)
 	legacy_msm_camera_put_reg_base(dev, cpp_dev->base, "cpp", true);
 	legacy_msm_camera_put_reg_base(dev, cpp_dev->vbif_base, "cpp_vbif", false);
 	legacy_msm_camera_put_reg_base(dev, cpp_dev->cpp_hw_base, "cpp_hw", true);
-	if (cpp_dev->power_domain) {
-		if (cpp_dev->power_domain == &dev->dev)
-			pm_runtime_disable(cpp_dev->power_domain);
-		else
-			dev_pm_domain_detach(cpp_dev->power_domain, true);
-		cpp_dev->power_domain = NULL;
-	}
+	cpp_put_power_domain(cpp_dev);
 	legacy_msm_camera_put_clk_info(dev, &cpp_dev->clk_info,
 		&cpp_dev->cpp_clk, cpp_dev->num_clks);
 	legacy_msm_camera_unregister_bus_client(CAM_BUS_CLIENT_CPP);
@@ -4507,8 +4529,16 @@ static struct platform_driver cpp_driver = {
 
 static int __init msm_cpp_init_module(void)
 {
+	int rc;
+
 	if (!camera_legacy_enable)
 		return -ENODEV;
+	rc = ramoops_wait_snapshot_ready(10000);
+	if (rc < 0) {
+		pr_err("no flushed logdump snapshot (%d); skipping registration\n", rc);
+		return rc;
+	}
+	pr_info("DIAG: logdump snapshot ready; starting CPP registration\n");
 	return platform_driver_register(&cpp_driver);
 }
 
@@ -4541,7 +4571,7 @@ static int msm_cpp_enable_debugfs(struct cpp_device *cpp_dev)
 	return 0;
 }
 
-module_init(msm_cpp_init_module);
+late_initcall(msm_cpp_init_module);
 module_exit(msm_cpp_exit_module);
 MODULE_DESCRIPTION("MSM CPP driver");
 MODULE_LICENSE("GPL v2");
