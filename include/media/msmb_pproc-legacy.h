@@ -4,13 +4,14 @@
 #include <uapi/media/msmb_pproc-legacy.h>
 
 #include <linux/compat.h>
+#include <linux/time32.h>
 
 #define MSM_OUTPUT_BUF_CNT 8
 
 #ifdef CONFIG_COMPAT
 struct msm_cpp_frame_info32_t {
 	int32_t frame_id;
-	struct __kernel_old_timeval timestamp;
+	struct old_timeval32 timestamp;
 	uint32_t inst_id;
 	uint32_t identity;
 	uint32_t client_id;
@@ -20,7 +21,7 @@ struct msm_cpp_frame_info32_t {
 	compat_uint_t cpp_cmd_msg;
 	int src_fd;
 	int dst_fd;
-	struct __kernel_old_timeval in_time, out_time;
+	struct old_timeval32 in_time, out_time;
 	compat_caddr_t cookie;
 	compat_int_t status;
 	int32_t duplicate_output;

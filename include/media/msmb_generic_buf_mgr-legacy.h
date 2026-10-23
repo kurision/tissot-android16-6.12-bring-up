@@ -15,6 +15,7 @@
 
 #include <uapi/media/msmb_generic_buf_mgr-legacy.h>
 #include <linux/compat.h>
+#include <linux/time32.h>
 
 struct v4l2_subdev *legacy_msm_buf_mngr_get_subdev(void);
 
@@ -24,7 +25,7 @@ struct msm_buf_mngr_info32_t {
 	uint32_t session_id;
 	uint32_t stream_id;
 	uint32_t frame_id;
-	struct __kernel_old_timeval timestamp;
+	struct old_timeval32 timestamp;
 	uint32_t index;
 	uint32_t reserved;
 	enum msm_camera_buf_mngr_buf_type type;

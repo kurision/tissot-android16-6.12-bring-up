@@ -13,11 +13,12 @@
 #define __MSMB_ISP__
 
 #include <uapi/media/msmb_isp-legacy.h>
+#include <linux/time32.h>
 
 #ifdef CONFIG_COMPAT
 struct msm_isp_event_data32 {
-	struct __kernel_old_timeval timestamp;
-	struct __kernel_old_timeval mono_timestamp;
+	struct old_timeval32 timestamp;
+	struct old_timeval32 mono_timestamp;
 	uint32_t frame_id;
 	union {
 		struct msm_isp_stats_event stats;
@@ -30,8 +31,8 @@ struct msm_isp_event_data32 {
 };
 
 struct msm_isp32_event_data32 {
-	struct __kernel_old_timeval timestamp;
-	struct __kernel_old_timeval mono_timestamp;
+	struct old_timeval32 timestamp;
+	struct old_timeval32 mono_timestamp;
 	enum msm_vfe_input_src input_intf;
 	uint32_t frame_id;
 	union {
