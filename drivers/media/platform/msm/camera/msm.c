@@ -35,15 +35,22 @@
 
 static struct v4l2_device *msm_v4l2_dev;
 
-/* The vendor HAL enumerates entity-only IDs and Qualcomm subdevice groups. */
+/* CPP/VPE userspace also uses revision to select /dev/v4l-subdevN. */
 static void msm_legacy_entity_info(struct media_entity *entity, u32 *id,
-				   u32 *group_id)
+				   u32 *group_id, u32 *revision)
 {
 	*id = entity->internal_idx;
-	if (is_media_entity_v4l2_subdev(entity))
-		*group_id = media_entity_to_v4l2_subdev(entity)->grp_id;
-	else if (is_media_entity_v4l2_video_device(entity))
+	if (is_media_entity_v4l2_subdev(entity)) {
+		struct v4l2_subdev *sd = media_entity_to_v4l2_subdev(entity);
+
+		*group_id = sd->grp_id;
+		if (revision && sd->devnode &&
+		    (sd->grp_id == MSM_CAMERA_SUBDEV_CPP ||
+		     sd->grp_id == MSM_CAMERA_SUBDEV_VPE))
+			*revision = sd->devnode->num;
+	} else if (is_media_entity_v4l2_video_device(entity)) {
 		*group_id = QCAMERA_VNODE_GROUP_ID;
+	}
 }
 
 const struct media_device_ops legacy_msm_media_ops = {

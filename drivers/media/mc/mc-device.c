@@ -80,14 +80,16 @@ static long media_device_get_info(struct media_device *dev, void *arg)
 }
 
 static void media_device_legacy_entity_info(struct media_entity *entity,
-					    u32 *id, u32 *group_id)
+					    u32 *id, u32 *group_id, u32 *revision)
 {
 	struct media_device *mdev = entity->graph_obj.mdev;
 
 	*id = media_entity_id(entity);
 	*group_id = 0;
+	if (revision)
+		*revision = 0;
 	if (mdev->ops && mdev->ops->legacy_entity_info)
-		mdev->ops->legacy_entity_info(entity, id, group_id);
+		mdev->ops->legacy_entity_info(entity, id, group_id, revision);
 }
 
 static struct media_entity *find_entity(struct media_device *mdev, u32 id)
@@ -101,7 +103,7 @@ static struct media_entity *find_entity(struct media_device *mdev, u32 id)
 	media_device_for_each_entity(entity, mdev) {
 		u32 entity_id, group_id;
 
-		media_device_legacy_entity_info(entity, &entity_id, &group_id);
+		media_device_legacy_entity_info(entity, &entity_id, &group_id, NULL);
 		if (!next && entity_id == id)
 			return entity;
 		if (next && entity_id > id && entity_id < found_id) {
@@ -124,11 +126,11 @@ static long media_device_enum_entities(struct media_device *mdev, void *arg)
 
 	memset(entd, 0, sizeof(*entd));
 
-	media_device_legacy_entity_info(ent, &entd->id, &entd->group_id);
+	media_device_legacy_entity_info(ent, &entd->id, &entd->group_id,
+					&entd->revision);
 	if (ent->name)
 		strscpy(entd->name, ent->name, sizeof(entd->name));
 	entd->type = ent->function;
-	entd->revision = 0;		/* Unused */
 	entd->flags = ent->flags;
 	entd->pads = ent->num_pads;
 	entd->links = ent->num_links - ent->num_backlinks;
@@ -162,7 +164,7 @@ static void media_device_kpad_to_upad(const struct media_pad *kpad,
 {
 	u32 group_id;
 
-	media_device_legacy_entity_info(kpad->entity, &upad->entity, &group_id);
+	media_device_legacy_entity_info(kpad->entity, &upad->entity, &group_id, NULL);
 	upad->index = kpad->index;
 	upad->flags = kpad->flags;
 }
