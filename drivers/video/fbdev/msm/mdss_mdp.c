@@ -23,7 +23,6 @@
 #include <linux/of_address.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
-#include <linux/pstore_ram.h>
 #include <linux/regulator/consumer.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -62,34 +61,6 @@
 #define RES_UHD			(3840*2160)
 
 #define MDP_DEVICE_ID		0x1A
-
-/* DEBUG run111/run117: per-access markers for the silent-reset hunt.
- * Run110/114 proved the reset needs no display userspace and no MDP
- * re-probe, but an early-path death with working markers still names
- * the exact hanging access. Slots are 8-byte tag+value pairs in 4K
- * carved from the ramoops dmesg area (see ramoops_diag_mark). The
- * logdump snapshot copies the page every 2 s (decode-pstore.py prints
- * it); a reset that returns to stock usually loses the RAM copy, so
- * "DIAG mark prev" at the next port boot is best-effort. Last
- * non-zero slot names the hanging access.
- */
-#define MDSS_MARK_S1_PRECLK		0x00
-#define MDSS_MARK_S2_POSTCLK		0x08
-#define MDSS_MARK_PROBE_ENTRY		0x10
-#define MDSS_MARK_HWVER			0x18
-#define MDSS_MARK_REV_PRE		0x20
-#define MDSS_MARK_REV_POST		0x28
-#define MDSS_MARK_HWINIT_PRE		0x30
-#define MDSS_MARK_UNDERRUN		0x38
-#define MDSS_MARK_HWSET_PRE		0x40
-#define MDSS_MARK_HWSET_POST		0x48
-#define MDSS_MARK_HWINIT_POST		0x50
-#define MDSS_MARK_PANIC_PRE		0x58
-#define MDSS_MARK_PANIC_POST		0x60
-#define MDSS_MARK_INTF_PRE		0x68
-#define MDSS_MARK_INTF_POST		0x70
-#define MDSS_MARK_SPLIT			0x78
-#define MDSS_MARK_SKIP			0x80
 
 struct mdss_data_type *mdss_res;
 static u32 mem_protect_sd_ctrl_id;
@@ -286,7 +257,6 @@ static struct mdss_mdp_irq mdp_irq_map[] =  {
 static struct intr_callback *mdp_intr_cb;
 
 static int mdss_mdp_parse_dt(struct platform_device *pdev);
-static void mdss_mdp_debug_emmc_mark(loff_t slot, u32 tag, u32 val);
 static int mdss_mdp_parse_dt_pipe(struct platform_device *pdev);
 static int mdss_mdp_parse_dt_mixer(struct platform_device *pdev);
 static int mdss_mdp_parse_dt_wb(struct platform_device *pdev);
@@ -1666,15 +1636,12 @@ static int mdss_mdp_idle_pc_restore(void)
 	}
 	if (pm_runtime_status_suspended(&mdata->pdev->dev)) {
 		pr_err("mdss_mdp: hw_init skipped, MDSS runtime-suspended\n");
-		mdss_mdp_debug_emmc_mark(MDSS_MARK_SKIP, 0x504B534D, 0);
 	} else {
 		mdss_hw_init(mdata);
 	}
 	mdss_iommu_ctrl(0);
 
-	pr_info("DIAG118 idle_pc_restore ctl_restore pre\n");
 	mdss_mdp_ctl_restore(true);
-	pr_info("DIAG118 idle_pc_restore ctl_restore done\n");
 	mdata->idle_pc = false;
 
 end:
@@ -2272,109 +2239,8 @@ static void mdss_hw_rev_init(struct mdss_data_type *mdata)
 	if (mdata->mdp_rev)
 		return;
 
-	pr_info("mdss_mdp: hw_rev_init reading HW_VERSION\n");
-	mdss_mdp_debug_emmc_mark(MDSS_MARK_REV_PRE, 0x3056524D, 0);
 	mdata->mdp_rev = MDSS_REG_READ(mdata, MDSS_REG_HW_VERSION);
-	mdss_mdp_debug_emmc_mark(MDSS_MARK_REV_POST, 0x3156524D,
-				 mdata->mdp_rev);
 	mdss_mdp_hw_rev_caps_init(mdata);
-}
-
-/* DEBUG run118: ground-truth MDSS power state, read from GCC (always
- * clocked, so the reads are safe even when MDSS is down). GDSCR bit 31
- * is PWR_ON; CBCR bit 31 is CLK_OFF. Offsets from gcc-msm8953.c
- * (mdss_gdsc, gcc_mdss_{ahb,axi,mdp}_clk). pr_info, not a RAM mark:
- * the diag init's kmsg logger lands it in logdump within ms, while
- * marks only reach eMMC with the 2 s snapshot.
- */
-#define MDSS_DIAG_GCC_PAGE	0x184d000
-void mdss_mdp_diag_pwr(const char *where)
-{
-	static void __iomem *gcc;
-	u32 gdscr, ahb, axi, mdp;
-
-	if (!gcc)
-		gcc = ioremap(MDSS_DIAG_GCC_PAGE, SZ_4K);
-	if (!gcc) {
-		pr_info("DIAG118 %s: gcc unmapped\n", where);
-		return;
-	}
-	gdscr = readl_relaxed(gcc + 0x078);
-	ahb = readl_relaxed(gcc + 0x07c);
-	axi = readl_relaxed(gcc + 0x080);
-	mdp = readl_relaxed(gcc + 0x088);
-	pr_info("DIAG118 %s: gdsc_on=%u ahb_off=%u axi_off=%u mdp_off=%u gdscr=%08x rpm=%s\n",
-		where, !!(gdscr & BIT(31)), !!(ahb & BIT(31)),
-		!!(axi & BIT(31)), !!(mdp & BIT(31)), gdscr,
-		mdss_res && mdss_res->pdev &&
-		pm_runtime_status_suspended(&mdss_res->pdev->dev) ?
-		"suspended" : "active");
-}
-
-/*
- * DEBUG run123: dump SSPP fetch state and CTL layer staging. The MDSS
- * SMMU faults on reads at the cont-splash base (0x90001000); tag SRC0
- * values inside that 1080x1920 rgb888 buffer (stride 0xca8) as SPLASH.
- * Read-only; callers hold MDP_BLOCK_POWER_ON.
- */
-#define MDSS_DIAG_SPLASH_BASE	0x90001000
-#define MDSS_DIAG_SPLASH_SIZE	0x5eec00
-static void mdss_mdp_diag_pipe_arr(const char *where, const char *kind,
-				   struct mdss_mdp_pipe *pipes, u32 npipes)
-{
-	struct mdss_mdp_pipe *p;
-	u32 i, src0;
-
-	for (i = 0; pipes && i < npipes; i++) {
-		p = &pipes[i];
-		if (!p->base)
-			continue;
-		src0 = readl_relaxed(p->base + MDSS_MDP_REG_SSPP_SRC0_ADDR);
-		if (!src0)
-			continue;
-		pr_info("DIAG123 %s: %s%u ndx=0x%x src0=%08x%s size=%08x fmt=%08x op=%08x\n",
-			where, kind, i, p->ndx, src0,
-			src0 >= MDSS_DIAG_SPLASH_BASE &&
-			src0 - MDSS_DIAG_SPLASH_BASE < MDSS_DIAG_SPLASH_SIZE ?
-			" SPLASH" : "",
-			readl_relaxed(p->base + MDSS_MDP_REG_SSPP_SRC_SIZE),
-			readl_relaxed(p->base + MDSS_MDP_REG_SSPP_SRC_FORMAT),
-			readl_relaxed(p->base + MDSS_MDP_REG_SSPP_SRC_OP_MODE));
-	}
-}
-
-void mdss_mdp_diag_pipes(const char *where)
-{
-	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
-	struct mdss_mdp_ctl *ctl;
-	char buf[96];
-	int len;
-	u32 i, lm;
-
-	if (!mdata) {
-		pr_info("DIAG123 %s: no mdata\n", where);
-		return;
-	}
-	mdss_mdp_diag_pipe_arr(where, "vig", mdata->vig_pipes,
-			       mdata->nvig_pipes);
-	mdss_mdp_diag_pipe_arr(where, "rgb", mdata->rgb_pipes,
-			       mdata->nrgb_pipes);
-	mdss_mdp_diag_pipe_arr(where, "dma", mdata->dma_pipes,
-			       mdata->ndma_pipes);
-
-	for (i = 0; mdata->ctl_off && i < mdata->nctl; i++) {
-		ctl = &mdata->ctl_off[i];
-		if (!ctl->base)
-			continue;
-		len = 0;
-		buf[0] = '\0';
-		for (lm = 0; lm < mdata->nmixers_intf; lm++)
-			len += scnprintf(buf + len, sizeof(buf) - len,
-					 " lm%u=%08x", lm,
-					 readl_relaxed(ctl->base +
-						MDSS_MDP_REG_CTL_LAYER(lm)));
-		pr_info("DIAG123 %s: ctl%u%s\n", where, i, buf);
-	}
 }
 
 /**
@@ -2388,40 +2254,22 @@ void mdss_mdp_diag_pipes(const char *where)
 void mdss_hw_init(struct mdss_data_type *mdata)
 {
 	struct mdss_mdp_pipe *vig;
-	int hwset_count = 0;
 
-	pr_info("mdss_mdp: hw_init begin rev=%u from %pS\n", mdata->mdp_rev,
-		__builtin_return_address(0));
-	mdss_mdp_diag_pwr("hw_init entry");
-	mdss_mdp_debug_emmc_mark(MDSS_MARK_HWINIT_PRE, 0x3049484D,
-				 mdata->mdp_rev);
 	mdss_hw_rev_init(mdata);
 
 	/* Disable hw underrun recovery only for older mdp reversions. */
 	if (mdata->mdp_rev < MDSS_MDP_HW_REV_105) {
-		pr_info("mdss_mdp: hw_init underrun disable write\n");
 		writel_relaxed(0x0, mdata->mdp_base +
 			MDSS_MDP_REG_VIDEO_INTF_UNDERFLOW_CTL);
-		mdss_mdp_debug_emmc_mark(MDSS_MARK_UNDERRUN, 0x3055484D, 0);
 	}
 
 	if (mdata->hw_settings) {
 		struct mdss_hw_settings *hws = mdata->hw_settings;
 
-		pr_info("mdss_mdp: hw_init hw_settings table begin\n");
-		mdss_mdp_debug_emmc_mark(MDSS_MARK_HWSET_PRE, 0x3057484D, 0);
 		while (hws->reg) {
-			/* DEBUG run118: name each write before it happens; a
-			 * bus hang leaves this as the last logdump line.
-			 */
-			pr_info("DIAG118 hw_settings[%d] %px <- %08x\n",
-				hwset_count, hws->reg, hws->val);
 			writel_relaxed(hws->val, hws->reg);
 			hws++;
-			hwset_count++;
 		}
-		mdss_mdp_debug_emmc_mark(MDSS_MARK_HWSET_POST, 0x3157484D,
-					 hwset_count);
 	}
 
 	vig = mdata->vig_pipes;
@@ -2429,9 +2277,6 @@ void mdss_hw_init(struct mdss_data_type *mdata)
 	mdata->nmax_concurrent_ad_hw =
 		(mdata->mdp_rev < MDSS_MDP_HW_REV_103) ? 1 : 2;
 
-	mdss_mdp_debug_emmc_mark(MDSS_MARK_HWINIT_POST, 0x3149484D,
-				 mdata->mdp_rev);
-	pr_info("DIAG118 hw_init end writes=%d\n", hwset_count);
 }
 
 static u32 mdss_mdp_res_init(struct mdss_data_type *mdata)
@@ -2605,9 +2450,7 @@ void mdss_mdp_footswitch_ctrl_splash(int on)
 			if (ret < 0)
 				pr_err("Footswitch failed to enable: %d\n",
 					ret);
-			mdss_mdp_debug_emmc_mark(MDSS_MARK_S1_PRECLK, 0x314D4453, 0);
 			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
-			mdss_mdp_debug_emmc_mark(MDSS_MARK_S2_POSTCLK, 0x324D4453, 0);
 			mdss_bus_bandwidth_ctrl(true);
 		} else {
 			pr_debug("Disable MDP FS for splash.\n");
@@ -3046,28 +2889,6 @@ int mdss_panel_get_intf_status(u32 disp_num, u32 intf_type)
 	return rc;
 }
 
-/* DEBUG run117: markers bypass the VFS entirely (see the MDSS_MARK_*
- * slot table near the top of this file). Every absolute open from
- * deferred-probe context failed: run112 ENOENT on plain filp_open,
- * run116 ENOENT on file_open_root with init's borrowed root
- * (mechanism unexplained), while init's own opens of the same nodes
- * succeed every boot.
- */
-static void mdss_mdp_debug_emmc_mark(loff_t slot, u32 tag, u32 val)
-{
-	ramoops_diag_mark(slot, tag, val);
-}
-static void mdss_mdp_debug_emmc_marker(struct mdss_data_type *mdata)
-{
-	u32 ver;
-
-	pr_info("mdss_mdp: probe marker before HW_VERSION read\n");
-	mdss_mdp_debug_emmc_mark(MDSS_MARK_PROBE_ENTRY, 0x4D445053, 0);
-	/* If the HW is unpowered this read hangs: ENTRY tag only in RAM. */
-	ver = MDSS_REG_READ(mdata, MDSS_REG_HW_VERSION);
-	mdss_mdp_debug_emmc_mark(MDSS_MARK_HWVER, 0x20524556, ver);
-}
-
 /*
  * mdss_mdp_cold_boot: bring the panel up from scratch even when the
  * bootloader left a display running.
@@ -3258,12 +3079,6 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 		rc = -EPROBE_DEFER;
 		goto probe_done;
 	}
-	/* DEBUG run111/run117: per-access markers (tag+value pairs in the
-	 * ramoops reservation tail via ramoops_diag_mark). Last non-zero
-	 * slot of the previous boot names the hanging access; see the
-	 * MDSS_MARK_* slot table near the top of this file.
-	 */
-	mdss_mdp_debug_emmc_marker(mdata);
 	mdss_hw_rev_init(mdata);
 
 	/*populate hw iomem base info from device tree*/
@@ -3319,16 +3134,12 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 		__mdss_restore_sec_cfg(mdata);
 
 	if (mdss_has_quirk(mdata, MDSS_QUIRK_BWCPANIC)) {
-		pr_info("mdss_mdp: probe panic-lut reads\n");
-		mdss_mdp_debug_emmc_mark(MDSS_MARK_PANIC_PRE, 0x304C504D, 0);
 		mdata->default_panic_lut0 = readl_relaxed(mdata->mdp_base +
 			MMSS_MDP_PANIC_LUT0);
 		mdata->default_panic_lut1 = readl_relaxed(mdata->mdp_base +
 			MMSS_MDP_PANIC_LUT1);
 		mdata->default_robust_lut = readl_relaxed(mdata->mdp_base +
 			MMSS_MDP_ROBUST_LUT);
-		mdss_mdp_debug_emmc_mark(MDSS_MARK_PANIC_POST, 0x314C504D,
-					 mdata->default_panic_lut0);
 	}
 
 	/*
@@ -3337,14 +3148,10 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 	 * clk/regulator votes else turn off clk/regulators because purpose
 	 * here is to get mdp_rev.
 	 */
-	pr_info("mdss_mdp: probe intf_sel reads\n");
-	mdss_mdp_debug_emmc_mark(MDSS_MARK_INTF_PRE, 0x3046494D, 0);
 	intf_sel = readl_relaxed(mdata->mdp_base +
 		MDSS_MDP_REG_DISP_INTF_SEL);
 	split_display = readl_relaxed(mdata->mdp_base +
 		MDSS_MDP_REG_SPLIT_DISPLAY_EN);
-	mdss_mdp_debug_emmc_mark(MDSS_MARK_INTF_POST, 0x3146494D, intf_sel);
-	mdss_mdp_debug_emmc_mark(MDSS_MARK_SPLIT, 0x3150534D, split_display);
 	if (intf_sel != 0) {
 		for (i = 0; i < 4; i++)
 			num_of_display_on += ((intf_sel >> i*8) & 0x000000FF);

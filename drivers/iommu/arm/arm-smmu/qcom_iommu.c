@@ -293,13 +293,6 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 			}
 			ctx->secure_init = true;
 		}
-		{
-			u32 pre = iommu_readl(ctx, ARM_SMMU_CB_SCTLR);
-
-			dev_info(qcom_iommu->dev,
-				 "DIAG cb-owner: asid=%d sctlr_after_secure_cfg=%08x secure_ctx=%d\n",
-				 ctx->asid, pre, ctx->secured_ctx);
-		}
 
 		/* Secured QSMMU-500/QSMMU-v2 contexts cannot be programmed */
 		if (ctx->secured_ctx) {
@@ -354,15 +347,6 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 			reg |= ARM_SMMU_SCTLR_E;
 
 		iommu_writel(ctx, ARM_SMMU_CB_SCTLR, reg);
-
-		/* DIAG (run127): what we just programmed, read back. */
-		dev_info(qcom_iommu->dev,
-			 "DIAG init_domain: master=%s cb=%d ttbr0=%016llx sctlr=%08x ias=%u aarch64=%u tcr=%08x tcr2=%08x\n",
-			 dev_name(dev), ctx->asid,
-			 (unsigned long long)iommu_readq(ctx, ARM_SMMU_CB_TTBR0),
-			 iommu_readl(ctx, ARM_SMMU_CB_SCTLR), pgtbl_cfg.ias, aarch64,
-			 iommu_readl(ctx, ARM_SMMU_CB_TCR),
-			 iommu_readl(ctx, ARM_SMMU_CB_TCR2));
 
 		ctx->domain = domain;
 	}
@@ -453,10 +437,6 @@ static int qcom_iommu_attach_dev(struct iommu_domain *domain, struct device *dev
 	if (qcom_domain->iommu != qcom_iommu)
 		return -EINVAL;
 
-	/* DIAG (run127): a master was attached to a translated domain. */
-	dev_info(dev, "DIAG attach_dev: %s -> translated domain\n",
-		 dev_name(dev));
-
 	return 0;
 }
 
@@ -486,9 +466,6 @@ static int qcom_iommu_identity_attach(struct iommu_domain *identity_domain,
 		ctx->domain = NULL;
 	}
 	pm_runtime_put_sync(qcom_iommu->dev);
-
-	/* DIAG (run127): master moved to the identity (bypass) domain. */
-	dev_info(dev, "DIAG identity_attach(bypass): %s\n", dev_name(dev));
 
 	return 0;
 }
@@ -781,24 +758,6 @@ static int qcom_iommu_ctx_probe(struct platform_device *pdev)
 
 	if (of_device_is_compatible(dev->of_node, "qcom,msm-iommu-v2-sec"))
 		ctx->secured_ctx = true;
-
-	/*
-	 * DIAG (run127): the state the bootloader (LK) left this context bank
-	 * in, read before anything clears it. A translating non-secure CB with
-	 * a foreign TTBR0 that no in-kernel owner ever reprograms would turn a
-	 * client's physical addresses into IOVAs.
-	 */
-	if (!ctx->secured_ctx) {
-		u32 d_sctlr = iommu_readl(ctx, ARM_SMMU_CB_SCTLR);
-		u64 d_ttbr0 = iommu_readq(ctx, ARM_SMMU_CB_TTBR0);
-		u32 d_fsr = iommu_readl(ctx, ARM_SMMU_CB_FSR);
-
-		dev_info(dev,
-			 "DIAG ctx probe(boot) %pOF: sctlr=%08x translating=%u ttbr0=%016llx fsr=%08x\n",
-			 dev->of_node, d_sctlr,
-			 !!(d_sctlr & ARM_SMMU_SCTLR_M),
-			 (unsigned long long)d_ttbr0, d_fsr);
-	}
 
 	/* clear IRQs before registering fault handler, just in case the
 	 * boot-loader left us a surprise:

@@ -14,9 +14,6 @@
 
 #define PON_SOFT_RB_SPARE		0x8f
 
-/* PON peripheral (pm8941 family): cause of the previous reset, sticky. */
-#define PON_REASON1			0x08
-
 #define GEN1_REASON_SHIFT		2
 #define GEN2_REASON_SHIFT		1
 
@@ -81,46 +78,6 @@ static int pm8916_pon_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev, "can't register reboot mode\n");
 			return error;
 		}
-	}
-
-	/*
-	 * Snapshot60 run9x diagnostic: report the previous reset's PON
-	 * cause as raw register, decoded offline. Plain read, no side
-	 * effects; one line per boot, like any probe message.
-	 * Run115: also snapshot POFF causes and the PMIC WDT S1/S2 state
-	 * (offsets from the pm8916 PON block; same regmap). A firmware-
-	 * armed PMIC WDT with S2 enabled and no kernel petter would bite
-	 * silently, like the APPS WDT dumped from ramoops_probe.
-	 */
-#define PON_POFF_REASON1	0x0c
-#define PON_POFF_REASON2	0x0d
-#define PON_WD_S1_TIMER		0x54
-#define PON_WD_S2_TIMER		0x55
-#define PON_WD_S2_CTL		0x56
-#define PON_WD_S2_CTL2		0x57
-	{
-		unsigned int reason = 0, poff1 = 0, poff2 = 0;
-		unsigned int s1 = 0, s2 = 0, s2ctl = 0, s2ctl2 = 0;
-		int rerr;
-
-		rerr = regmap_read(pon->regmap,
-				   pon->baseaddr + PON_REASON1, &reason);
-		regmap_read(pon->regmap,
-			    pon->baseaddr + PON_POFF_REASON1, &poff1);
-		regmap_read(pon->regmap,
-			    pon->baseaddr + PON_POFF_REASON2, &poff2);
-		regmap_read(pon->regmap,
-			    pon->baseaddr + PON_WD_S1_TIMER, &s1);
-		regmap_read(pon->regmap,
-			    pon->baseaddr + PON_WD_S2_TIMER, &s2);
-		regmap_read(pon->regmap,
-			    pon->baseaddr + PON_WD_S2_CTL, &s2ctl);
-		regmap_read(pon->regmap,
-			    pon->baseaddr + PON_WD_S2_CTL2, &s2ctl2);
-		pr_info("DIAG pon_reason reason1=0x%02x poff1=0x%02x poff2=0x%02x wd_s1=0x%02x wd_s2=0x%02x s2ctl=0x%02x s2ctl2=0x%02x err=%d\n",
-			reason & 0xff, poff1 & 0xff, poff2 & 0xff,
-			s1 & 0xff, s2 & 0xff, s2ctl & 0xff, s2ctl2 & 0xff,
-			rerr);
 	}
 
 	platform_set_drvdata(pdev, pon);

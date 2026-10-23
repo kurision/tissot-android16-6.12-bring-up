@@ -39,7 +39,6 @@
 #include <linux/dma-buf.h>
 #include <linux/iosys-map.h>
 #include <linux/random.h>
-#include <linux/pstore_ram.h>
 
 #include <linux/smp.h>
 #include <linux/stacktrace.h>
@@ -400,7 +399,6 @@ struct qseecom_control {
 	wait_queue_head_t unload_app_kthread_wq;
 	atomic_t unload_app_kthread_state;
 
-	struct task_struct *stall_watchdog_task;
 };
 
 struct qseecom_unload_app_pending_list {
@@ -445,176 +443,6 @@ struct qseecom_listener_handle {
 };
 
 static struct qseecom_control qseecom;
-
-static void qseecom_canary_fn(struct work_struct *work);
-static DECLARE_DELAYED_WORK(qseecom_canary_work, qseecom_canary_fn);
-
-/* Global view of the canary for the stall watchdog below. */
-atomic64_t qseecom_canary_ticks;
-
-static void qseecom_canary_fn(struct work_struct *work)
-{
-	static unsigned long long tick;
-	int state = atomic_read(&qseecom.qseecom_state);
-
-	if (state != QSEECOM_STATE_READY)
-		return;
-
-	atomic64_set(&qseecom_canary_ticks, ++tick);
-	if (atomic_read(&qseecom.qseecom_state) == QSEECOM_STATE_READY)
-		schedule_delayed_work(&qseecom_canary_work, HZ);
-}
-
-/*
- * Boot diagnostic: sample the qseecom canary and request state/CPU dumps
- * when it stops advancing. Missing retained warnings do not establish a
- * kernel-wide halt, detector execution, or which task caused a cutoff.
- * The synchronous witness write precedes the canary check and can block
- * this watchdog's own detection. Dumps need working output retention.
- * Witness canary/quiet values lag the current sample by one poll.
- *
- * This diagnostic is not suspend-aware: a canary work item observing
- * SUSPEND stops rearming, and resume does not restart it. Do not interpret
- * its quiet threshold as a stall finding after suspend/resume without
- * a separately verified lifecycle fix.
- */
-#define STALL_QUIET_SECONDS	15
-#define STALL_POLL_SECONDS	5
-
-#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
-struct stall_witness {
-	u64 magic;
-	u64 canary;
-	u64 jiffies;
-	u32 quiet;
-	u32 boot_id;
-};
-
-#define STALL_WITNESS_MAGIC	0x5354414c4c574751ULL	/* "QSTALLS4" */
-
-static void stall_witness_write(u64 canary, u32 quiet)
-{
-	struct stall_witness w = {
-		.magic = STALL_WITNESS_MAGIC,
-		.canary = canary,
-		.jiffies = jiffies,
-		.quiet = quiet,
-		.boot_id = (u32)ktime_get_real_seconds(),
-	};
-
-	ramoops_witness_write(&w, sizeof(w));
-}
-#endif
-
-/*
- * Durable QSEE trace (snapshot45 diagnostic). Every SMC and listener event
- * is written with FUA to a ring in the logdump partition (fs/pstore/ram.c),
- * so the last persisted record shows where a reset happened. Decoded by
- * porting/logging/decode-qsee-trace.py; keep the layout in sync with it.
- * extra[1] of SMC events is qseecom.qsee.clk_access_cnt at trace time.
- */
-#define QSEE_TRACE_MAGIC	0x3143525445455351ULL	/* "QSEETRC1" */
-
-enum {
-	QSEE_TRACE_SMC_SEND = 1,
-	QSEE_TRACE_SMC_RET = 2,
-	QSEE_TRACE_LISTENER_WAKE = 3,
-	QSEE_TRACE_LISTENER_RESP = 4,
-};
-
-struct qsee_trace_rec {
-	__le64 magic, seq, ktime_ns;
-	__le32 boot_id, event, pid, smc_id, arginfo, ret;
-	__le64 args[10];
-	__le64 rets[3];
-	__le64 extra[4];
-	char comm[16];
-};
-
-static_assert(sizeof(struct qsee_trace_rec) == 200);
-
-static atomic64_t qsee_trace_seq;
-static u32 qsee_trace_boot_id;
-
-static void qsee_trace(u32 event, u32 smc_id, const struct scm_desc *desc,
-		       int ret, u64 e0, u64 e1, u64 e2, u64 e3)
-{
-#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
-	struct qsee_trace_rec rec = {};
-	u64 seq = atomic64_inc_return(&qsee_trace_seq);
-	int i;
-
-	rec.magic = cpu_to_le64(QSEE_TRACE_MAGIC);
-	rec.seq = cpu_to_le64(seq);
-	rec.ktime_ns = cpu_to_le64(ktime_get_ns());
-	rec.boot_id = cpu_to_le32(qsee_trace_boot_id);
-	rec.event = cpu_to_le32(event);
-	rec.pid = cpu_to_le32(current->pid);
-	rec.smc_id = cpu_to_le32(smc_id);
-	rec.ret = cpu_to_le32((u32)ret);
-	if (desc) {
-		rec.arginfo = cpu_to_le32(desc->arginfo);
-		for (i = 0; i < ARRAY_SIZE(rec.args); i++)
-			rec.args[i] = cpu_to_le64(desc->args[i]);
-		for (i = 0; i < ARRAY_SIZE(rec.rets); i++)
-			rec.rets[i] = cpu_to_le64(desc->ret[i]);
-	}
-	rec.extra[0] = cpu_to_le64(e0);
-	rec.extra[1] = cpu_to_le64(e1);
-	rec.extra[2] = cpu_to_le64(e2);
-	rec.extra[3] = cpu_to_le64(e3);
-	memcpy(rec.comm, current->comm, sizeof(rec.comm));
-	/* -ENODEV before logdump appears is expected; the seq gap shows it. */
-	ramoops_qtrace_write(seq, &rec, sizeof(rec));
-#else
-	(void)event;
-	(void)smc_id;
-	(void)desc;
-	(void)ret;
-	(void)e0;
-	(void)e1;
-	(void)e2;
-	(void)e3;
-#endif
-}
-
-static void qseecom_stall_dump_cpu(void *info)
-{
-	pr_err("snapshot43 stall watchdog: CPU%u stack follows\n", smp_processor_id());
-	dump_stack();
-}
-
-static int qseecom_stall_watchdog_fn(void *unused)
-{
-	s64 last = atomic64_read(&qseecom_canary_ticks);
-	int quiet = 0;
-
-	while (!kthread_should_stop()) {
-		set_current_state(TASK_INTERRUPTIBLE);
-		if (schedule_timeout(STALL_POLL_SECONDS * HZ))
-			break;
-		set_current_state(TASK_RUNNING);
-
-#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
-		stall_witness_write(last, quiet);
-#endif
-		if (atomic64_read(&qseecom_canary_ticks) == last) {
-			quiet += STALL_POLL_SECONDS;
-			pr_err("snapshot43 stall watchdog: canary frozen at %lld for %d s\n",
-			       last, quiet);
-			if (quiet >= STALL_QUIET_SECONDS) {
-				pr_err("snapshot43 stall watchdog: dumping state\n");
-				show_state();
-				smp_call_function(qseecom_stall_dump_cpu, NULL, 1);
-				quiet = 0;
-			}
-		} else {
-			last = atomic64_read(&qseecom_canary_ticks);
-			quiet = 0;
-		}
-	}
-	return 0;
-}
 
 /*
  * TZ shared-buffer allocation backed by DMA-coherent memory. On this
@@ -787,23 +615,15 @@ static int __qseecom_scm_call2_locked(uint32_t smc_id, struct scm_desc *desc)
 	int ret = 0;
 	int retry_count = 0;
 
-	pr_info("qseecom: smc %08x argc %u call\n", smc_id, desc->arginfo & 0xf);
+	pr_debug("qseecom: smc %08x argc %u call\n", smc_id, desc->arginfo & 0xf);
 	if (qseecom.support_bus_scaling) {
-		qsee_trace(QSEE_TRACE_SMC_SEND, smc_id, desc, 0, 0,
-			   qseecom.qsee.clk_access_cnt, 0, 0);
 		ret = scm_call2(smc_id, desc);
-		qsee_trace(QSEE_TRACE_SMC_RET, smc_id, desc, ret, 0,
-			   qseecom.qsee.clk_access_cnt, 0, 0);
-		pr_info("qseecom: smc %08x -> %d\n", smc_id, ret);
+		pr_debug("qseecom: smc %08x -> %d\n", smc_id, ret);
 		return ret;
 	}
 
 	do {
-		qsee_trace(QSEE_TRACE_SMC_SEND, smc_id, desc, 0,
-			   retry_count, qseecom.qsee.clk_access_cnt, 0, 0);
 		ret = scm_call2_noretry(smc_id, desc);
-		qsee_trace(QSEE_TRACE_SMC_RET, smc_id, desc, ret,
-			   retry_count, qseecom.qsee.clk_access_cnt, 0, 0);
 		if (ret == -EBUSY) {
 			mutex_unlock(&app_access_lock);
 			msleep(QSEECOM_SCM_EBUSY_WAIT_MS);
@@ -813,7 +633,7 @@ static int __qseecom_scm_call2_locked(uint32_t smc_id, struct scm_desc *desc)
 			pr_warn("secure world has been busy for 1 second!\n");
 	} while (ret == -EBUSY &&
 			(retry_count++ < QSEECOM_SCM_EBUSY_MAX_RETRY));
-	pr_info("qseecom: smc %08x -> %d\n", smc_id, ret);
+	pr_debug("qseecom: smc %08x -> %d\n", smc_id, ret);
 	return ret;
 }
 
@@ -1497,7 +1317,7 @@ static int qseecom_scm_call2(uint32_t svc_id, uint32_t tz_cmd_id,
 	scm_resp->data = desc.ret[2];
 	pr_debug("svc_id = 0x%x, tz_cmd_id = 0x%x, qseos_cmd_id = 0x%x, smc_id = 0x%x, param_id = 0x%x\n",
 		svc_id, tz_cmd_id, qseos_cmd_id, smc_id, desc.arginfo);
-	pr_info("qseecom: cmd %#x -> %d result %#x type %#x data %#x\n",
+	pr_debug("qseecom: cmd %#x -> %d result %#x type %#x data %#x\n",
 		qseos_cmd_id, ret, scm_resp->result,
 		(unsigned int)scm_resp->resp_type, scm_resp->data);
 	return ret;
@@ -1850,7 +1670,7 @@ static int qseecom_register_listener(struct qseecom_dev_handle *data,
 	list_add_tail(&new_entry->list, &qseecom.registered_listener_list_head);
 
 	data->listener.id = rcvd_lstnr.listener_id;
-	pr_info("qseecom: listener %u registered sb %pad len %zu\n",
+	pr_debug("qseecom: listener %u registered sb %pad len %zu\n",
 		rcvd_lstnr.listener_id, &new_entry->sb_phys, new_entry->sb_length);
 	return ret;
 }
@@ -2372,10 +2192,8 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 	qseecom.app_block_ref_cnt++;
 	while (resp->result == QSEOS_RESULT_INCOMPLETE) {
 		lstnr = resp->data;
-		pr_info("qseecom: app %u callback listener %u path legacy\n",
+		pr_debug("qseecom: app %u callback listener %u path legacy\n",
 			data->client.app_id, lstnr);
-		qsee_trace(QSEE_TRACE_LISTENER_WAKE, 0, NULL, 0, lstnr,
-			   data->client.app_id, 0, 0);
 		/*
 		 * Wake up blocking lsitener service with the lstnr id
 		 */
@@ -2393,7 +2211,7 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 					status = QSEOS_RESULT_FAILURE;
 					goto err_resp;
 				}
-				pr_info("qseecom: listener %u request wake\n", lstnr);
+				pr_debug("qseecom: listener %u request wake\n", lstnr);
 				wake_up_interruptible(&ptr_svc->rcv_req_wq);
 				break;
 			}
@@ -2430,7 +2248,7 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 			goto err_resp;
 		}
 
-		pr_info("qseecom: app %u waiting for listener %u response\n",
+		pr_debug("qseecom: app %u waiting for listener %u response\n",
 			data->client.app_id, lstnr);
 
 		/* initialize the new signal mask with all signals*/
@@ -2459,10 +2277,10 @@ static int __qseecom_process_incomplete_cmd(struct qseecom_dev_handle *data,
 				break;
 			}
 		} while (1);
-		pr_info("qseecom: app %u listener %u response wait complete\n",
+		pr_debug("qseecom: app %u listener %u response wait complete\n",
 			data->client.app_id, lstnr);
 		mutex_lock(&listener_access_lock);
-		pr_info("qseecom: listener %u response wake flags %d/%d abort %d/%d\n",
+		pr_debug("qseecom: listener %u response wake flags %d/%d abort %d/%d\n",
 			lstnr, qseecom.send_resp_flag, ptr_svc->send_resp_flag,
 			data->abort, ptr_svc->abort);
 		/* restore signal mask */
@@ -2512,10 +2330,8 @@ err_resp:
 		else
 			*(uint32_t *)cmd_buf =
 				QSEOS_LISTENER_DATA_RSP_COMMAND_WHITELIST;
-		pr_info("qseecom: listener %u response status %u cmd %#x sglistinfo %pa\n",
+		pr_debug("qseecom: listener %u response status %u cmd %#x sglistinfo %pa\n",
 			lstnr, status, *(uint32_t *)cmd_buf, &table_pa);
-		qsee_trace(QSEE_TRACE_LISTENER_RESP, 0, NULL, 0, lstnr, status,
-			   table_pa, *(uint32_t *)cmd_buf);
 
 		if ((lstnr == RPMB_SERVICE) || (lstnr == SSD_SERVICE)) {
 			ret = __qseecom_enable_clk(CLK_QSEE);
@@ -2726,10 +2542,8 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 
 	while (ret == 0 && resp->result == QSEOS_RESULT_INCOMPLETE) {
 		lstnr = resp->data;
-		pr_info("qseecom: app %u callback listener %u path reentrant\n",
+		pr_debug("qseecom: app %u callback listener %u path reentrant\n",
 			data->client.app_id, lstnr);
-		qsee_trace(QSEE_TRACE_LISTENER_WAKE, 0, NULL, 0, lstnr,
-			   data->client.app_id, 0, 0);
 		/*
 		 * Wake up blocking lsitener service with the lstnr id
 		 */
@@ -2747,7 +2561,7 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 					status = QSEOS_RESULT_FAILURE;
 					goto err_resp;
 				}
-				pr_info("qseecom: listener %u request wake\n", lstnr);
+				pr_debug("qseecom: listener %u request wake\n", lstnr);
 				wake_up_interruptible(&ptr_svc->rcv_req_wq);
 				break;
 			}
@@ -2784,7 +2598,7 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 			goto err_resp;
 		}
 
-		pr_info("qseecom: app %u waiting for listener %u response\n",
+		pr_debug("qseecom: app %u waiting for listener %u response\n",
 			data->client.app_id, lstnr);
 
 		/* initialize the new signal mask with all signals*/
@@ -2803,12 +2617,12 @@ static int __qseecom_reentrancy_process_incomplete_cmd(
 				break;
 			}
 		} while (1);
-		pr_info("qseecom: app %u listener %u response wait complete\n",
+		pr_debug("qseecom: app %u listener %u response wait complete\n",
 			data->client.app_id, lstnr);
 		/* lock mutex again after resp sent */
 		mutex_lock(&app_access_lock);
 		mutex_lock(&listener_access_lock);
-		pr_info("qseecom: listener %u response wake flags %d/%d abort %d/%d\n",
+		pr_debug("qseecom: listener %u response wake flags %d/%d abort %d/%d\n",
 			lstnr, qseecom.send_resp_flag, ptr_svc->send_resp_flag,
 			data->abort, ptr_svc->abort);
 		ptr_svc->send_resp_flag = 0;
@@ -2859,10 +2673,8 @@ err_resp:
 		else
 			*(uint32_t *)cmd_buf =
 				QSEOS_LISTENER_DATA_RSP_COMMAND_WHITELIST;
-		pr_info("qseecom: listener %u response status %u cmd %#x sglistinfo %pa\n",
+		pr_debug("qseecom: listener %u response status %u cmd %#x sglistinfo %pa\n",
 			lstnr, status, *(uint32_t *)cmd_buf, &table_pa);
-		qsee_trace(QSEE_TRACE_LISTENER_RESP, 0, NULL, 0, lstnr, status,
-			   table_pa, *(uint32_t *)cmd_buf);
 
 		if (lstnr == RPMB_SERVICE) {
 			ret = __qseecom_enable_clk(CLK_QSEE);
@@ -4166,17 +3978,17 @@ static int __qseecom_send_cmd(struct qseecom_dev_handle *data,
 	}
 
 	if (data->client.dmabuf) {
-		pr_info("qseecom: send response cache begin app %u\n", data->client.app_id);
+		pr_debug("qseecom: send response cache begin app %u\n", data->client.app_id);
 		ret = qseecom_dmabuf_cache_operations(data->client.dmabuf,
 					QSEECOM_CACHE_INVALIDATE);
-		pr_info("qseecom: send response cache end app %u -> %d\n", data->client.app_id, ret);
+		pr_debug("qseecom: send response cache end app %u -> %d\n", data->client.app_id, ret);
 		if (ret) {
 			pr_err("cache operation failed %d\n", ret);
 			goto exit;
 		}
 	}
 exit:
-	pr_info("qseecom: send helper app %u -> %d\n", data->client.app_id, ret);
+	pr_debug("qseecom: send helper app %u -> %d\n", data->client.app_id, ret);
 	return ret;
 }
 
@@ -4802,7 +4614,7 @@ static int qseecom_receive_req(struct qseecom_dev_handle *data)
 		return -ENODATA;
 	}
 	mutex_unlock(&listener_access_lock);
-	pr_info("qseecom: listener %u receive waiting\n", data->listener.id);
+	pr_debug("qseecom: listener %u receive waiting\n", data->listener.id);
 
 	while (1) {
 		if (wait_event_interruptible(this_lstnr->rcv_req_wq,
@@ -4820,7 +4632,7 @@ static int qseecom_receive_req(struct qseecom_dev_handle *data)
 			return -ENODEV;
 		}
 		mutex_lock(&listener_access_lock);
-		pr_info("qseecom: listener %u request delivered\n", data->listener.id);
+		pr_debug("qseecom: listener %u request delivered\n", data->listener.id);
 		this_lstnr->rcv_req_flag = 0;
 		mutex_unlock(&listener_access_lock);
 		break;
@@ -5842,7 +5654,7 @@ static int __qseecom_send_modfd_resp(struct qseecom_dev_handle *data,
 		__qseecom_update_cmd_buf_64(&resp, false, data);
 	qseecom.send_resp_flag = 1;
 	this_lstnr->send_resp_flag = 1;
-	pr_info("qseecom: listener %u modfd response ready len %u addr64 %d\n",
+	pr_debug("qseecom: listener %u modfd response ready len %u addr64 %d\n",
 		data->listener.id, resp.resp_len, is_64bit_addr);
 	wake_up_interruptible(&qseecom.send_resp_wq);
 	return 0;
@@ -7905,7 +7717,7 @@ static long qseecom_ioctl(struct file *file,
 		return -ENODEV;
 	}
 	if (trace_completion)
-		pr_info("qseecom: native ioctl %#x nr %u enter\n", cmd, _IOC_NR(cmd));
+		pr_debug("qseecom: native ioctl %#x nr %u enter\n", cmd, _IOC_NR(cmd));
 	if (cmd != QSEECOM_IOCTL_RECEIVE_REQ &&
 		cmd != QSEECOM_IOCTL_SEND_RESP_REQ &&
 		cmd != QSEECOM_IOCTL_SEND_MODFD_RESP &&
@@ -8116,7 +7928,7 @@ static long qseecom_ioctl(struct file *file,
 			ret = qseecom_send_resp();
 		else
 			ret = qseecom_reentrancy_send_resp(data);
-		pr_info("qseecom: listener %u response ioctl -> %d\n",
+		pr_debug("qseecom: listener %u response ioctl -> %d\n",
 			data->listener.id, ret);
 		atomic_dec(&data->ioctl_count);
 		wake_up_all(&data->abort_wq);
@@ -8667,7 +8479,7 @@ static long qseecom_ioctl(struct file *file,
 		return -ENOIOCTLCMD;
 	}
 	if (trace_completion)
-		pr_info("qseecom: native ioctl %#x nr %u -> %d\n", cmd, _IOC_NR(cmd), ret);
+		pr_debug("qseecom: native ioctl %#x nr %u -> %d\n", cmd, _IOC_NR(cmd), ret);
 	return ret;
 }
 
@@ -10027,7 +9839,6 @@ static int qseecom_probe(struct platform_device *pdev)
 {
 	int rc;
 
-	qsee_trace_boot_id = get_random_u32() | 1;
 	rc = qseecom_init_dev(pdev);
 	if (rc)
 		return rc;
@@ -10067,27 +9878,6 @@ static int qseecom_probe(struct platform_device *pdev)
 		goto exit_stop_kthreads;
 
 	atomic_set(&qseecom.qseecom_state, QSEECOM_STATE_READY);
-	schedule_delayed_work(&qseecom_canary_work, HZ);
-#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
-	{
-		struct stall_witness prev;
-		int err = ramoops_witness_read(&prev, sizeof(prev));
-
-		if (!err)
-			pr_info("qseecom: stall witness from earlier boot: magic=0x%llx canary=%llu jiffies=%llu quiet=%u boot_id=%u\n",
-				prev.magic, prev.canary, prev.jiffies,
-				prev.quiet, prev.boot_id);
-		else
-			pr_info("qseecom: stall witness read failed errno=%d\n", err);
-	}
-#endif
-	qseecom.stall_watchdog_task =
-		kthread_run(qseecom_stall_watchdog_fn, NULL, "qseecom-stall");
-	if (IS_ERR(qseecom.stall_watchdog_task))
-		qseecom.stall_watchdog_task = NULL;
-	else
-		pr_info("qseecom: stall watchdog armed (canary frozen %d s ⇒ dump)\n",
-			STALL_QUIET_SECONDS);
 	return 0;
 
 exit_stop_kthreads:
@@ -10113,11 +9903,6 @@ static void qseecom_remove(struct platform_device *pdev)
 	int ret = 0;
 
 	atomic_set(&qseecom.qseecom_state, QSEECOM_STATE_NOT_READY);
-	cancel_delayed_work_sync(&qseecom_canary_work);
-	if (qseecom.stall_watchdog_task) {
-		kthread_stop(qseecom.stall_watchdog_task);
-		qseecom.stall_watchdog_task = NULL;
-	}
 	spin_lock_irqsave(&qseecom.registered_kclient_list_lock, flags);
 
 	list_for_each_entry_safe(kclient, kclient_tmp,

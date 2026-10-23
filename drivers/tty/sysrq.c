@@ -376,15 +376,7 @@ static void send_sig_all(int sig)
 
 static void sysrq_handle_term(u8 key)
 {
-	/*
-	 * run278: the last thing the port's console showed before the phone
-	 * froze was this message, and the reboot never completed. Print
-	 * around the signal storm so the next boot says whether the hang is
-	 * in send_sig_all() or after it.
-	 */
-	pr_info("DIAG: sysrq terminate enter\n");
 	send_sig_all(SIGTERM);
-	pr_info("DIAG: sysrq terminate done\n");
 	console_loglevel = CONSOLE_LOGLEVEL_DEBUG;
 }
 static const struct sysrq_key_op sysrq_term_op = {

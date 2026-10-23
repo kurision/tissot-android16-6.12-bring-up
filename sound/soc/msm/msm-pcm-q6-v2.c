@@ -177,9 +177,7 @@ static void event_handler(uint32_t opcode,
 		break;
 	}
 	case ASM_DATA_EVENT_RENDERED_EOS:
-		pr_info_ratelimited("%s: EOS complete session=%d pending=%#lx\n",
-				    __func__, prtd->audio_client->session,
-				    prtd->cmd_pending);
+		pr_debug("ASM_DATA_EVENT_RENDERED_EOS\n");
 		clear_bit(CMD_EOS, &prtd->cmd_pending);
 		wake_up(&the_locks.eos_wait);
 		break;
@@ -655,8 +653,6 @@ static int msm_pcm_trigger(struct snd_soc_component *component, struct snd_pcm_s
 		WARN_ON_ONCE(test_bit(CMD_EOS, &prtd->cmd_pending));
 		set_bit(CMD_EOS, &prtd->cmd_pending);
 		ret = q6asm_cmd_nowait(prtd->audio_client, CMD_EOS);
-		pr_info_ratelimited("%s: EOS submit session=%d ret=%d\n",
-				    __func__, prtd->audio_client->session, ret);
 		if (ret)
 			clear_bit(CMD_EOS, &prtd->cmd_pending);
 		break;
@@ -936,19 +932,14 @@ static int msm_pcm_playback_close(struct snd_pcm_substream *substream)
 			if (timeout < CMD_EOS_MIN_TIMEOUT_LENGTH)
 				timeout = CMD_EOS_MIN_TIMEOUT_LENGTH;
 		}
-		pr_info_ratelimited("%s: EOS wait session=%d pending=%#lx timeout_ticks=%u rate=%u period_frames=%lu frame_bits=%u\n",
-				    __func__, prtd->audio_client->session,
-				    prtd->cmd_pending, timeout, runtime->rate,
-				    (unsigned long)runtime->period_size,
-				    runtime->frame_bits);
+		pr_debug("%s: CMD_EOS timeout is %d\n", __func__, timeout);
 
 		ret = wait_event_timeout(the_locks.eos_wait,
 					 !test_bit(CMD_EOS, &prtd->cmd_pending),
 					 timeout);
 		if (!ret)
-			pr_err("%s: CMD_EOS failed session=%d cmd_pending=%#lx timeout_ticks=%u\n",
-			       __func__, prtd->audio_client->session,
-			       prtd->cmd_pending, timeout);
+			pr_err("%s: CMD_EOS failed, cmd_pending 0x%lx\n",
+			       __func__, prtd->cmd_pending);
 		q6asm_cmd(prtd->audio_client, CMD_CLOSE);
 		q6asm_audio_client_buf_free_contiguous(dir,
 					prtd->audio_client);
