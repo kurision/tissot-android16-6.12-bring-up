@@ -1118,15 +1118,10 @@ static int csid_probe(struct platform_device *pdev)
 #endif
 
 	rc = legacy_msm_camera_register_irq(pdev, new_csid_dev->irq,
-		msm_csid_irq, IRQF_TRIGGER_RISING, "csid", new_csid_dev);
+		msm_csid_irq, IRQF_TRIGGER_RISING | IRQF_NO_AUTOEN,
+		"csid", new_csid_dev);
 	if (rc < 0) {
 		pr_err("%s: irq request fail\n", __func__);
-		rc = -EBUSY;
-		goto csid_invalid_irq;
-	}
-	rc = legacy_msm_camera_enable_irq(new_csid_dev->irq, false);
-	if (rc < 0) {
-		pr_err("%s Error registering irq ", __func__);
 		rc = -EBUSY;
 		goto csid_invalid_irq;
 	}

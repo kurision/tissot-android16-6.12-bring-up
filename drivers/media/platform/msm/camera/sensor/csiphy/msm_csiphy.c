@@ -1539,13 +1539,13 @@ static int csiphy_probe(struct platform_device *pdev)
 		goto csiphy_no_irq_resource;
 	}
 	rc = legacy_msm_camera_register_irq(pdev, new_csiphy_dev->irq,
-		msm_csiphy_irq, IRQF_TRIGGER_RISING, "csiphy", new_csiphy_dev);
+		msm_csiphy_irq, IRQF_TRIGGER_RISING | IRQF_NO_AUTOEN,
+		"csiphy", new_csiphy_dev);
 	if (rc < 0) {
 		pr_err("%s: irq request fail\n", __func__);
 		rc = -EBUSY;
 		goto csiphy_no_irq_resource;
 	}
-	legacy_msm_camera_enable_irq(new_csiphy_dev->irq, false);
 
 	legacy_msm_cam_copy_v4l2_subdev_fops(&msm_csiphy_v4l2_subdev_fops);
 #ifdef CONFIG_COMPAT
