@@ -1375,6 +1375,23 @@ FREE_SENSOR_DATA:
 	return rc;
 }
 
+/* Clock acquisition owns its unwind; release only the parsed sensor state. */
+static void msm_sensor_driver_free_parsed_data(struct msm_sensor_ctrl_t *s_ctrl)
+{
+	struct msm_camera_power_ctrl_t *power = &s_ctrl->sensordata->power_info;
+
+	kfree(s_ctrl->sensor_i2c_client->cci_client);
+	kfree(power->gpio_conf->gpio_num_info);
+	kfree(power->gpio_conf->cam_gpio_req_tbl);
+	kfree(power->gpio_conf->cam_gpio_set_tbl);
+	kfree(power->gpio_conf);
+	kfree(power->cam_vreg);
+	kfree(s_ctrl->sensordata->sensor_info);
+	kfree(s_ctrl->sensordata);
+	kfree(s_ctrl->msm_sensor_mutex);
+	kfree(s_ctrl->sensor_i2c_client);
+}
+
 static int32_t msm_sensor_driver_parse(struct msm_sensor_ctrl_t *s_ctrl)
 {
 	int32_t                   rc = 0;
@@ -1424,19 +1441,11 @@ static int32_t msm_sensor_driver_parse(struct msm_sensor_ctrl_t *s_ctrl)
 		goto FREE_DT_DATA;
 	}
 
-	/* Store sensor control structure in static database */
-	g_sctrl[s_ctrl->id] = s_ctrl;
-	CDBG("g_sctrl[%d] %pK", s_ctrl->id, g_sctrl[s_ctrl->id]);
-
 	return rc;
 
 FREE_DT_DATA:
-	kfree(s_ctrl->sensordata->power_info.gpio_conf->gpio_num_info);
-	kfree(s_ctrl->sensordata->power_info.gpio_conf->cam_gpio_req_tbl);
-	kfree(s_ctrl->sensordata->power_info.gpio_conf->cam_gpio_set_tbl);
-	kfree(s_ctrl->sensordata->power_info.gpio_conf);
-	kfree(s_ctrl->sensordata->power_info.cam_vreg);
-	kfree(s_ctrl->sensordata);
+	msm_sensor_driver_free_parsed_data(s_ctrl);
+	return rc;
 FREE_MUTEX:
 	kfree(s_ctrl->msm_sensor_mutex);
 FREE_SENSOR_I2C_CLIENT:
@@ -1476,7 +1485,7 @@ static int32_t msm_sensor_driver_platform_probe(struct platform_device *pdev)
 		&s_ctrl->sensordata->power_info.clk_info_size);
 	if (rc < 0) {
 		pr_err("failed: legacy_msm_camera_get_clk_info rc %d", rc);
-		goto FREE_S_CTRL;
+		goto FREE_PARSED_DATA;
 	}
 
 	/* Fill platform device id*/
@@ -1484,8 +1493,12 @@ static int32_t msm_sensor_driver_platform_probe(struct platform_device *pdev)
 
 	/* Fill device in power info */
 	s_ctrl->sensordata->power_info.dev = &pdev->dev;
+	g_sctrl[s_ctrl->id] = s_ctrl;
 	return rc;
+FREE_PARSED_DATA:
+	msm_sensor_driver_free_parsed_data(s_ctrl);
 FREE_S_CTRL:
+	platform_set_drvdata(pdev, NULL);
 	kfree(s_ctrl);
 	return rc;
 }
@@ -1533,11 +1546,15 @@ static int32_t msm_sensor_driver_i2c_probe(struct i2c_client *client)
 		if (rc < 0) {
 			pr_err("failed: legacy_msm_camera_i2c_dev_get_clk_info rc %d",
 				rc);
-			goto FREE_S_CTRL;
+			goto FREE_PARSED_DATA;
 		}
 	}
+	g_sctrl[s_ctrl->id] = s_ctrl;
 	return rc;
+FREE_PARSED_DATA:
+	msm_sensor_driver_free_parsed_data(s_ctrl);
 FREE_S_CTRL:
+	i2c_set_clientdata(client, NULL);
 	kfree(s_ctrl);
 	return rc;
 }
