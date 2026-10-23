@@ -2675,7 +2675,7 @@ int legacy_msm_vfe47_get_platform_data(struct vfe_device *vfe_dev)
 	return 0;
 
 init_bw_fail:
-	legacy_msm_camera_unregister_irq(vfe_dev->pdev, vfe_dev->vfe_irq, "vfe");
+	legacy_msm_camera_unregister_irq(vfe_dev->pdev, vfe_dev->vfe_irq, vfe_dev);
 irq_register_fail:
 	vfe_dev->hw_info->vfe_ops.platform_ops.put_clks(vfe_dev);
 get_clkcs_fail:
