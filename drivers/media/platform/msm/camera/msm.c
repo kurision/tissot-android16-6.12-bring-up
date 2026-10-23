@@ -445,8 +445,19 @@ EXPORT_SYMBOL(legacy_msm_sd_register);
 
 int legacy_msm_sd_unregister(struct msm_sd_subdev *msm_subdev)
 {
+	struct msm_sd_subdev *entry;
+
 	if (WARN_ON(!msm_subdev))
 		return -EINVAL;
+
+	mutex_lock(&ordered_sd_mtx);
+	list_for_each_entry(entry, &ordered_sd_list, list) {
+		if (entry == msm_subdev) {
+			list_del_init(&entry->list);
+			break;
+		}
+	}
+	mutex_unlock(&ordered_sd_mtx);
 
 	v4l2_device_unregister_subdev(&msm_subdev->sd);
 	return 0;
