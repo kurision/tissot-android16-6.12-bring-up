@@ -28,6 +28,11 @@
 	qcom,msm-id = <293 0>;
 	qcom,board-id = <0x1000b 0x00>;
 
+	aliases {
+		mmc0 = &sdhc_1;
+		mmc1 = &sdhc_2;
+	};
+
 	cpus {
 		idle-states {
 			entry-method = "psci";
