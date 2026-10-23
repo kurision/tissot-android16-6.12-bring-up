@@ -22,6 +22,8 @@
 #include <linux/proc_fs.h>
 #include <linux/msm_ion.h>
 #include <linux/iommu.h>
+#include <linux/pm_domain.h>
+#include <linux/pm_runtime.h>
 #include <linux/timer.h>
 #include <linux/kernel.h>
 #include <linux/workqueue.h>
@@ -955,6 +957,44 @@ void legacy_msm_cpp_do_tasklet(unsigned long data)
 	}
 }
 
+/*
+ * The CPP's GDSC is a power domain of the port's GCC provider, not the
+ * donor's qcom,gdsc regulator.  The hardware session holds the domain
+ * with runtime PM, in place of the regulator enable/disable pairs.
+ */
+static int cpp_get_power_domain(struct cpp_device *cpp_dev)
+{
+	struct device *pd;
+
+	/* The platform core attaches a single domain before calling probe. */
+	if (cpp_dev->pdev->dev.pm_domain) {
+		cpp_dev->power_domain = &cpp_dev->pdev->dev;
+		pm_runtime_enable(cpp_dev->power_domain);
+		return 0;
+	}
+
+	pd = dev_pm_domain_attach_by_name(&cpp_dev->pdev->dev, "cpp");
+	if (IS_ERR_OR_NULL(pd))
+		return PTR_ERR(pd) ?: -ENODEV;
+
+	cpp_dev->power_domain = pd;
+	return 0;
+}
+
+static int cpp_enable_power_domain(struct cpp_device *cpp_dev, int enable)
+{
+	int rc;
+
+	if (!cpp_dev->power_domain)
+		return -ENODEV;
+
+	if (enable)
+		return pm_runtime_resume_and_get(cpp_dev->power_domain);
+
+	rc = pm_runtime_put_sync(cpp_dev->power_domain);
+	return rc < 0 ? rc : 0;
+}
+
 static int cpp_init_hardware(struct cpp_device *cpp_dev)
 {
 	int rc = 0;
@@ -967,10 +1007,9 @@ static int cpp_init_hardware(struct cpp_device *cpp_dev)
 		goto ahb_vote_fail;
 	}
 
-	rc = legacy_msm_camera_regulator_enable(cpp_dev->cpp_vdd,
-		cpp_dev->num_reg, true);
+	rc = cpp_enable_power_domain(cpp_dev, true);
 	if (rc < 0) {
-		pr_err("%s: failed to enable regulators\n", __func__);
+		pr_err("%s: failed to enable the power domain\n", __func__);
 		goto reg_enable_failed;
 	}
 
@@ -1059,8 +1098,7 @@ req_irq_fail:
 	legacy_msm_camera_clk_enable(&cpp_dev->pdev->dev, cpp_dev->clk_info,
 		cpp_dev->cpp_clk, cpp_dev->num_clks, false);
 clk_failed:
-	legacy_msm_camera_regulator_enable(cpp_dev->cpp_vdd,
-		cpp_dev->num_reg, false);
+	cpp_enable_power_domain(cpp_dev, false);
 reg_enable_failed:
 	if (legacy_cam_config_ahb_clk(NULL, 0, CAM_AHB_CLIENT_CPP,
 		CAM_AHB_SUSPEND_VOTE) < 0)
@@ -1081,7 +1119,7 @@ static void cpp_release_hardware(struct cpp_device *cpp_dev)
 	msm_cpp_update_gdscr_status(cpp_dev, false);
 	legacy_msm_camera_clk_enable(&cpp_dev->pdev->dev, cpp_dev->clk_info,
 		cpp_dev->cpp_clk, cpp_dev->num_clks, false);
-	legacy_msm_camera_regulator_enable(cpp_dev->cpp_vdd, cpp_dev->num_reg, false);
+	cpp_enable_power_domain(cpp_dev, false);
 	if (cpp_dev->stream_cnt > 0) {
 		pr_warn("stream count active\n");
 		rc = msm_cpp_update_bandwidth_setting(cpp_dev, 0, 0);
@@ -4136,25 +4174,12 @@ struct v4l2_file_operations legacy_msm_cpp_v4l2_subdev_fops = {
 static  int msm_cpp_update_gdscr_status(struct cpp_device *cpp_dev,
 	bool status)
 {
-	int rc = 0;
-	uint32_t msm_cpp_reg_idx;
-	if (!cpp_dev) {
-		pr_err("%s: cpp device invalid\n", __func__);
-		rc = -EINVAL;
-		goto end;
-	}
-	msm_cpp_reg_idx = legacy_msm_cpp_get_regulator_index(cpp_dev, "vdd");
-	if (msm_cpp_reg_idx < 0) {
-		pr_err(" Fail to regulator index\n");
-		return -EINVAL;
-	}
-	rc = legacy_msm_camera_regulator_set_mode(cpp_dev->cpp_vdd +
-		msm_cpp_reg_idx, 1, status);
-	if (rc < 0)
-		pr_err("update cpp gdscr status failed\n");
-
-end:
-	return rc;
+	/*
+	 * The GDSC is owned by the power domain: its collapse follows the
+	 * domain's reference count, which cpp_init_hardware() already holds
+	 * across the firmware load this regulator set_mode used to guard.
+	 */
+	return 0;
 }
 static void msm_cpp_set_vbif_reg_values(struct cpp_device *cpp_dev)
 {
@@ -4306,10 +4331,9 @@ static int cpp_probe(struct platform_device *pdev)
 		goto get_reg_err;
 	}
 
-	rc = legacy_msm_camera_get_regulator_info(pdev, &cpp_dev->cpp_vdd,
-		&cpp_dev->num_reg);
+	rc = cpp_get_power_domain(cpp_dev);
 	if (rc < 0) {
-		pr_err("%s: failed to get the regulators\n", __func__);
+		pr_err("%s: failed to get the power domain\n", __func__);
 		goto get_reset_err;
 	}
 
@@ -4449,8 +4473,13 @@ static void cpp_device_remove(struct platform_device *dev)
 	legacy_msm_camera_put_reg_base(dev, cpp_dev->base, "cpp", true);
 	legacy_msm_camera_put_reg_base(dev, cpp_dev->vbif_base, "cpp_vbif", false);
 	legacy_msm_camera_put_reg_base(dev, cpp_dev->cpp_hw_base, "cpp_hw", true);
-	legacy_msm_camera_put_regulators(dev, &cpp_dev->cpp_vdd,
-		cpp_dev->num_reg);
+	if (cpp_dev->power_domain) {
+		if (cpp_dev->power_domain == &dev->dev)
+			pm_runtime_disable(cpp_dev->power_domain);
+		else
+			dev_pm_domain_detach(cpp_dev->power_domain, true);
+		cpp_dev->power_domain = NULL;
+	}
 	legacy_msm_camera_put_clk_info(dev, &cpp_dev->clk_info,
 		&cpp_dev->cpp_clk, cpp_dev->num_clks);
 	legacy_msm_camera_unregister_bus_client(CAM_BUS_CLIENT_CPP);
