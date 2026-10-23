@@ -19,9 +19,9 @@
 #include <media/msmb_ispif-legacy.h>
 #include "msm_sd.h"
 
-/* Maximum number of voltage supply for ispif and vfe */
-#define ISPIF_VDD_INFO_MAX 2
-#define ISPIF_VFE_VDD_INFO_MAX 2
+/* Maximum number of power domains for ISPIF and VFE. */
+#define ISPIF_PD_MAX 2
+#define ISPIF_VFE_PD_MAX 2
 
 #define ISPIF_CLK_INFO_MAX 27
 
@@ -73,10 +73,10 @@ struct ispif_device {
 	uint32_t ispif_rdi0_debug;
 	uint32_t ispif_rdi1_debug;
 	uint32_t ispif_rdi2_debug;
-	struct regulator *ispif_vdd[ISPIF_VDD_INFO_MAX];
-	int ispif_vdd_count;
-	struct regulator *vfe_vdd[ISPIF_VFE_VDD_INFO_MAX];
-	int vfe_vdd_count;
+	struct device *ispif_pd[ISPIF_PD_MAX];
+	int ispif_pd_count;
+	struct device *vfe_pd[ISPIF_VFE_PD_MAX];
+	int vfe_pd_count;
 	int stereo_configured[VFE_MAX];
 };
 #endif

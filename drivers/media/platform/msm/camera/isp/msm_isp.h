@@ -721,6 +721,7 @@ struct vfe_device {
 	void __iomem *vfe_vbif_base;
 	uint32_t vfe_vbif_base_size;
 	struct device *iommu_ctx[MAX_IOMMU_CTX];
+	struct device *power_domain;
 	struct msm_cam_regulator *regulator_info;
 	uint32_t vfe_num_regulators;
 	struct clk **vfe_clk;

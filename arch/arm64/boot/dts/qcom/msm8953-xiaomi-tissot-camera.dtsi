@@ -8,14 +8,9 @@
  * arch/arm64/boot/dts/vendor/qcom/msm8953-camera.dtsi (the SoC part)
  * and .../mi8953/tissot/camera.dtsi (the board part).
  *
- * This is the first part of the translation: the CCI and the board's
- * camera nodes, which is what the first milestone needs - the ROM's
- * mm-qcamera-daemon identifying a sensor over I2C.  The VFE, the
- * ISPIF, the CPP, the JPEG encoder and the SMMU come with the
- * regulator of the pm8953's GDSC rails, which this tree does not have
- * yet (the camera asks for the VFE's, the JPEG's and the CPP's supply
- * as regulators, and the donor's rails are "qcom,gdsc" nodes that its
- * own drivers/clk/qcom/gdsc-regulator.c drives).
+ * The CCI, sensors, CSI receivers and VFE/ISPIF are described here.
+ * VFE GDSCs use the GCC power-domain provider. CPP and JPEG pixel
+ * processing remain outside this stage.
  *
  * The camera's pins are in the board file, with the donor's names
  * (msm8953-xiaomi-tissot.dts, "&tlmm").
@@ -32,6 +27,173 @@
 		status = "okay";
 		bus-vectors = "suspend", "svs", "nominal", "turbo";
 		qcom,bus-votes = <0 320000000 640000000 640000000>;
+	};
+
+	qcom,ispif@1b31000 {
+		status = "okay";
+		cell-index = <0>;
+		compatible = "qcom,ispif-v3.0", "qcom,ispif";
+		reg = <0x1b31000 0x500>,
+			<0x1b00020 0x10>;
+		reg-names = "ispif", "csi_clk_mux";
+		interrupts = <GIC_SPI 55 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "ispif";
+		qcom,num-isps = <0x2>;
+		power-domains = <&gcc VFE0_GDSC>, <&gcc VFE1_GDSC>;
+		power-domain-names = "vfe0", "vfe1";
+		clocks = <&gcc GCC_CAMSS_ISPIF_AHB_CLK>,
+			<&gcc GCC_CAMSS_AHB_CLK>,
+			<&gcc GCC_CAMSS_TOP_AHB_CLK>,
+			<&gcc CAMSS_TOP_AHB_CLK_SRC>,
+			<&gcc CSI0_CLK_SRC>,
+			<&gcc GCC_CAMSS_CSI0_CLK>,
+			<&gcc GCC_CAMSS_CSI0RDI_CLK>,
+			<&gcc GCC_CAMSS_CSI0PIX_CLK>,
+			<&gcc CSI1_CLK_SRC>,
+			<&gcc GCC_CAMSS_CSI1_CLK>,
+			<&gcc GCC_CAMSS_CSI1RDI_CLK>,
+			<&gcc GCC_CAMSS_CSI1PIX_CLK>,
+			<&gcc CSI2_CLK_SRC>,
+			<&gcc GCC_CAMSS_CSI2_CLK>,
+			<&gcc GCC_CAMSS_CSI2RDI_CLK>,
+			<&gcc GCC_CAMSS_CSI2PIX_CLK>,
+			<&gcc VFE0_CLK_SRC>,
+			<&gcc GCC_CAMSS_VFE0_CLK>,
+			<&gcc GCC_CAMSS_CSI_VFE0_CLK>,
+			<&gcc VFE1_CLK_SRC>,
+			<&gcc GCC_CAMSS_VFE1_CLK>,
+			<&gcc GCC_CAMSS_CSI_VFE1_CLK>;
+		clock-names = "ispif_ahb_clk",
+			"camss_ahb_clk", "camss_top_ahb_clk",
+			"camss_ahb_src",
+			"csi0_src_clk", "csi0_clk",
+			"csi0_rdi_clk", "csi0_pix_clk",
+			"csi1_src_clk", "csi1_clk",
+			"csi1_rdi_clk", "csi1_pix_clk",
+			"csi2_src_clk", "csi2_clk",
+			"csi2_rdi_clk", "csi2_pix_clk",
+			"vfe0_clk_src", "camss_vfe_vfe0_clk",
+			"camss_csi_vfe0_clk", "vfe1_clk_src",
+			"camss_vfe_vfe1_clk", "camss_csi_vfe1_clk";
+		qcom,clock-rates = <61540000 0 0 0
+			200000000 0 0 0
+			200000000 0 0 0
+			200000000 0 0 0
+			0 0 0
+			0 0 0>;
+		qcom,clock-cntl-support;
+		qcom,clock-control = "SET_RATE","NO_SET_RATE", "NO_SET_RATE",
+			"NO_SET_RATE", "SET_RATE", "NO_SET_RATE",
+			"NO_SET_RATE", "NO_SET_RATE", "SET_RATE",
+			"NO_SET_RATE", "NO_SET_RATE", "NO_SET_RATE",
+			"SET_RATE", "NO_SET_RATE", "NO_SET_RATE",
+			"NO_SET_RATE", "INIT_RATE", "NO_SET_RATE",
+			"NO_SET_RATE", "INIT_RATE", "NO_SET_RATE",
+			"NO_SET_RATE";
+	};
+
+	vfe0: qcom,vfe0@1b10000 {
+		status = "okay";
+		cell-index = <0>;
+		compatible = "qcom,vfe40";
+		reg = <0x1b10000 0x1000>,
+			<0x1b40000 0x200>;
+		reg-names = "vfe", "vfe_vbif";
+		interrupts = <GIC_SPI 57 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "vfe";
+		power-domains = <&gcc VFE0_GDSC>;
+		power-domain-names = "vfe";
+		clocks = <&gcc GCC_CAMSS_TOP_AHB_CLK>,
+			<&gcc GCC_CAMSS_AHB_CLK>,
+			<&gcc VFE0_CLK_SRC>,
+			<&gcc GCC_CAMSS_VFE0_CLK>,
+			<&gcc GCC_CAMSS_CSI_VFE0_CLK>,
+			<&gcc GCC_CAMSS_VFE0_AHB_CLK>,
+			<&gcc GCC_CAMSS_VFE0_AXI_CLK>,
+			<&gcc GCC_CAMSS_ISPIF_AHB_CLK>;
+		clock-names = "camss_top_ahb_clk", "camss_ahb_clk",
+			"vfe_clk_src", "camss_vfe_vfe_clk",
+			"camss_csi_vfe_clk", "iface_clk",
+			"bus_clk", "iface_ahb_clk";
+		qcom,clock-rates = <0 0 266670000 0 0 0 0 0>;
+		qos-entries = <8>;
+		qos-regs = <0x2c4 0x2c8 0x2cc 0x2d0 0x2d4 0x2d8
+			0x2dc 0x2e0>;
+		qos-settings = <0xaa55aa55
+			0xaa55aa55	0xaa55aa55
+			0xaa55aa55	0xaa55aa55
+			0xaa55aa55	0xaa55aa55
+			0xaa55aa55>;
+		vbif-entries = <1>;
+		vbif-regs = <0x124>;
+		vbif-settings = <0x3>;
+		ds-entries = <17>;
+		ds-regs = <0x988 0x98c 0x990 0x994 0x998
+			0x99c 0x9a0 0x9a4 0x9a8 0x9ac 0x9b0
+			0x9b4 0x9b8 0x9bc 0x9c0 0x9c4 0x9c8>;
+		ds-settings = <0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0x00000110>;
+		max-clk-nominal = <465000000>;
+		max-clk-turbo = <465000000>;
+	};
+
+	vfe1: qcom,vfe1@1b14000 {
+		status = "okay";
+		cell-index = <1>;
+		compatible = "qcom,vfe40";
+		reg = <0x1b14000 0x1000>,
+			<0x1ba0000 0x200>;
+		reg-names = "vfe", "vfe_vbif";
+		interrupts = <GIC_SPI 29 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "vfe";
+		power-domains = <&gcc VFE1_GDSC>;
+		power-domain-names = "vfe";
+		clocks = <&gcc GCC_CAMSS_TOP_AHB_CLK>,
+			<&gcc GCC_CAMSS_AHB_CLK>,
+			<&gcc VFE1_CLK_SRC>,
+			<&gcc GCC_CAMSS_VFE1_CLK>,
+			<&gcc GCC_CAMSS_CSI_VFE1_CLK>,
+			<&gcc GCC_CAMSS_VFE1_AHB_CLK>,
+			<&gcc GCC_CAMSS_VFE1_AXI_CLK>,
+			<&gcc GCC_CAMSS_ISPIF_AHB_CLK>;
+		clock-names = "camss_top_ahb_clk" , "camss_ahb_clk",
+			"vfe_clk_src", "camss_vfe_vfe_clk",
+			"camss_csi_vfe_clk", "iface_clk",
+			"bus_clk", "iface_ahb_clk";
+		qcom,clock-rates = <0 0 266670000 0 0 0 0 0>;
+		qos-entries = <8>;
+		qos-regs = <0x2c4 0x2c8 0x2cc 0x2d0 0x2d4 0x2d8
+			0x2dc 0x2e0>;
+		qos-settings = <0xaa55aa55
+			0xaa55aa55	0xaa55aa55
+			0xaa55aa55	0xaa55aa55
+			0xaa55aa55	0xaa55aa55
+			0xaa55aa55>;
+		vbif-entries = <1>;
+		vbif-regs = <0x124>;
+		vbif-settings = <0x3>;
+		ds-entries = <17>;
+		ds-regs = <0x988 0x98c 0x990 0x994 0x998
+			0x99c 0x9a0 0x9a4 0x9a8 0x9ac 0x9b0
+			0x9b4 0x9b8 0x9bc 0x9c0 0x9c4 0x9c8>;
+		ds-settings = <0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0xcccc1111
+			0xcccc1111	0x00000110>;
+		max-clk-nominal = <465000000>;
+		max-clk-turbo = <465000000>;
 	};
 
 	qcom,csiphy@1b34000 {
@@ -801,5 +963,24 @@
 		clocks = <&gcc MCLK1_CLK_SRC>, <&gcc GCC_CAMSS_MCLK1_CLK>;
 		clock-names = "cam_src_clk", "cam_clk";
 		qcom,clock-rates = <24000000 0>;
+	};
+};
+
+/ {
+	qcom,vfe {
+		compatible = "qcom,vfe";
+		num_child = <2>;
+	};
+
+	qcom,cam-smmu {
+		compatible = "qcom,msm-cam-smmu";
+
+		vfe-context {
+			compatible = "qcom,msm-cam-smmu-cb";
+			/* qcom_iommu uses the existing VFE context bank's ASID. */
+			iommus = <&apps_iommu 0x14>;
+			label = "vfe";
+			qcom,scratch-buf-support;
+		};
 	};
 };

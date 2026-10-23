@@ -542,8 +542,13 @@ static int cam_smmu_create_add_handle_in_table(char *name,
 	int i;
 	int handle;
 
+	if (!iommu_cb_set.cb_info)
+		return -EPROBE_DEFER;
+
 	/* create handle and add in the iommu hardware table */
 	for (i = 0; i < iommu_cb_set.cb_num; i++) {
+		if (!iommu_cb_set.cb_info[i].domain)
+			continue;
 		if (!strcmp(iommu_cb_set.cb_info[i].name, name)) {
 			mutex_lock(&iommu_cb_set.cb_info[i].lock);
 			if (iommu_cb_set.cb_info[i].handle != HANDLE_INIT) {
@@ -1424,13 +1429,17 @@ static int cam_smmu_setup_cb(struct cam_context_bank_info *cb,
 	struct device *dev)
 {
 	int rc = 0;
+	struct iommu_domain *domain;
 
 	if (!cb || !dev) {
 		pr_err("Error: invalid input params\n");
 		return -EINVAL;
 	}
 
-	cb->dev = dev;
+	domain = iommu_get_domain_for_dev(dev);
+	if (IS_ERR_OR_NULL(domain))
+		return PTR_ERR(domain) ?: -ENODEV;
+
 	/* Reserve 256M if scratch buffer support is desired
 	 * and initialize the scratch mapping structure
 	 */
@@ -1444,7 +1453,6 @@ static int cam_smmu_setup_cb(struct cam_context_bank_info *cb,
 				0);
 		if (rc < 0) {
 			pr_err("Error: failed to create scratch map\n");
-			rc = -ENODEV;
 			goto end;
 		}
 	} else {
@@ -1452,14 +1460,8 @@ static int cam_smmu_setup_cb(struct cam_context_bank_info *cb,
 		cb->va_len = VA_SPACE_END - SZ_128K;
 	}
 
-	/* create a virtual mapping */
-	cb->domain = iommu_get_domain_for_dev(cb->dev);
-	if (IS_ERR(cb->domain)) {
-		pr_err("iommu get domain for dev: %s failed\n",
-			dev_name(cb->dev));
-		rc = -ENODEV;
-		goto end;
-	}
+	cb->dev = dev;
+	cb->domain = domain;
 
 	return 0;
 end:
@@ -1524,8 +1526,7 @@ static int cam_populate_smmu_context_banks(struct device *dev,
 	/* check the bounds */
 	if (iommu_cb_set.cb_init_count >= iommu_cb_set.cb_num) {
 		pr_err("Error: populate more than allocated cb\n");
-		rc = -EBADHANDLE;
-		goto cb_init_fail;
+		return -EBADHANDLE;
 	}
 
 	/* read the context bank from cb set */
@@ -1558,12 +1559,14 @@ static int cam_populate_smmu_context_banks(struct device *dev,
 		pr_err("Error: QSMMU ctx not supported for: %s\n", cb->name);
 		return -EINVAL;
 	}
-		ctx = dev;
-		CDBG("getting Arm SMMU ctx : %s\n", cb->name);
+	ctx = dev;
+	CDBG("getting Arm SMMU ctx : %s\n", cb->name);
 
 	rc = cam_smmu_setup_cb(cb, ctx);
-	if (rc < 0)
+	if (rc < 0) {
 		pr_err("Error: failed to setup cb : %s\n", cb->name);
+		goto cb_init_fail;
+	}
 
 	iommu_set_fault_handler(cb->domain,
 			cam_smmu_iommu_fault_handler,
@@ -1576,7 +1579,6 @@ static int cam_populate_smmu_context_banks(struct device *dev,
 	return rc;
 
 cb_init_fail:
-	iommu_cb_set.cb_info = NULL;
 	return rc;
 }
 
@@ -1589,14 +1591,14 @@ static int cam_smmu_probe(struct platform_device *pdev)
 		rc = cam_alloc_smmu_context_banks(dev);
 		if (rc < 0)	{
 			pr_err("Error: allocating context banks\n");
-			return -ENOMEM;
+			return rc;
 		}
 	}
 	if (of_device_is_compatible(dev->of_node, "qcom,msm-cam-smmu-cb")) {
 		rc = cam_populate_smmu_context_banks(dev, CAM_ARM_SMMU);
 		if (rc < 0) {
 			pr_err("Error: populating context banks\n");
-			return -ENOMEM;
+			return rc;
 		}
 		return rc;
 	}
@@ -1604,20 +1606,20 @@ static int cam_smmu_probe(struct platform_device *pdev)
 		rc = cam_populate_smmu_context_banks(dev, CAM_QSMMU);
 		if (rc < 0) {
 			pr_err("Error: populating context banks\n");
-			return -ENOMEM;
+			return rc;
 		}
 		return rc;
 	}
+
+	INIT_WORK(&iommu_cb_set.smmu_work, cam_smmu_page_fault_work);
+	mutex_init(&iommu_cb_set.payload_list_lock);
+	INIT_LIST_HEAD(&iommu_cb_set.payload_list);
 
 	/* probe thru all the subdevices */
 	rc = of_platform_populate(pdev->dev.of_node, msm_cam_smmu_dt_match,
 				NULL, &pdev->dev);
 	if (rc < 0)
 		pr_err("Error: populating devices\n");
-
-	INIT_WORK(&iommu_cb_set.smmu_work, cam_smmu_page_fault_work);
-	mutex_init(&iommu_cb_set.payload_list_lock);
-	INIT_LIST_HEAD(&iommu_cb_set.payload_list);
 
 	return rc;
 }

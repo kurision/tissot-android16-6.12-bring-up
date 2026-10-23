@@ -17,6 +17,8 @@
 #include <linux/of.h>
 #include <linux/videodev2.h>
 #include <linux/platform_device.h>
+#include <linux/pm_domain.h>
+#include <linux/pm_runtime.h>
 #include <linux/gpio.h>
 #include <linux/iopoll.h>
 #include <linux/compat.h>
@@ -308,135 +310,104 @@ static long msm_ispif_subdev_ioctl(struct v4l2_subdev *sd,
 	return msm_ispif_subdev_ioctl_unlocked(sd, cmd, arg);
 }
 #endif
-static void msm_ispif_put_regulator(struct ispif_device *ispif_dev)
+static void msm_ispif_put_power_domains(struct ispif_device *ispif)
 {
-	int i;
+	while (ispif->ispif_pd_count) {
+		struct device *pd = ispif->ispif_pd[--ispif->ispif_pd_count];
 
-	for (i = 0; i < ispif_dev->ispif_vdd_count; i++) {
-		regulator_put(ispif_dev->ispif_vdd[i]);
-		ispif_dev->ispif_vdd[i] = NULL;
+		dev_pm_domain_detach(pd, true);
+		ispif->ispif_pd[ispif->ispif_pd_count] = NULL;
 	}
-	for (i = 0; i < ispif_dev->vfe_vdd_count; i++) {
-		regulator_put(ispif_dev->vfe_vdd[i]);
-		ispif_dev->vfe_vdd[i] = NULL;
+	while (ispif->vfe_pd_count) {
+		struct device *pd = ispif->vfe_pd[--ispif->vfe_pd_count];
+
+		dev_pm_domain_detach(pd, true);
+		ispif->vfe_pd[ispif->vfe_pd_count] = NULL;
 	}
 }
 
-static inline int __get_vdd(struct platform_device *pdev,
-				struct regulator **reg, const char *vdd)
+static int msm_ispif_get_power_domains(struct ispif_device *ispif,
+				       struct platform_device *pdev)
 {
-	int rc = 0;
-	*reg = regulator_get(&pdev->dev, vdd);
-	if (IS_ERR_OR_NULL(*reg)) {
-		rc = PTR_ERR(*reg);
-		rc = rc ? rc : -EINVAL;
-		pr_err("%s: Regulator %s get failed %d\n", __func__, vdd, rc);
-		*reg = NULL;
-	}
-	return rc;
-}
+	struct device_node *np = pdev->dev.of_node;
+	const char *name;
+	int count, i, rc;
 
-static int msm_ispif_get_regulator_info(struct ispif_device *ispif_dev,
-					struct platform_device *pdev)
-{
-	int rc;
-	const char *vdd_name;
-	struct device_node *of_node;
-	int i;
-	int count;
-
-	of_node = pdev->dev.of_node;
-
-	count = of_property_count_strings(of_node,
-					"qcom,vdd-names");
-	if (0 == count) {
-		pr_err("%s: no regulators found\n", __func__);
+	count = of_property_count_strings(np, "power-domain-names");
+	if (count < 0)
+		return count;
+	if (!count || count > ISPIF_PD_MAX + ISPIF_VFE_PD_MAX)
 		return -EINVAL;
-	}
-
-	BUG_ON(count > (ISPIF_VDD_INFO_MAX + ISPIF_VFE_VDD_INFO_MAX));
-	ispif_dev->vfe_vdd_count = 0;
-	ispif_dev->ispif_vdd_count = 0;
 
 	for (i = 0; i < count; i++) {
-		rc = of_property_read_string_index(
-				of_node, "qcom,vdd-names",
-				i, &vdd_name);
-		if (rc < 0) {
-			pr_err("%s: read property qcom,ispif-vdd-names at index %d failed\n",
-				__func__, i);
-			goto err;
-		}
-		if (strnstr(vdd_name, "vfe", strlen(vdd_name))) {
-			BUG_ON(ispif_dev->vfe_vdd_count >=
-				ISPIF_VFE_VDD_INFO_MAX);
-			rc = __get_vdd(pdev,
-				&ispif_dev->vfe_vdd[ispif_dev->vfe_vdd_count],
-				vdd_name);
-			if (0 == rc)
-				ispif_dev->vfe_vdd_count++;
-		} else {
-			BUG_ON(ispif_dev->vfe_vdd_count >=
-				ISPIF_VDD_INFO_MAX);
-			rc = __get_vdd(pdev,
-				&ispif_dev->ispif_vdd
-					[ispif_dev->ispif_vdd_count],
-				vdd_name);
-			if (0 == rc)
-				ispif_dev->ispif_vdd_count++;
-		}
+		struct device **domains, *pd;
+		int *num_domains, max_domains;
+
+		rc = of_property_read_string_index(np, "power-domain-names",
+						   i, &name);
 		if (rc)
 			goto err;
+
+		if (!strncmp(name, "vfe", 3)) {
+			domains = ispif->vfe_pd;
+			num_domains = &ispif->vfe_pd_count;
+			max_domains = ISPIF_VFE_PD_MAX;
+		} else {
+			domains = ispif->ispif_pd;
+			num_domains = &ispif->ispif_pd_count;
+			max_domains = ISPIF_PD_MAX;
+		}
+		if (*num_domains >= max_domains) {
+			rc = -EINVAL;
+			goto err;
+		}
+
+		pd = dev_pm_domain_attach_by_name(&pdev->dev, name);
+		if (IS_ERR_OR_NULL(pd)) {
+			rc = PTR_ERR(pd) ?: -ENODEV;
+			goto err;
+		}
+		domains[(*num_domains)++] = pd;
 	}
 	return 0;
 err:
-	for (i = 0; i < ispif_dev->vfe_vdd_count; i++) {
-		regulator_put(ispif_dev->vfe_vdd[i]);
-		ispif_dev->vfe_vdd[i] = NULL;
-	}
-	for (i = 0; i < ispif_dev->ispif_vdd_count; i++) {
-		regulator_put(ispif_dev->ispif_vdd[i]);
-		ispif_dev->ispif_vdd[i] = NULL;
-	}
-	ispif_dev->ispif_vdd_count = 0;
-	ispif_dev->vfe_vdd_count = 0;
+	msm_ispif_put_power_domains(ispif);
 	return rc;
 }
 
-static int msm_ispif_set_regulators(struct regulator **regs, int count,
-	uint8_t enable)
+static int msm_ispif_set_power_domains(struct device **domains, int count,
+				       uint8_t enable)
 {
-	int rc = 0;
-	int i;
+	int i, rc, first_error = 0;
 
 	for (i = 0; i < count; i++) {
 		if (enable) {
-			rc = regulator_enable(regs[i]);
-			if (rc)
+			rc = pm_runtime_resume_and_get(domains[i]);
+			if (rc < 0)
 				goto err;
 		} else {
-			rc |= regulator_disable(regs[i]);
+			rc = pm_runtime_put_sync(domains[i]);
+			if (rc < 0 && !first_error)
+				first_error = rc;
 		}
 	}
-	if (rc)
-		pr_err("%s: Regulator disable failed\n", __func__);
-	return rc;
+	return first_error;
 err:
-	pr_err("%s: Regulator enable failed\n", __func__);
-	for (i--; i >= 0; i--)
-		regulator_disable(regs[i]);
+	while (i--)
+		pm_runtime_put_sync(domains[i]);
 	return rc;
 }
 
 static int msm_ispif_reset_hw(struct ispif_device *ispif)
 {
 	int rc = 0;
+	int cleanup_rc;
 	long timeout = 0;
 	struct clk *reset_clk1[ARRAY_SIZE(ispif_8626_reset_clk_info)];
 	ispif->clk_idx = 0;
 
 	/* Turn ON VFE regulators before enabling the vfe clocks */
-	rc = msm_ispif_set_regulators(ispif->vfe_vdd, ispif->vfe_vdd_count, 1);
+	rc = msm_ispif_set_power_domains(ispif->vfe_pd, ispif->vfe_pd_count, 1);
 	if (rc < 0)
 		return rc;
 
@@ -493,19 +464,25 @@ static int msm_ispif_reset_hw(struct ispif_device *ispif)
 
 clk_disable:
 	if (ispif->clk_idx == 1) {
-		rc = rc ? rc : legacy_msm_camera_clk_enable(&ispif->pdev->dev,
-			ispif->clk_info, ispif->clks,
-			ispif->num_clk, 0);
+		cleanup_rc = legacy_msm_camera_clk_enable(&ispif->pdev->dev,
+							  ispif->clk_info, ispif->clks,
+							  ispif->num_clk, 0);
+		if (!rc)
+			rc = cleanup_rc;
 	}
 
 	if (ispif->clk_idx == 2) {
-		rc = rc ? rc :  legacy_msm_camera_clk_enable(&ispif->pdev->dev,
-			ispif_8626_reset_clk_info, reset_clk1,
-			ARRAY_SIZE(ispif_8626_reset_clk_info), 0);
+		cleanup_rc = legacy_msm_camera_clk_enable(&ispif->pdev->dev,
+							  ispif_8626_reset_clk_info, reset_clk1,
+							  ARRAY_SIZE(ispif_8626_reset_clk_info), 0);
+		if (!rc)
+			rc = cleanup_rc;
 	}
 reg_disable:
-	rc = rc ? rc :  msm_ispif_set_regulators(ispif->vfe_vdd,
-					ispif->vfe_vdd_count, 0);
+	cleanup_rc = msm_ispif_set_power_domains(ispif->vfe_pd,
+						 ispif->vfe_pd_count, 0);
+	if (!rc)
+		rc = cleanup_rc;
 
 	return rc;
 }
@@ -1230,8 +1207,8 @@ static int msm_ispif_restart_frame_boundary(struct ispif_device *ispif,
 	}
 
 	/* Turn ON regulators before enabling the clocks*/
-	rc = msm_ispif_set_regulators(ispif->vfe_vdd,
-					ispif->vfe_vdd_count, 1);
+	rc = msm_ispif_set_power_domains(ispif->vfe_pd,
+					 ispif->vfe_pd_count, 1);
 	if (rc < 0)
 		return -EFAULT;
 
@@ -1277,7 +1254,7 @@ static int msm_ispif_restart_frame_boundary(struct ispif_device *ispif,
 		goto disable_regulator;
 
 	/* Turn OFF regulators after disabling clocks */
-	rc = msm_ispif_set_regulators(ispif->vfe_vdd, ispif->vfe_vdd_count, 0);
+	rc = msm_ispif_set_power_domains(ispif->vfe_pd, ispif->vfe_pd_count, 0);
 	if (rc < 0)
 		goto end;
 
@@ -1332,7 +1309,7 @@ disable_clk:
 		ispif->num_clk, 0);
 disable_regulator:
 	/* Turn OFF regulators */
-	msm_ispif_set_regulators(ispif->vfe_vdd, ispif->vfe_vdd_count, 0);
+	msm_ispif_set_power_domains(ispif->vfe_pd, ispif->vfe_pd_count, 0);
 end:
 	return rc;
 }
@@ -1955,8 +1932,8 @@ static int ispif_open_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	mutex_lock(&ispif->mutex);
 	if (0 == ispif->open_cnt) {
 		/* enable regulator and clocks on first open */
-		rc = msm_ispif_set_regulators(ispif->ispif_vdd,
-					ispif->ispif_vdd_count, 1);
+		rc = msm_ispif_set_power_domains(ispif->ispif_pd,
+						 ispif->ispif_pd_count, 1);
 		if (rc)
 			goto unlock;
 
@@ -1969,7 +1946,7 @@ static int ispif_open_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	mutex_unlock(&ispif->mutex);
 	return rc;
 ahb_clk_enable_fail:
-	msm_ispif_set_regulators(ispif->ispif_vdd, ispif->ispif_vdd_count, 0);
+	msm_ispif_set_power_domains(ispif->ispif_pd, ispif->ispif_pd_count, 0);
 unlock:
 	mutex_unlock(&ispif->mutex);
 	return rc;
@@ -1995,8 +1972,8 @@ static int ispif_close_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 		msm_ispif_release(ispif);
 		/* disable clocks and regulator on last close */
 		msm_ispif_clk_ahb_enable(ispif, 0);
-		msm_ispif_set_regulators(ispif->ispif_vdd,
-					ispif->ispif_vdd_count, 0);
+		msm_ispif_set_power_domains(ispif->ispif_pd,
+					    ispif->ispif_pd_count, 0);
 	}
 end:
 	mutex_unlock(&ispif->mutex);
@@ -2039,7 +2016,8 @@ static int ispif_probe(struct platform_device *pdev)
 		rc = 0;
 	}
 
-	rc = msm_ispif_get_regulator_info(ispif, pdev);
+	mutex_init(&ispif->mutex);
+	rc = msm_ispif_get_power_domains(ispif, pdev);
 	if (rc < 0)
 		goto regulator_fail;
 
@@ -2049,7 +2027,6 @@ static int ispif_probe(struct platform_device *pdev)
 		rc = -EFAULT;
 		goto get_clk_fail;
 	}
-	mutex_init(&ispif->mutex);
 	ispif->base = legacy_msm_camera_get_reg_base(pdev, "ispif", 1);
 	if (!ispif->base) {
 		rc = -ENOMEM;
@@ -2112,7 +2089,7 @@ reg_base_fail:
 		&ispif->ahb_clk,
 		ispif->num_ahb_clk + ispif->num_clk);
 get_clk_fail:
-	msm_ispif_put_regulator(ispif);
+	msm_ispif_put_power_domains(ispif);
 regulator_fail:
 	mutex_destroy(&ispif->mutex);
 	kfree(ispif);

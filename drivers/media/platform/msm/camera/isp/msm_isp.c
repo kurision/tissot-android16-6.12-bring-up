@@ -25,6 +25,7 @@
 #include <media/v4l2-event.h>
 
 #include "msm_isp.h"
+#include "cam_soc_api.h"
 #include "msm_isp_util.h"
 #include "msm_isp_axi_util.h"
 #include "msm_isp_stats_util.h"
@@ -531,41 +532,44 @@ static int vfe_set_common_data(struct platform_device *pdev)
 
 static int vfe_probe(struct platform_device *pdev)
 {
-	int rc = 0;
+	struct platform_device *children[MAX_VFE] = { NULL };
 	struct device_node *node;
-	struct platform_device *new_dev = NULL;
-	uint32_t i = 0;
-	char name[10] = "\0";
-	uint32_t num_hw_sd;
+	u32 count, i;
+	char name[32];
+	int rc;
+
+	rc = of_property_read_u32(pdev->dev.of_node, "num_child", &count);
+	if (rc || !count || count > MAX_VFE)
+		return -EINVAL;
+
+	for (i = 0; i < count; i++) {
+		snprintf(name, sizeof(name), "qcom,vfe%u", i);
+		node = of_find_node_by_name(NULL, name);
+		if (!node) {
+			rc = -ENODEV;
+			goto out;
+		}
+		children[i] = of_find_device_by_node(node);
+		of_node_put(node);
+		if (!children[i] || !platform_get_drvdata(children[i])) {
+			rc = -EPROBE_DEFER;
+			goto out;
+		}
+	}
 
 	memset(&vfe_common_data, 0, sizeof(vfe_common_data));
 	spin_lock_init(&vfe_common_data.common_dev_data_lock);
 	spin_lock_init(&vfe_common_data.common_dev_axi_lock);
-
-	of_property_read_u32(pdev->dev.of_node, "num_child", &num_hw_sd);
-
-	for (i = 0; i < num_hw_sd; i++) {
-		node = NULL;
-		snprintf(name, sizeof(name), "qcom,vfe%d", i);
-		node = of_find_node_by_name(NULL, name);
-		if (!node) {
-			pr_err("%s: Error! Cannot find node in dtsi %s\n",
-				__func__, name);
-			goto end;
-		}
-		new_dev = of_find_device_by_node(node);
-		if (!new_dev) {
-			pr_err("%s: Failed to find device on bus %s\n",
-				__func__, node->name);
-			goto end;
-		}
-		new_dev->dev.platform_data = &vfe_common_data;
-		rc = vfe_set_common_data(new_dev);
-		if (rc < 0)
-			goto end;
+	for (i = 0; i < count; i++) {
+		children[i]->dev.platform_data = &vfe_common_data;
+		rc = vfe_set_common_data(children[i]);
+		if (rc)
+			goto out;
 	}
-
-end:
+out:
+	for (i = 0; i < count; i++)
+		if (children[i])
+			put_device(&children[i]->dev);
 	return rc;
 }
 
@@ -597,8 +601,12 @@ int legacy_vfe_hw_probe(struct platform_device *pdev)
 	}
 
 	if (pdev->dev.of_node) {
-		of_property_read_u32(pdev->dev.of_node,
-			"cell-index", &pdev->id);
+		rc = of_property_read_u32(pdev->dev.of_node,
+					  "cell-index", &pdev->id);
+		if (rc || pdev->id >= MAX_VFE) {
+			rc = -EINVAL;
+			goto probe_fail3;
+		}
 
 		match_dev = of_match_device(pdev->dev.driver->of_match_table,
 			&pdev->dev);
@@ -626,7 +634,6 @@ int legacy_vfe_hw_probe(struct platform_device *pdev)
 	rc = vfe_dev->hw_info->vfe_ops.platform_ops.get_platform_data(vfe_dev);
 	if (rc < 0) {
 		pr_err("%s: failed to get platform resources\n", __func__);
-		rc = -ENOMEM;
 		goto probe_fail3;
 	}
 
@@ -652,51 +659,56 @@ int legacy_vfe_hw_probe(struct platform_device *pdev)
 	spin_lock_init(&req_history_lock);
 	spin_lock_init(&vfe_dev->reset_completion_lock);
 	spin_lock_init(&vfe_dev->halt_completion_lock);
-	media_entity_pads_init(&vfe_dev->subdev.sd.entity, 0, NULL);
+	rc = media_entity_pads_init(&vfe_dev->subdev.sd.entity, 0, NULL);
+	if (rc)
+		goto probe_fail_entity;
 	vfe_dev->subdev.sd.grp_id = MSM_CAMERA_SUBDEV_VFE;
 	vfe_dev->subdev.sd.entity.name = pdev->name;
 	vfe_dev->subdev.close_seq = MSM_SD_CLOSE_1ST_CATEGORY | 0x2;
+	vfe_dev->isp_page = (struct isp_proc *)get_zeroed_page(GFP_KERNEL);
+	if (!vfe_dev->isp_page) {
+		rc = -ENOMEM;
+		goto probe_fail_entity;
+	}
+	vfe_dev->isp_page->vfeid = pdev->id;
+	vfe_dev->buf_mgr = &vfe_buf_mgr;
+	rc = legacy_msm_isp_create_isp_buf_mgr(vfe_dev->buf_mgr,
+					       &vfe_vb2_ops, &pdev->dev,
+					       vfe_dev->hw_info->axi_hw_info->scratch_buf_range);
+	if (rc)
+		goto probe_fail_page;
+	vfe_dev->buf_mgr->num_iommu_secure_ctx =
+		vfe_dev->hw_info->num_iommu_secure_ctx;
+	vfe_dev->buf_mgr->init_done = 1;
+
 	rc = legacy_msm_sd_register(&vfe_dev->subdev);
-	if (rc != 0) {
+	if (rc) {
 		pr_err("%s: legacy_msm_sd_register error = %d\n", __func__, rc);
-		goto probe_fail3;
+		goto probe_fail_page;
 	}
 	legacy_msm_cam_copy_v4l2_subdev_fops(&msm_isp_v4l2_fops);
 	msm_isp_v4l2_fops.unlocked_ioctl = msm_isp_v4l2_fops_ioctl;
 #ifdef CONFIG_COMPAT
-	msm_isp_v4l2_fops.compat_ioctl32 =
-		msm_isp_v4l2_fops_ioctl;
+	msm_isp_v4l2_fops.compat_ioctl32 = msm_isp_v4l2_fops_ioctl;
 #endif
 	msm_isp_v4l2_fops.mmap = msm_isp_v4l2_fops_mmap;
-
 	vfe_dev->subdev.sd.devnode->fops = &msm_isp_v4l2_fops;
-
-	vfe_dev->buf_mgr = &vfe_buf_mgr;
 	v4l2_subdev_notify(&vfe_dev->subdev.sd,
 		MSM_SD_NOTIFY_REQ_CB, &vfe_vb2_ops);
-	rc = legacy_msm_isp_create_isp_buf_mgr(vfe_dev->buf_mgr,
-		&vfe_vb2_ops, &pdev->dev,
-		vfe_dev->hw_info->axi_hw_info->scratch_buf_range);
-	if (rc < 0) {
-		pr_err("%s: Unable to create buffer manager\n", __func__);
-		rc = -EINVAL;
-		goto probe_fail3;
-	}
 	msm_isp_enable_debugfs(vfe_dev, msm_isp_bw_request_history);
-	vfe_dev->buf_mgr->num_iommu_secure_ctx =
-		vfe_dev->hw_info->num_iommu_secure_ctx;
-	vfe_dev->buf_mgr->init_done = 1;
-	vfe_dev->vfe_open_cnt = 0;
-	/*Allocate a page in kernel and map it to camera user process*/
-	vfe_dev->isp_page = (struct isp_proc *)get_zeroed_page(GFP_KERNEL);
-	if (vfe_dev->isp_page == NULL) {
-		pr_err("%s: no enough memory\n", __func__);
-		rc = -ENOMEM;
-		goto probe_fail3;
-	}
-	vfe_dev->isp_page->vfeid = vfe_dev->pdev->id;
 	return rc;
 
+probe_fail_page:
+	free_page((unsigned long)vfe_dev->isp_page);
+probe_fail_entity:
+	media_entity_cleanup(&vfe_dev->subdev.sd.entity);
+	platform_set_drvdata(pdev, NULL);
+	mutex_destroy(&vfe_dev->core_mutex);
+	mutex_destroy(&vfe_dev->realtime_mutex);
+	legacy_msm_isp_deinit_bandwidth_mgr(ISP_VFE0 + pdev->id);
+	legacy_msm_camera_unregister_irq(pdev, vfe_dev->vfe_irq, vfe_dev);
+	vfe_dev->hw_info->vfe_ops.platform_ops.put_clks(vfe_dev);
+	vfe_dev->hw_info->vfe_ops.platform_ops.put_regulators(vfe_dev);
 probe_fail3:
 	kfree(vfe_dev->legacy_ub_info);
 probe_fail2:

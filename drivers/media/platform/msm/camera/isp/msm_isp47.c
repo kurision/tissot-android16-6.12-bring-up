@@ -11,6 +11,8 @@
  */
 
 #include <linux/module.h>
+#include <linux/pm_domain.h>
+#include <linux/pm_runtime.h>
 #include <linux/ratelimit.h>
 #include <linux/sched/clock.h>
 
@@ -2563,52 +2565,47 @@ int legacy_msm_vfe47_get_clk_rates(struct vfe_device *vfe_dev,
 
 void legacy_msm_vfe47_put_regulators(struct vfe_device *vfe_dev)
 {
-	int i;
-
-	for (i = 0; i < vfe_dev->vfe_num_regulators; i++)
-		regulator_put(vfe_dev->regulator_info[i].vdd);
-
-	vfe_dev->vfe_num_regulators = 0;
-	kfree(vfe_dev->regulator_info);
-	vfe_dev->regulator_info = NULL;
+	if (vfe_dev->power_domain) {
+		if (vfe_dev->power_domain == &vfe_dev->pdev->dev)
+			pm_runtime_disable(vfe_dev->power_domain);
+		else
+			dev_pm_domain_detach(vfe_dev->power_domain, true);
+		vfe_dev->power_domain = NULL;
+	}
 }
 
 int legacy_msm_vfe47_get_regulators(struct vfe_device *vfe_dev)
 {
-	int rc = 0;
-	int i;
+	struct device *pd;
 
-	vfe_dev->vfe_num_regulators =
-		sizeof(*vfe_dev->hw_info->regulator_names) / sizeof(char *);
-
-	vfe_dev->regulator_info = kzalloc(sizeof(struct msm_cam_regulator) *
-				vfe_dev->vfe_num_regulators, GFP_KERNEL);
-	if (!vfe_dev->regulator_info)
-		return -ENOMEM;
-
-	for (i = 0; i < vfe_dev->vfe_num_regulators; i++) {
-		vfe_dev->regulator_info[i].vdd = regulator_get(
-					&vfe_dev->pdev->dev,
-					vfe_dev->hw_info->regulator_names[i]);
-		if (IS_ERR(vfe_dev->regulator_info[i].vdd)) {
-			pr_err("%s: Regulator vfe get failed %ld\n", __func__,
-			PTR_ERR(vfe_dev->regulator_info[i].vdd));
-			rc = -ENODEV;
-			goto reg_get_fail;
-		}
+	/* The platform core attaches a single domain before calling probe. */
+	if (vfe_dev->pdev->dev.pm_domain) {
+		vfe_dev->power_domain = &vfe_dev->pdev->dev;
+		pm_runtime_enable(vfe_dev->power_domain);
+		return 0;
 	}
-	return 0;
 
-reg_get_fail:
-	for (i--; i >= 0; i--)
-		regulator_put(vfe_dev->regulator_info[i].vdd);
-	kfree(vfe_dev->regulator_info);
-	vfe_dev->regulator_info = NULL;
-	return rc;
+	pd = dev_pm_domain_attach_by_name(&vfe_dev->pdev->dev, "vfe");
+	if (IS_ERR_OR_NULL(pd))
+		return PTR_ERR(pd) ?: -ENODEV;
+
+	vfe_dev->power_domain = pd;
+	return 0;
 }
 
 int legacy_msm_vfe47_enable_regulators(struct vfe_device *vfe_dev, int enable)
 {
+	int rc;
+
+	if (vfe_dev->power_domain) {
+		if (enable)
+			return pm_runtime_resume_and_get(vfe_dev->power_domain);
+
+		rc = pm_runtime_put_sync(vfe_dev->power_domain);
+		return rc < 0 ? rc : 0;
+	}
+
+	/* VFE48 supplies its own regulator acquisition callbacks. */
 	return legacy_msm_camera_regulator_enable(vfe_dev->regulator_info,
 					vfe_dev->vfe_num_regulators, enable);
 }
@@ -2685,8 +2682,8 @@ get_res_fail:
 	vfe_dev->vfe_vbif_base_size = 0;
 	vfe_dev->vfe_base_size = 0;
 vfe_irq_fail:
-	legacy_msm_camera_put_reg_base(vfe_dev->pdev, vfe_dev->vfe_base,
-					"vfe_vbif", 0);
+	legacy_msm_camera_put_reg_base(vfe_dev->pdev, vfe_dev->vfe_vbif_base,
+				       "vfe_vbif", 0);
 vbif_base_fail:
 	legacy_msm_camera_put_reg_base(vfe_dev->pdev, vfe_dev->vfe_base, "vfe", 0);
 	return rc;
