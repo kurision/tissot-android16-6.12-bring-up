@@ -136,6 +136,46 @@ if [ -z "${BASE_IMAGE:-}" ] || [ ! -f "$BASE_IMAGE" ]; then
 	exit 1
 fi
 
+# The current init installs overlays whose staging labels must survive restorecon.
+check_ramdisk_contexts() {
+	python3 -B - "$1" <<'PY'
+import gzip
+from pathlib import Path
+import runpy
+import struct
+import sys
+
+try:
+    image = Path(sys.argv[1]).read_bytes()
+    if image[:8] != b'ANDROID!':
+        raise ValueError('not an Android boot image')
+    kernel_size, _, ramdisk_size, _, second_size, _, _, page, version = struct.unpack_from('<9I', image, 8)
+    if page != 2048 or version != 0 or second_size != 0:
+        raise ValueError('unsupported boot header')
+    start = page + (kernel_size + page - 1) // page * page
+    package = runpy.run_path('porting/logging/package-diag-boot.py')
+    records, _ = package['parse_cpio'](gzip.decompress(image[start:start + ramdisk_size]))
+    contexts = [r['data'] for r in records if r['name'] == 'ack-vendor-file-contexts']
+    if len(contexts) != 1:
+        raise ValueError('expected exactly one ack-vendor-file-contexts record')
+    lines = [line.split() for line in contexts[0].decode().splitlines()]
+    for name in (r'ack-config-ueventd\.rc', r'ack-qrtr-vendor\.rc',
+                 r'ack-usb-controller\.prop', r'ack-flags-health-check\.rc',
+                 r'ack-debuggable-0\.prop'):
+        pattern = '/dev/block/' + name
+        matches = [line for line in lines if line and line[0] == pattern]
+        if matches != [[pattern, 'u:object_r:vendor_configs_file:s0']]:
+            raise ValueError(f'missing, duplicate or incorrect staging label: {pattern}')
+except (OSError, ValueError, EOFError, struct.error) as error:
+    sys.exit(f'error: incompatible ramdisk in {sys.argv[1]}: {error}\n'
+             'Select a verified base with the required staging labels, e.g.\n'
+             '  bash porting/tools/build-kernel.sh <run-name> '
+             'porting/artifacts/snapshot60/boot-run380-camera.img')
+print(f'Ramdisk staging labels verified: {sys.argv[1]}')
+PY
+}
+check_ramdisk_contexts "$BASE_IMAGE"
+
 # --- the toolchain ----------------------------------------------------------
 # The tools are found, not hardcoded, so a fresh clone builds on any host
 # that has them. A configuration resync with the wrong toolchain turns Rust
@@ -465,6 +505,7 @@ python3 -B porting/logging/package-diag-boot.py --base-image "$BASE_IMAGE" \
  --modules-dir "$MOD_DIR" "${fw_args[@]}" "${drop_args[@]}" \
  "${append_args[@]}" \
  --out "$SNAP/boot-$RUN.img" --report "$SNAP/package-$RUN.json"
+check_ramdisk_contexts "$SNAP/boot-$RUN.img"
 scripts/extract-ikconfig "$SNAP/kdir-$RUN/Image.gz" > "$SNAP/$RUN-embedded.config"
 
 # --- check the result -------------------------------------------------------
