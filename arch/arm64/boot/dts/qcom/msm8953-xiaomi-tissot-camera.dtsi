@@ -34,6 +34,153 @@
 		qcom,bus-votes = <0 320000000 640000000 640000000>;
 	};
 
+	qcom,csiphy@1b34000 {
+		status = "okay";
+		cell-index = <0>;
+		compatible = "qcom,csiphy-v3.5", "qcom,csiphy";
+		reg = <0x1b34000 0x1000>,
+			<0x1b00030 0x4>;
+		reg-names = "csiphy", "csiphy_clk_mux";
+		interrupts = <GIC_SPI 78 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "csiphy";
+		clocks = <&gcc GCC_CAMSS_TOP_AHB_CLK>,
+			<&gcc GCC_CAMSS_ISPIF_AHB_CLK>,
+			<&gcc CSI0PHYTIMER_CLK_SRC>,
+			<&gcc GCC_CAMSS_CSI0PHYTIMER_CLK>,
+			<&gcc CAMSS_TOP_AHB_CLK_SRC>,
+			<&gcc GCC_CAMSS_AHB_CLK>;
+		clock-names = "camss_top_ahb_clk", "ispif_ahb_clk",
+			"csiphy_timer_src_clk", "csiphy_timer_clk",
+			"camss_ahb_src", "camss_ahb_clk";
+		qcom,clock-rates = <0 61540000 200000000 0 0 0>;
+	};
+
+	qcom,csiphy@1b35000 {
+		status = "okay";
+		cell-index = <1>;
+		compatible = "qcom,csiphy-v3.5", "qcom,csiphy";
+		reg = <0x1b35000 0x1000>,
+			<0x1b00038 0x4>;
+		reg-names = "csiphy", "csiphy_clk_mux";
+		interrupts = <GIC_SPI 79 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "csiphy";
+		clocks = <&gcc GCC_CAMSS_TOP_AHB_CLK>,
+			<&gcc GCC_CAMSS_ISPIF_AHB_CLK>,
+			<&gcc CSI1PHYTIMER_CLK_SRC>,
+			<&gcc GCC_CAMSS_CSI1PHYTIMER_CLK>,
+			<&gcc CAMSS_TOP_AHB_CLK_SRC>,
+			<&gcc GCC_CAMSS_AHB_CLK>;
+		clock-names = "camss_top_ahb_clk", "ispif_ahb_clk",
+			"csiphy_timer_src_clk", "csiphy_timer_clk",
+			"camss_ahb_src", "camss_ahb_clk";
+		qcom,clock-rates = <0 61540000 200000000 0 0 0>;
+	};
+
+	qcom,csiphy@1b36000 {
+		status = "okay";
+		cell-index = <2>;
+		compatible = "qcom,csiphy-v3.5", "qcom,csiphy";
+		reg = <0x1b36000 0x1000>,
+			<0x1b00040 0x4>;
+		reg-names = "csiphy", "csiphy_clk_mux";
+		interrupts = <GIC_SPI 315 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "csiphy";
+		clocks = <&gcc GCC_CAMSS_TOP_AHB_CLK>,
+			<&gcc GCC_CAMSS_ISPIF_AHB_CLK>,
+			<&gcc CSI2PHYTIMER_CLK_SRC>,
+			<&gcc GCC_CAMSS_CSI2PHYTIMER_CLK>,
+			<&gcc CAMSS_TOP_AHB_CLK_SRC>,
+			<&gcc GCC_CAMSS_AHB_CLK>;
+		clock-names = "camss_top_ahb_clk", "ispif_ahb_clk",
+			"csiphy_timer_src_clk", "csiphy_timer_clk",
+			"camss_ahb_src", "camss_ahb_clk";
+		qcom,clock-rates = <0 61540000 200000000 0 0 0>;
+	};
+
+	qcom,csid@1b30000  {
+		status = "okay";
+		cell-index = <0>;
+		compatible = "qcom,csid-v3.5.1", "qcom,csid";
+		reg = <0x1b30000 0x400>;
+		reg-names = "csid";
+		interrupts = <GIC_SPI 51 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "csid";
+		/* S3 is fixed at 1.224 V in the upstream regulator model. */
+		qcom,csi-vdd-voltage = <1224000>;
+		qcom,mipi-csi-vdd-supply = <&pm8953_s3>;
+		clocks = <&gcc GCC_CAMSS_TOP_AHB_CLK>,
+			<&gcc GCC_CAMSS_ISPIF_AHB_CLK>,
+			<&gcc GCC_CAMSS_CSI0_AHB_CLK>,
+			<&gcc CSI0_CLK_SRC>,
+			<&gcc GCC_CAMSS_CSI0PHY_CLK>,
+			<&gcc GCC_CAMSS_CSI0_CLK>,
+			<&gcc GCC_CAMSS_CSI0PIX_CLK>,
+			<&gcc GCC_CAMSS_CSI0RDI_CLK>,
+			<&gcc GCC_CAMSS_AHB_CLK>;
+		clock-names = "camss_top_ahb_clk",
+			"ispif_ahb_clk", "csi_ahb_clk", "csi_src_clk",
+			"csi0_phy_clk",
+			"csi_clk",  "csi_pix_clk",
+			"csi_rdi_clk", "camss_ahb_clk";
+		qcom,clock-rates = <0 61540000 0 200000000 0 0 0 0 0>;
+	};
+
+	qcom,csid@1b30400 {
+		status = "okay";
+		cell-index = <1>;
+		compatible = "qcom,csid-v3.5.1", "qcom,csid";
+		reg = <0x1b30400 0x400>;
+		reg-names = "csid";
+		interrupts = <GIC_SPI 52 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "csid";
+		/* S3 is fixed at 1.224 V in the upstream regulator model. */
+		qcom,csi-vdd-voltage = <1224000>;
+		qcom,mipi-csi-vdd-supply = <&pm8953_s3>;
+		clocks = <&gcc GCC_CAMSS_TOP_AHB_CLK>,
+			<&gcc GCC_CAMSS_ISPIF_AHB_CLK>,
+			<&gcc GCC_CAMSS_CSI1_AHB_CLK>,
+			<&gcc CSI1_CLK_SRC>,
+			<&gcc GCC_CAMSS_CSI1PHY_CLK>,
+			<&gcc GCC_CAMSS_CSI1_CLK>,
+			<&gcc GCC_CAMSS_CSI1PIX_CLK>,
+			<&gcc GCC_CAMSS_CSI1RDI_CLK>,
+			<&gcc GCC_CAMSS_AHB_CLK>;
+		clock-names = "camss_top_ahb_clk",
+			"ispif_ahb_clk", "csi_ahb_clk", "csi_src_clk",
+			"csi1_phy_clk",
+			"csi_clk", "csi_pix_clk",
+			"csi_rdi_clk", "camss_ahb_clk";
+		qcom,clock-rates = <0 61540000 0 200000000 0 0 0 0 0>;
+	};
+
+	qcom,csid@1b30800 {
+		status = "okay";
+		cell-index = <2>;
+		compatible = "qcom,csid-v3.5.1", "qcom,csid";
+		reg = <0x1b30800 0x400>;
+		reg-names = "csid";
+		interrupts = <GIC_SPI 153 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "csid";
+		/* S3 is fixed at 1.224 V in the upstream regulator model. */
+		qcom,csi-vdd-voltage = <1224000>;
+		qcom,mipi-csi-vdd-supply = <&pm8953_s3>;
+		clocks = <&gcc GCC_CAMSS_TOP_AHB_CLK>,
+			<&gcc GCC_CAMSS_ISPIF_AHB_CLK>,
+			<&gcc GCC_CAMSS_CSI2_AHB_CLK>,
+			<&gcc CSI2_CLK_SRC>,
+			<&gcc GCC_CAMSS_CSI2PHY_CLK>,
+			<&gcc GCC_CAMSS_CSI2_CLK>,
+			<&gcc GCC_CAMSS_CSI2PIX_CLK>,
+			<&gcc GCC_CAMSS_CSI2RDI_CLK>,
+			<&gcc GCC_CAMSS_AHB_CLK>;
+		clock-names = "camss_top_ahb_clk",
+			"ispif_ahb_clk", "csi_ahb_clk", "csi_src_clk",
+			"csi2_phy_clk",
+			"csi_clk", "csi_pix_clk",
+			"csi_rdi_clk", "camss_ahb_clk";
+		qcom,clock-rates = <0 61540000 0 200000000 0 0 0 0 0>;
+	};
+
 	/*
 	 * The camera control interface: two I2C masters, the CSI
 	 * receivers and the sensors that hang on them.
