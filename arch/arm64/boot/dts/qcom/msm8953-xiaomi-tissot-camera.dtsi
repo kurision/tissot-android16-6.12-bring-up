@@ -8,9 +8,9 @@
  * arch/arm64/boot/dts/vendor/qcom/msm8953-camera.dtsi (the SoC part)
  * and .../mi8953/tissot/camera.dtsi (the board part).
  *
- * The CCI, sensors, CSI receivers and VFE/ISPIF are described here.
- * VFE GDSCs use the GCC power-domain provider. CPP and JPEG pixel
- * processing remain outside this stage.
+ * The CCI, sensors, CSI receivers, VFE/ISPIF and CPP are described here.
+ * VFE and CPP GDSCs use the GCC power-domain provider. JPEG processing
+ * remains outside this stage.
  *
  * The camera's pins are in the board file, with the donor's names
  * (msm8953-xiaomi-tissot.dts, "&tlmm").
@@ -27,6 +27,54 @@
 		status = "okay";
 		bus-vectors = "suspend", "svs", "nominal", "turbo";
 		qcom,bus-votes = <0 320000000 640000000 640000000>;
+	};
+
+	qcom,cpp@1b04000 {
+		status = "okay";
+		cell-index = <0>;
+		compatible = "qcom,cpp";
+		reg = <0x1b04000 0x100>,
+			<0x1b80000 0x200>,
+			<0x1b18000 0x18>;
+		reg-names = "cpp", "cpp_vbif", "cpp_hw";
+		interrupts = <GIC_SPI 49 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "cpp";
+		power-domains = <&gcc CPP_GDSC>;
+		power-domain-names = "cpp";
+		clocks = <&gcc CAMSS_TOP_AHB_CLK_SRC>,
+			<&gcc GCC_CAMSS_TOP_AHB_CLK>,
+			<&gcc CPP_CLK_SRC>,
+			<&gcc GCC_CAMSS_CPP_AHB_CLK>,
+			<&gcc GCC_CAMSS_CPP_AXI_CLK>,
+			<&gcc GCC_CAMSS_CPP_CLK>,
+			<&gcc GCC_CAMSS_MICRO_AHB_CLK>,
+			<&gcc GCC_CAMSS_AHB_CLK>;
+		clock-names = "camss_ahb_src", "camss_top_ahb_clk",
+			"cpp_core_clk", "camss_vfe_cpp_ahb_clk",
+			"camss_vfe_cpp_axi_clk", "camss_vfe_cpp_clk",
+			"micro_iface_clk", "camss_ahb_clk";
+		qcom,clock-rates = <80000000 0 180000000 0 0 180000000 0 0>;
+		qcom,min-clock-rate = <100000000>;
+		qcom,bus-master = <1>;
+		resets = <&gcc GCC_CAMSS_MICRO_BCR>;
+		reset-names = "micro_iface_reset";
+		qcom,msm-bus,name = "msm_camera_cpp";
+		qcom,msm-bus,num-cases = <2>;
+		qcom,msm-bus,num-paths = <1>;
+		qcom,msm-bus,vectors-KBps = <106 512 0 0>, <106 512 0 0>;
+		qcom,msm-bus-vector-dyn-vote;
+		qcom,micro-reset;
+		qcom,src-clock-rates = <100000000 200000000 266670000
+					320000000 400000000 465000000>;
+
+		qcom,cpp-fw-payload-info {
+			qcom,stripe-base = <156>;
+			qcom,plane-base = <141>;
+			qcom,stripe-size = <27>;
+			qcom,plane-size = <5>;
+			qcom,fe-ptr-off = <5>;
+			qcom,we-ptr-off = <11>;
+		};
 	};
 
 	qcom,ispif@1b31000 {
@@ -982,5 +1030,20 @@
 			label = "vfe";
 			qcom,scratch-buf-support;
 		};
+
+		cpp-context {
+			compatible = "qcom,msm-cam-smmu-cb";
+			/* Captured SID 0x1c00 routes to APPS context bank 0x12. */
+			iommus = <&apps_iommu 0x12>;
+			label = "cpp";
+		};
+	};
+};
+
+&apps_iommu {
+	iommu-ctx@12000 {
+		compatible = "qcom,msm-iommu-v1-ns";
+		reg = <0x12000 0x1000>;
+		interrupts = <GIC_SPI 109 IRQ_TYPE_LEVEL_HIGH>;
 	};
 };
