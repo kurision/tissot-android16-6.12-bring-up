@@ -463,7 +463,7 @@ static int msm_camera_put_clk_info_internal(struct device *dev,
 	int i;
 
 	for (i = cnt - 1; i >= 0; i--) {
-		if (clk_ptr[i] != NULL)
+		if ((*clk_ptr)[i] != NULL)
 			devm_clk_put(dev, (*clk_ptr)[i]);
 
 		CDBG("clk ptr[%d] :%pK\n", i, (*clk_ptr)[i]);
@@ -518,7 +518,7 @@ int legacy_msm_camera_put_clk_info_and_rates(struct platform_device *pdev,
 
 	devm_kfree(&pdev->dev, *clk_rates);
 	for (i = cnt - 1; i >= 0; i--) {
-		if (clk_ptr[i] != NULL)
+		if ((*clk_ptr)[i] != NULL)
 			devm_clk_put(&pdev->dev, (*clk_ptr)[i]);
 		CDBG("clk ptr[%d] :%pK\n", i, (*clk_ptr)[i]);
 	}
