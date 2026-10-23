@@ -1,10 +1,31 @@
 # Current state of the tissot port
 
-Updated **2026-10-22**. This is the detailed live status; the
+Camera checkpoint updated **2026-10-24**; other subsystem status below
+remains dated **2026-10-22**. This is the detailed live status; the
 [README](README.md) is the overview and [failing-components table](FAILING-COMPONENTS.md)
 is the work queue. Old dated reports describe their own runs, not this state.
 
-## Image and source provenance
+## Camera milestone, 2026-10-24
+
+The user's `6.12.93-4k-g6b7fe2b3628d-dirty #43` reaches CPP hardware
+initialization (`0x40030003`) and working front/rear preview. Rear preview
+is upside down, saved JPEGs are corrupt, and the captured videos use
+software `c2.android.avc.encoder`. Camera bring-up is not complete.
+
+Source through `906b00d7f` commits the combined CPP/ABI work used for that
+milestone. `b74883f50` separately corrects the donor QRD mount angles;
+that newer correction is host-tested and **not boot-tested**. The dirty
+#43 identity is not an exact source or packaged-image hash. No build,
+flash or phone boot was run by the agent for this checkpoint.
+
+Start the next session with [the camera handoff](HANDOFF-camera-2026-10-24.md).
+It links the stock and ACK captures, focused checks, commits and next steps.
+All local capture originals remain under `artifacts/snapshot60/`; large
+artifacts are not included in these commits and must be retained separately.
+The older main-image provenance and other subsystem statements below have
+not been revalidated by this camera checkpoint.
+
+## Earlier main image and source provenance, 2026-10-22
 
 | Item | Evidence / state |
 |---|---|
