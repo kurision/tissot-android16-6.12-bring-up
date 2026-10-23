@@ -559,6 +559,15 @@ int legacy_msm_fd_hw_request_irq(struct platform_device *pdev,
 		goto error_irq;
 	}
 
+	fd->work_queue = alloc_workqueue(MSM_FD_WORQUEUE_NAME,
+					 WQ_HIGHPRI | WQ_UNBOUND, 0);
+	if (!fd->work_queue) {
+		dev_err(fd->dev, "Can not register workqueue\n");
+		ret = -ENOMEM;
+		goto error_irq;
+	}
+	INIT_WORK(&fd->work, work_func);
+
 	/* If vbif is shared we will need wrapper irq for releasing vbif */
 	if (msm_fd_hw_misc_irq_supported(fd)) {
 		ret = legacy_msm_camera_register_irq(pdev,
@@ -566,7 +575,7 @@ int legacy_msm_fd_hw_request_irq(struct platform_device *pdev,
 				IRQF_TRIGGER_RISING, "fd", fd);
 		if (ret) {
 			dev_err(fd->dev, "Can not claim wrapper IRQ\n");
-			goto error_irq;
+			goto error_request_irq;
 		}
 	} else {
 		ret = legacy_msm_camera_register_irq(pdev,
@@ -574,24 +583,16 @@ int legacy_msm_fd_hw_request_irq(struct platform_device *pdev,
 				IRQF_TRIGGER_RISING, "fd", fd);
 		if (ret) {
 			dev_err(&pdev->dev, "Can not claim core IRQ\n");
-			goto error_irq;
+			goto error_request_irq;
 		}
 
 	}
 
-	fd->work_queue = alloc_workqueue(MSM_FD_WORQUEUE_NAME,
-		WQ_HIGHPRI | WQ_UNBOUND, 0);
-	if (!fd->work_queue) {
-		dev_err(fd->dev, "Can not register workqueue\n");
-		ret = -ENOMEM;
-		goto error_alloc_workqueue;
-	}
-	INIT_WORK(&fd->work, work_func);
-
 	return 0;
 
-error_alloc_workqueue:
-	legacy_msm_camera_unregister_irq(pdev, fd->irq, fd);
+error_request_irq:
+	destroy_workqueue(fd->work_queue);
+	fd->work_queue = NULL;
 error_irq:
 	return ret;
 }
