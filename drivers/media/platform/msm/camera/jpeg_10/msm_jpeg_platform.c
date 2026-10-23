@@ -13,7 +13,9 @@
 
 
 #include <linux/module.h>
+#include <linux/pm_domain.h>
 #include <linux/pm_qos.h>
+#include <linux/pm_runtime.h>
 #include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/clk/qcom.h>
@@ -242,6 +244,57 @@ static int msm_jpeg_detach_iommu(struct msm_jpeg_device *pgmn_dev)
 }
 
 
+/*
+ * The JPEG encoder's GDSC is a power domain of the port's GCC provider,
+ * not the donor's qcom,gdsc regulator.  The encode session holds the
+ * domain with runtime PM, in place of the regulator enable/disable pairs.
+ */
+static int msm_jpeg_get_power_domain(struct msm_jpeg_device *pgmn_dev)
+{
+	struct device *pd;
+
+	/* The platform core attaches a single domain before calling probe. */
+	if (pgmn_dev->pdev->dev.pm_domain) {
+		pgmn_dev->power_domain = &pgmn_dev->pdev->dev;
+		pm_runtime_enable(pgmn_dev->power_domain);
+		return 0;
+	}
+
+	pd = dev_pm_domain_attach_by_name(&pgmn_dev->pdev->dev, "jpeg");
+	if (IS_ERR_OR_NULL(pd))
+		return PTR_ERR(pd) ?: -ENODEV;
+
+	pgmn_dev->power_domain = pd;
+	return 0;
+}
+
+static int msm_jpeg_enable_power_domain(struct msm_jpeg_device *pgmn_dev,
+	int enable)
+{
+	int rc;
+
+	if (!pgmn_dev->power_domain)
+		return -ENODEV;
+
+	if (enable)
+		return pm_runtime_resume_and_get(pgmn_dev->power_domain);
+
+	rc = pm_runtime_put_sync(pgmn_dev->power_domain);
+	return rc < 0 ? rc : 0;
+}
+
+static void msm_jpeg_put_power_domain(struct msm_jpeg_device *pgmn_dev)
+{
+	if (!pgmn_dev->power_domain)
+		return;
+
+	if (pgmn_dev->power_domain == &pgmn_dev->pdev->dev)
+		pm_runtime_disable(pgmn_dev->power_domain);
+	else
+		dev_pm_domain_detach(pgmn_dev->power_domain, true);
+	pgmn_dev->power_domain = NULL;
+}
+
 int legacy_msm_jpeg_platform_init(irqreturn_t (*handler)(int, void *),
 	void *context)
 {
@@ -252,11 +305,10 @@ int legacy_msm_jpeg_platform_init(irqreturn_t (*handler)(int, void *),
 
 	pgmn_dev->state = MSM_JPEG_IDLE;
 
-	/* enable all regulators */
-	rc = legacy_msm_camera_regulator_enable(pgmn_dev->jpeg_vdd,
-		pgmn_dev->num_reg, true);
+	/* enable the power domain */
+	rc = msm_jpeg_enable_power_domain(pgmn_dev, true);
 	if (rc < 0) {
-		JPEG_PR_ERR("%s: failed to enable regulators\n", __func__);
+		JPEG_PR_ERR("%s: failed to enable the power domain\n", __func__);
 		goto err_reg_enable;
 	}
 
@@ -308,8 +360,7 @@ err_fail_iommu:
 	legacy_msm_camera_clk_enable(&pdev->dev, pgmn_dev->jpeg_clk_info,
 		pgmn_dev->jpeg_clk, pgmn_dev->num_clk, false);
 err_clk_enable:
-	legacy_msm_camera_regulator_enable(pgmn_dev->jpeg_vdd,
-		pgmn_dev->num_reg, false);
+	msm_jpeg_enable_power_domain(pgmn_dev, false);
 err_reg_enable:
 	return rc;
 }
@@ -354,11 +405,10 @@ int legacy_msm_jpeg_platform_setup(struct msm_jpeg_device *pgmn_dev)
 		goto err_jpeg_clk;
 	}
 
-	/* get all the regulators information */
-	rc = legacy_msm_camera_get_regulator_info(pdev, &pgmn_dev->jpeg_vdd,
-		&pgmn_dev->num_reg);
+	/* get the power domain */
+	rc = msm_jpeg_get_power_domain(pgmn_dev);
 	if (rc < 0) {
-		JPEG_PR_ERR("%s: failed to get the regulators\n", __func__);
+		JPEG_PR_ERR("%s: failed to get the power domain\n", __func__);
 		rc = -ENXIO;
 		goto err_jpeg_get_reg;
 	}
@@ -409,8 +459,7 @@ int legacy_msm_jpeg_platform_setup(struct msm_jpeg_device *pgmn_dev)
 err_res_size:
 	legacy_msm_camera_unregister_bus_client(pgmn_dev->bus_client);
 err_reg_bus:
-	legacy_msm_camera_put_regulators(pdev, &pgmn_dev->jpeg_vdd,
-		pgmn_dev->num_reg);
+	msm_jpeg_put_power_domain(pgmn_dev);
 err_jpeg_get_reg:
 	legacy_msm_camera_put_clk_info(pdev, &pgmn_dev->jpeg_clk_info,
 		&pgmn_dev->jpeg_clk, pgmn_dev->num_clk);
@@ -427,9 +476,8 @@ void legacy_msm_jpeg_platform_cleanup(struct msm_jpeg_device *pgmn_dev)
 {
 	/* unregister the bus client */
 	legacy_msm_camera_unregister_bus_client(pgmn_dev->bus_client);
-	/* release the regulators */
-	legacy_msm_camera_put_regulators(pgmn_dev->pdev, &pgmn_dev->jpeg_vdd,
-		pgmn_dev->num_reg);
+	/* release the power domain */
+	msm_jpeg_put_power_domain(pgmn_dev);
 	/* release all the clocks */
 	legacy_msm_camera_put_clk_info(pgmn_dev->pdev, &pgmn_dev->jpeg_clk_info,
 		&pgmn_dev->jpeg_clk, pgmn_dev->num_clk);
@@ -468,10 +516,9 @@ int legacy_msm_jpeg_platform_release(void *context)
 		pgmn_dev->jpeg_clk, pgmn_dev->num_clk, false);
 	JPEG_DBG("%s:%d] clock disbale done", __func__, __LINE__);
 
-	/* disable all the regulators */
-	legacy_msm_camera_regulator_enable(pgmn_dev->jpeg_vdd,
-		pgmn_dev->num_reg, false);
-	JPEG_DBG("%s:%d] regulator disable done", __func__, __LINE__);
+	/* disable the power domain */
+	msm_jpeg_enable_power_domain(pgmn_dev, false);
+	JPEG_DBG("%s:%d] power domain released", __func__, __LINE__);
 
 	pgmn_dev->state = MSM_JPEG_IDLE;
 	JPEG_DBG("%s:%d] success\n", __func__, __LINE__);

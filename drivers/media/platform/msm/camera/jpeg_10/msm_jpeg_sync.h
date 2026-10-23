@@ -66,8 +66,7 @@ struct msm_jpeg_device {
 	struct clk **jpeg_clk;
 	struct msm_cam_clk_info *jpeg_clk_info;
 	size_t num_clk;
-	int num_reg;
-	struct msm_cam_regulator *jpeg_vdd;
+	struct device *power_domain;
 	uint32_t hw_version;
 
 	struct device *device;
