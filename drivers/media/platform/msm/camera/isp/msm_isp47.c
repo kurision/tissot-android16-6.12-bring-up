@@ -2664,11 +2664,9 @@ int legacy_msm_vfe47_get_platform_data(struct vfe_device *vfe_dev)
 
 	rc = legacy_msm_camera_register_irq(vfe_dev->pdev, vfe_dev->vfe_irq,
 		legacy_msm_isp_process_irq,
-		IRQF_TRIGGER_RISING, "vfe", vfe_dev);
+		IRQF_TRIGGER_RISING | IRQF_NO_AUTOEN, "vfe", vfe_dev);
 	if (rc < 0)
 		goto irq_register_fail;
-
-	legacy_msm_camera_enable_irq(vfe_dev->vfe_irq, 0);
 
 	rc = legacy_msm_isp_init_bandwidth_mgr(vfe_dev, ISP_VFE0 + vfe_dev->pdev->id);
 	if (rc)

@@ -2062,15 +2062,11 @@ static int ispif_probe(struct platform_device *pdev)
 		goto get_irq_fail;
 	}
 	rc = legacy_msm_camera_register_irq(pdev, ispif->irq, msm_io_ispif_irq,
-			IRQF_TRIGGER_RISING, "ispif", ispif);
+			IRQF_TRIGGER_RISING | IRQF_NO_AUTOEN, "ispif", ispif);
 	if (rc) {
 		rc = -ENODEV;
 		goto get_irq_fail;
 	}
-	rc = legacy_msm_camera_enable_irq(ispif->irq, 0);
-	if (rc)
-		goto sd_reg_fail;
-
 	ispif->pdev = pdev;
 
 	v4l2_subdev_init(&ispif->msm_sd.sd, &msm_ispif_subdev_ops);
