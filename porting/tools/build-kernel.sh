@@ -445,7 +445,8 @@ with open(sys.argv[1], 'rb') as image:
     head = image.read(CMDLINE_OFF + CMDLINE_LEN)
 present = set(head[CMDLINE_OFF:].split(b'\0', 1)[0].decode().split())
 for token in ('earlycon', 'console=ttyMSM0,115200',
-              'firmware_class.path=/lib/firmware,/vendor/firmware'):
+              'firmware_class.path=/lib/firmware,/vendor/firmware',
+              'firmware_class.path=/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image'):
     if token in present:
         print(token)
 PY
