@@ -34,6 +34,23 @@
 #include <media/msmb_generic_buf_mgr-legacy.h>
 
 static struct v4l2_device *msm_v4l2_dev;
+
+/* The vendor HAL enumerates entity-only IDs and Qualcomm subdevice groups. */
+static void msm_legacy_entity_info(struct media_entity *entity, u32 *id,
+				   u32 *group_id)
+{
+	*id = entity->internal_idx;
+	if (is_media_entity_v4l2_subdev(entity))
+		*group_id = media_entity_to_v4l2_subdev(entity)->grp_id;
+	else if (is_media_entity_v4l2_video_device(entity))
+		*group_id = QCAMERA_VNODE_GROUP_ID;
+}
+
+const struct media_device_ops legacy_msm_media_ops = {
+	.legacy_entity_info = msm_legacy_entity_info,
+};
+EXPORT_SYMBOL_GPL(legacy_msm_media_ops);
+
 static struct list_head    ordered_sd_list;
 static struct mutex        ordered_sd_mtx;
 static struct mutex        v4l2_event_mtx;
@@ -1337,6 +1354,7 @@ static int msm_probe(struct platform_device *pdev)
 			sizeof(msm_v4l2_dev->mdev->model));
 	msm_v4l2_dev->mdev->dev = &(pdev->dev);
 	media_device_init(msm_v4l2_dev->mdev);
+	msm_v4l2_dev->mdev->ops = &legacy_msm_media_ops;
 
 	rc = media_device_register(msm_v4l2_dev->mdev);
 	if (WARN_ON(rc < 0))

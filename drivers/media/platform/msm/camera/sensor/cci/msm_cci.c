@@ -2077,6 +2077,7 @@ static int msm_cci_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 	v4l2_subdev_init(&new_cci_dev->msm_sd.sd, &msm_cci_subdev_ops);
+	new_cci_dev->msm_sd.sd.grp_id = MSM_CAMERA_SUBDEV_CCI;
 	new_cci_dev->msm_sd.sd.internal_ops = &msm_cci_internal_ops;
 	snprintf(new_cci_dev->msm_sd.sd.name,
 			ARRAY_SIZE(new_cci_dev->msm_sd.sd.name), "msm_cci");

@@ -917,6 +917,7 @@ int legacy_camera_init_v4l2(struct device *dev, unsigned int *session)
 
 	v4l2_dev->mdev->dev = dev;
 	media_device_init(v4l2_dev->mdev);
+	v4l2_dev->mdev->ops = &legacy_msm_media_ops;
 
 	rc = media_device_register(v4l2_dev->mdev);
 	if (WARN_ON(rc < 0))

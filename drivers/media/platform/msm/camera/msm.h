@@ -42,6 +42,8 @@
 
 extern bool legacy_is_daemon_status;
 
+extern const struct media_device_ops legacy_msm_media_ops;
+
 struct msm_video_device {
 	struct video_device *vdev;
 	atomic_t opened;
