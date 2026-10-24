@@ -1351,6 +1351,32 @@
 				qcom,remote-pid = <1>;
 
 				label = "modem";
+
+				/*
+				 * Modem diag channels consumed by the diag
+				 * char driver (drivers/char/diag), matching
+				 * the donor msm8953.dtsi. DIAG_2/DIAG_2_CMD
+				 * back the DCI clients.
+				 */
+				qcom,diag {
+					qcom,smd-channels = "DIAG";
+				};
+
+				qcom,diag_cntl {
+					qcom,smd-channels = "DIAG_CNTL";
+				};
+
+				qcom,diag_cmd {
+					qcom,smd-channels = "DIAG_CMD";
+				};
+
+				qcom,diag_dci {
+					qcom,smd-channels = "DIAG_2";
+				};
+
+				qcom.diag_dci_cmd {
+					qcom,smd-channels = "DIAG_2_CMD";
+				};
 			};
 		};
 
@@ -1833,6 +1859,15 @@
 				qcom,remote-pid = <4>;
 
 				label = "pronto";
+
+				/* WCNSS diag channels for the diag char driver */
+				qcom,diag {
+					qcom,smd-channels = "APPS_RIVA_DATA";
+				};
+
+				qcom,diag_cntl {
+					qcom,smd-channels = "APPS_RIVA_CTRL";
+				};
 
 				wcnss_ctrl: wcnss {
 					compatible = "qcom,wcnss";

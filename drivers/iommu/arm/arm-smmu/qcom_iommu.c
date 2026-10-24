@@ -26,6 +26,7 @@
 #include <linux/platform_device.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
+#include <linux/sizes.h>
 #include <linux/firmware/qcom/qcom_scm.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
@@ -832,6 +833,56 @@ static bool qcom_iommu_has_secure_context(struct qcom_iommu_dev *qcom_iommu)
 	return false;
 }
 
+/*
+ * msm8953 bring-up: the APPS SMMU's stream-to-bank routing is programmed
+ * by the secure side before Linux starts (the donor's arm-smmu adopts it
+ * under qcom,enable-static-cb), and this driver never touches SMR/S2CR.
+ * The bank a client is routed to (camera VFE 0x400/0x2800, CPP 0x1c00,
+ * JPEG 0x1800) is therefore only visible in those registers.  Dump every
+ * live SMR/S2CR pair once at probe so the camera context banks can be
+ * named from a boot log instead of guessed.
+ */
+static void qcom_iommu_dump_static_routing(struct qcom_iommu_dev *qcom_iommu)
+{
+	void __iomem *gr0;
+	u32 idr0, num_smr, i;
+	int ret;
+
+	if (!of_device_is_compatible(qcom_iommu->dev->of_node,
+				     "qcom,msm8953-iommu"))
+		return;
+
+	gr0 = devm_ioremap(qcom_iommu->dev, 0x01e00000, SZ_4K);
+	if (!gr0)
+		return;
+
+	ret = pm_runtime_resume_and_get(qcom_iommu->dev);
+	if (ret < 0) {
+		dev_warn(qcom_iommu->dev,
+			 "static routing: runtime resume failed: %d\n", ret);
+		goto unmap;
+	}
+	idr0 = readl_relaxed(gr0 + ARM_SMMU_GR0_ID0);
+	num_smr = FIELD_GET(ARM_SMMU_ID0_NUMSMRG, idr0);
+	dev_info(qcom_iommu->dev, "static routing: ID0=0x%08x NUMSMRG=%u\n",
+		 idr0, num_smr);
+	for (i = 0; i < num_smr; i++) {
+		u32 smr = readl_relaxed(gr0 + ARM_SMMU_GR0_SMR(i));
+		u32 s2cr;
+
+		if (!(smr & ARM_SMMU_SMR_VALID))
+			continue;
+		s2cr = readl_relaxed(gr0 + ARM_SMMU_GR0_S2CR(i));
+		dev_info(qcom_iommu->dev,
+			 "static routing: SMR[%u]=0x%08x S2CR[%u]=0x%08x (cbndx %u type %u)\n",
+			 i, smr, i, s2cr, s2cr & 0xff, (s2cr >> 16) & 0x3);
+	}
+	pm_runtime_put_sync(qcom_iommu->dev);
+
+unmap:
+	devm_iounmap(qcom_iommu->dev, gr0);
+}
+
 static int qcom_iommu_device_probe(struct platform_device *pdev)
 {
 	struct device_node *child;
@@ -941,6 +992,8 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 		writel_relaxed(0xffffffff, qcom_iommu->local_base + SMMU_INTR_SEL_NS);
 		pm_runtime_put_sync(dev);
 	}
+
+	qcom_iommu_dump_static_routing(qcom_iommu);
 
 	/*
 	 * DEBUG run121 (tissot) bring-up workaround: run120 showed the MDP

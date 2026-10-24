@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Package a diagnostic Tissot boot image: base header/ramdisk, new kernel, new /init.
 
-Only the cpio record named "init" is replaced; every other ramdisk record and
-every header byte except kernel_size, ramdisk_size, cmdline and id must stay
-identical, which this script asserts before writing anything. Two opt-in
+The cpio record named "init" and explicitly supplied module files are replaced;
+other ramdisk changes require the options below. Every header byte except
+kernel_size, ramdisk_size, cmdline and id must stay identical. Opt-in
 extensions: --firmware-dir stages files as lib/firmware/<relpath> (with
 explicit dir records), --modules-dir stages files as ack-modules/<relpath>
-(the diag init loads them; not lib/modules, which Android's first-stage init
+(replacing explicitly supplied regular files in place; the diag init loads
+them, not lib/modules, which Android's first-stage init
 scans itself and fails the boot over), --debuggable forces ro.secure=0
 ro.debuggable=1.
 """
@@ -174,7 +175,7 @@ def readable_modem_fstab(data):
 
 
 def customize_ramdisk(cpio, init, fw_entries, debuggable, policy_append,
-                      modem_firmware_readable=False):
+                      modem_firmware_readable=False, mod_entries=()):
     """Replace /init; optionally inject lib/firmware files, debuggable props,
     and extra sepolicy CIL text (harness-only policy deltas)."""
     records, tail = parse_cpio(cpio)
@@ -214,6 +215,8 @@ def customize_ramdisk(cpio, init, fw_entries, debuggable, policy_append,
         new[patched_prop]["data"] = "".join(patched).encode()
         new[patched_prop]["fields"][FILESIZE_FIELD] = fmt % len(new[patched_prop]["data"])
 
+    module_names = {name for name, _ in mod_entries}
+    fw_entries = fw_entries + list(mod_entries)
     added = []
     if fw_entries:
         template = list(new[hits[0]]["fields"])
@@ -243,6 +246,12 @@ def customize_ramdisk(cpio, init, fw_entries, debuggable, policy_append,
         for arcname, blob in sorted(fw_entries):
             old = existing.get(arcname)
             if old is not None:
+                if arcname in module_names:
+                    if int(old["fields"][1], 16) & S_IFMT != S_IFREG:
+                        die(f"module file {arcname!r} is not a regular file")
+                    old["data"] = blob
+                    old["fields"][FILESIZE_FIELD] = fmt % len(blob)
+                    continue
                 if old["data"] == blob:
                     # The base already carries this exact file.  Keep its
                     # record rather than adding a second one with the same
@@ -431,8 +440,9 @@ def main():
         with open(args.policy_append, "rb") as f:
             policy_append = f.read()
     cpio, records = customize_ramdisk(gzip.decompress(base_ramdisk), init,
-                                      fw_entries + mod_entries, args.debuggable,
-                                      policy_append, args.modem_firmware_readable)
+                                      fw_entries, args.debuggable,
+                                      policy_append, args.modem_firmware_readable,
+                                      mod_entries)
     ramdisk = subprocess.run(["gzip", "-9", "-n"], input=cpio,
                              stdout=subprocess.PIPE, check=True).stdout
 

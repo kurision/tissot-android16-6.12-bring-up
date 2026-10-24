@@ -1229,10 +1229,11 @@ static int filter_flags_health_check_rc(const char *text, size_t used,
 }
 
 /*
- * Vendor services that crash-loop on this port.  The camera stack is
- * deliberately stopped: camera bring-up is not part of this pass.  dataqti
- * waits for the rmnet/MHI node that only exists once the modem data path is
- * up, so keep it stopped instead of retrying it every second.
+ * Vendor services that crash-loop on this port.  dataqti waits for the
+ * rmnet/MHI node that only exists once the modem data path is up, so
+ * keep it stopped instead of retrying it every second.  The camera
+ * services used to be stopped here as well, because the kernel had no
+ * camera at all; the CAF camera stack is in the tree now, so they run.
  *
  * Service definitions for a vendor service cannot be overridden from
  * /system: init rejects an override that crosses the treble boundary
@@ -1248,13 +1249,9 @@ static const char crashloop_rc[] =
 	"on property:init.svc.vendor.dataqti=restarting\n"
 	"    stop vendor.dataqti\n"
 	"\n"
-	"# ack: camera stack is out of scope for this bring-up.\n"
-	"on property:init.svc.vendor.per_mgr=running\n"
-	"    stop vendor.per_mgr\n"
-	"on property:init.svc.vendor.per_proxy=running\n"
-	"    stop vendor.per_proxy\n"
-	"on property:init.svc.qcamerasvr=running\n"
-	"    stop qcamerasvr\n";
+	"# ack: the camera services used to crash-loop here because the\n"
+	"# kernel had no camera at all; the CAF camera stack is in the tree\n"
+	"# now, so they run.\n";
 
 /*
  * The ROM's flags_health_check.rc runs flags_health_check
@@ -2290,8 +2287,10 @@ static int patch_usb_controller(char *text, size_t *size)
 		}
 		offset += len + !!end;
 	}
-	if (!found)
-		goto invalid;
+	if (!found) {
+		errno = ENODATA;
+		return -1;
+	}
 	if (changed) {
 		memmove(text + match + sizeof(new) - 1,
 			text + match + sizeof(old) - 1,
@@ -2300,6 +2299,67 @@ static int patch_usb_controller(char *text, size_t *size)
 		*size -= sizeof(old) - sizeof(new);
 	}
 	return changed;
+invalid:
+	errno = EINVAL;
+	return -1;
+}
+
+/* This ROM derives the vendor controller from sys.usb.controller at boot. */
+static int patch_usb_controller_rc(char *text, size_t *size, size_t capacity)
+{
+	static const char vendor[] =
+		"    setprop vendor.usb.controller ${sys.usb.controller}";
+	static const char system[] = "    setprop sys.usb.controller 7000000.usb\n";
+	size_t offset = 0, match = 0, sys_match = 0;
+	int found = 0, sys_found = 0;
+
+	if (memchr(text, '\0', *size))
+		goto invalid;
+	while (offset < *size) {
+		char *line = text + offset;
+		char *end = memchr(line, '\n', *size - offset);
+		size_t len = end ? (size_t)(end - line) : *size - offset;
+		char *start = line, *key, *key_end;
+
+		while (start < line + len && isspace((unsigned char)*start))
+			start++;
+		if (line + len - start < 8 || memcmp(start, "setprop", 7) ||
+		    !isspace((unsigned char)start[7]))
+			goto next;
+		key = start + 7;
+		while (key < line + len && isspace((unsigned char)*key))
+			key++;
+		key_end = key;
+		while (key_end < line + len && !isspace((unsigned char)*key_end))
+			key_end++;
+		if ((size_t)(key_end - key) == strlen("vendor.usb.controller") &&
+		    !memcmp(key, "vendor.usb.controller", key_end - key)) {
+			if (found++ || len != sizeof(vendor) - 1 ||
+			    memcmp(line, vendor, len))
+				goto invalid;
+			match = offset;
+		} else if ((size_t)(key_end - key) == strlen("sys.usb.controller") &&
+			   !memcmp(key, "sys.usb.controller", key_end - key)) {
+			if (sys_found++ || !end || len != sizeof(system) - 2 ||
+			    memcmp(line, system, len))
+				goto invalid;
+			sys_match = offset;
+		}
+next:
+		offset += len + !!end;
+	}
+	if (!found || (sys_found && sys_match + sizeof(system) - 1 != match))
+		goto invalid;
+	if (sys_found)
+		return 0;
+	if (*size > capacity || capacity - *size < sizeof(system) - 1) {
+		errno = ENOSPC;
+		return -1;
+	}
+	memmove(text + match + sizeof(system) - 1, text + match, *size - match);
+	memcpy(text + match, system, sizeof(system) - 1);
+	*size += sizeof(system) - 1;
+	return 1;
 invalid:
 	errno = EINVAL;
 	return -1;
@@ -2315,6 +2375,7 @@ static int guard_usb_controller(int proc, int log)
 	size_t size;
 	int in = -1, fd = -1, error = 0, changed;
 
+read_target:
 	in = open(target, O_RDONLY | O_CLOEXEC);
 	if (in < 0 || fstat(in, &st)) {
 		error = errno;
@@ -2338,7 +2399,18 @@ static int guard_usb_controller(int proc, int log)
 		offset += n;
 	}
 	size = (size_t)st.st_size;
-	changed = patch_usb_controller(text, &size);
+	if (!strcmp(target, "/vendor/build.prop")) {
+		changed = patch_usb_controller(text, &size);
+		if (changed < 0 && errno == ENODATA) {
+			close(in);
+			in = -1;
+			offset = 0;
+			target = USB_RC;
+			goto read_target;
+		}
+	} else {
+		changed = patch_usb_controller_rc(text, &size, sizeof(text));
+	}
 	if (changed < 0) {
 		error = errno;
 		goto done;
@@ -2356,8 +2428,113 @@ done:
 	if (fd >= 0)
 		close(fd);
 	snprintf(message, sizeof(message),
-		 "DIAG: USB controller 7000000.dwc3 -> 7000000.usb errno=%d\n",
-		 error);
+		 "DIAG: USB controller %s -> 7000000.usb errno=%d\n",
+		 target, error);
+	say(log, message);
+	errno = error;
+	return error ? -1 : 0;
+}
+
+/* Keep the ROM's FRP ownership rule attached to the ACK controller path. */
+static int patch_config_ueventd(char *text, size_t size)
+{
+	static const char old[] =
+		"/dev/block/platform/soc/7824900.sdhci/by-name/config";
+	static const char new[] =
+		"/dev/block/platform/soc@0/7824900.mmc/by-name/config";
+	size_t offset = 0, match = 0;
+	int found = 0, changed = 0;
+
+	if (memchr(text, '\0', size))
+		goto invalid;
+	while (offset < size) {
+		char *line = text + offset;
+		char *end = memchr(line, '\n', size - offset);
+		size_t len = end ? (size_t)(end - line) : size - offset;
+		char *start = line, *key_end;
+
+		while (start < line + len && isspace((unsigned char)*start))
+			start++;
+		key_end = start;
+		while (key_end < line + len && !isspace((unsigned char)*key_end))
+			key_end++;
+		if ((size_t)(key_end - start) == sizeof(old) - 1 &&
+		    (!memcmp(start, old, sizeof(old) - 1) ||
+		     !memcmp(start, new, sizeof(new) - 1))) {
+			char rule[128], mode[16], uid[16], gid[16], extra;
+			size_t tail = line + len - key_end;
+
+			if (found++ || tail >= sizeof(rule))
+				goto invalid;
+			memcpy(rule, key_end, tail);
+			rule[tail] = '\0';
+			if (sscanf(rule, "%15s %15s %15s %c", mode, uid, gid, &extra) != 3 ||
+			    strcmp(mode, "0600") || strcmp(uid, "system") ||
+			    strcmp(gid, "system"))
+				goto invalid;
+			match = start - text;
+			changed = !memcmp(start, old, sizeof(old) - 1);
+		}
+		offset += len + !!end;
+	}
+	if (!found)
+		goto invalid;
+	if (changed)
+		memcpy(text + match, new, sizeof(new) - 1);
+	return changed;
+invalid:
+	errno = EINVAL;
+	return -1;
+}
+
+static int guard_config_ueventd(int proc, int log)
+{
+	static const char target[] = "/vendor/etc/ueventd.rc";
+	static char text[128 * 1024];
+	struct stat st;
+	char message[128];
+	size_t used = 0;
+	int in = -1, fd = -1, error = 0, changed;
+
+	in = open(target, O_RDONLY | O_CLOEXEC);
+	if (in < 0 || fstat(in, &st))
+		goto failed;
+	if (!S_ISREG(st.st_mode) || st.st_size <= 0 ||
+	    st.st_size > (off_t)sizeof(text)) {
+		errno = EINVAL;
+		goto failed;
+	}
+	while (used < (size_t)st.st_size) {
+		ssize_t n = pread(in, text + used, st.st_size - used, used);
+
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0) {
+			if (!n)
+				errno = EIO;
+			goto failed;
+		}
+		used += (size_t)n;
+	}
+	changed = patch_config_ueventd(text, used);
+	if (changed < 0)
+		goto failed;
+	if (!changed)
+		goto done;
+	fd = memfd_create("ack-config-ueventd", MFD_CLOEXEC);
+	if (fd < 0 || write_all(fd, text, used) ||
+	    guard_bind_config(proc, fd, "/dev/block/ack-config-ueventd.rc", target))
+		goto failed;
+	goto done;
+failed:
+	error = errno;
+done:
+	if (in >= 0)
+		close(in);
+	if (fd >= 0)
+		close(fd);
+	snprintf(message, sizeof(message),
+		 "DIAG: config ueventd ACK path 0600 system system errno=%d\n", error);
 	say(log, message);
 	errno = error;
 	return error ? -1 : 0;
@@ -2511,6 +2688,9 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	step = "install read-only USB controller property";
 	if (guard_usb_controller(proc, log))
 		goto failed;
+	step = "install read-only config partition ownership rule";
+	if (guard_config_ueventd(proc, log))
+		goto failed;
 	/*
 	 * flags_health_check.rc lives in /system/etc/init and is parsed at
 	 * the start of second-stage init, before logd.rc and long before the
@@ -2576,6 +2756,119 @@ failed:
 }
 
 #ifdef ANDROID_GUARD_TEST
+static void config_ueventd_selftest(void)
+{
+	static const char old[] =
+		"# preserved\n/dev/block/platform/soc/7824900.sdhci/by-name/config"
+		"    0600   system     system\r\nother 0600 root root\n";
+	static const char new[] =
+		"# preserved\n/dev/block/platform/soc@0/7824900.mmc/by-name/config"
+		"    0600   system     system\r\nother 0600 root root\n";
+	static const char *const invalid[] = {
+		"", "# /dev/block/platform/soc/7824900.sdhci/by-name/config\n",
+		"/dev/block/platform/soc/7824900.sdhci/by-name/config 0666 system system\n",
+		"/dev/block/platform/soc/7824900.sdhci/by-name/config 0600 root system\n",
+		"/dev/block/platform/soc/7824900.sdhci/by-name/config 0600 system root\n",
+		"/dev/block/platform/soc/7824900.sdhci/by-name/config 0600 system\n",
+		"/dev/block/platform/soc/7824900.sdhci/by-name/config 0600 system system extra\n",
+		"/dev/block/platform/soc/7824900.sdhci/by-name/config 0600 system system\n"
+		"/dev/block/platform/soc@0/7824900.mmc/by-name/config 0600 system system\n",
+	};
+	char text[512];
+	size_t i, size;
+
+	memcpy(text, old, sizeof(old));
+	assert(patch_config_ueventd(text, sizeof(old) - 1) == 1);
+	assert(sizeof(old) == sizeof(new) && !memcmp(text, new, sizeof(new)));
+	assert(!patch_config_ueventd(text, sizeof(new) - 1));
+	assert(!memcmp(text, new, sizeof(new)));
+	assert(patch_config_ueventd(text, sizeof(new)) == -1);
+	assert(errno == EINVAL);
+	for (i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+		size = strlen(invalid[i]);
+		memcpy(text, invalid[i], size);
+		assert(patch_config_ueventd(text, size) == -1);
+		assert(errno == EINVAL && !memcmp(text, invalid[i], size));
+	}
+	puts("Guard config ueventd ownership and rejection checks PASS");
+}
+
+static void usb_controller_selftest(void)
+{
+	static const struct {
+		const char *input;
+		const char *output;
+		int result;
+	} properties[] = {
+		{ "other=1\n", "other=1\n", -1 },
+		{ "vendor.usb.controller=7000000.dwc3\r\nother=1\n",
+		  "vendor.usb.controller=7000000.usb\r\nother=1\n", 1 },
+		{ "vendor.usb.controller=7000000.usb",
+		  "vendor.usb.controller=7000000.usb", 0 },
+		{ "vendor.usb.controller=wrong\n", NULL, -1 },
+		{ " vendor.usb.controller=7000000.dwc3\n", NULL, -1 },
+		{ "vendor.usb.controller=7000000.dwc3\n"
+		  "vendor.usb.controller=7000000.usb\n", NULL, -1 },
+	};
+	static const char rc[] = "on boot\n"
+		"    setprop vendor.usb.controller ${sys.usb.controller}\n"
+		"    setprop other 1\n";
+	static const char expected[] = "on boot\n"
+		"    setprop sys.usb.controller 7000000.usb\n"
+		"    setprop vendor.usb.controller ${sys.usb.controller}\n"
+		"    setprop other 1\n";
+	static const char *const invalid_rc[] = {
+		"on boot\n",
+		"    setprop vendor.usb.controller wrong\n",
+		"\tsetprop vendor.usb.controller ${sys.usb.controller}\n",
+		"    setprop vendor.usb.controller ${sys.usb.controller}\n"
+		"    setprop vendor.usb.controller ${sys.usb.controller}\n",
+		"    setprop sys.usb.controller wrong\n"
+		"    setprop vendor.usb.controller ${sys.usb.controller}\n",
+		"    setprop sys.usb.controller 7000000.usb\n"
+		"    setprop other 1\n"
+		"    setprop vendor.usb.controller ${sys.usb.controller}\n",
+	};
+	char text[512], saved[512];
+	size_t size, i;
+
+	for (i = 0; i < sizeof(properties) / sizeof(properties[0]); i++) {
+		size = strlen(properties[i].input);
+		memcpy(text, properties[i].input, size);
+		assert(patch_usb_controller(text, &size) == properties[i].result);
+		if (properties[i].output) {
+			assert(size == strlen(properties[i].output));
+			assert(!memcmp(text, properties[i].output, size));
+		}
+		if (!i)
+			assert(errno == ENODATA);
+	}
+	size = sizeof(rc) - 1;
+	memcpy(text, rc, size);
+	assert(patch_usb_controller_rc(text, &size, size) == -1);
+	assert(errno == ENOSPC && size == sizeof(rc) - 1);
+	assert(!memcmp(text, rc, size));
+	assert(patch_usb_controller_rc(text, &size, sizeof(text)) == 1);
+	assert(size == sizeof(expected) - 1 && !memcmp(text, expected, size));
+	assert(!patch_usb_controller_rc(text, &size, sizeof(text)));
+	assert(size == sizeof(expected) - 1 && !memcmp(text, expected, size));
+	for (i = 0; i < sizeof(invalid_rc) / sizeof(invalid_rc[0]); i++) {
+		size = strlen(invalid_rc[i]);
+		memcpy(text, invalid_rc[i], size);
+		memcpy(saved, text, size);
+		assert(patch_usb_controller_rc(text, &size, sizeof(text)) == -1);
+		assert(errno == EINVAL && size == strlen(invalid_rc[i]));
+		assert(!memcmp(text, saved, size));
+	}
+	size = sizeof(rc);
+	memcpy(text, rc, size);
+	assert(patch_usb_controller_rc(text, &size, sizeof(text)) == -1);
+	assert(errno == EINVAL);
+	assert(patch_usb_controller(text, &size) == -1);
+	assert(errno == EINVAL);
+	puts("Guard USB controller property and runtime-rule checks PASS");
+}
+
 static int guard_selftest(void)
 {
 	static const char data[] =
@@ -2635,6 +2928,8 @@ static int guard_selftest(void)
 	       -ENODATA);
 	puts("Guard flags_health_check filter checks PASS");
 	puts("Guard fstab safety checks PASS");
+	usb_controller_selftest();
+	config_ueventd_selftest();
 	return 0;
 }
 #endif

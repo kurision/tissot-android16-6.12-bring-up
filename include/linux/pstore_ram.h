@@ -60,6 +60,16 @@ void ramoops_reset_note(const char *what);
 /* Tissot diagnostic records in the reserved logdump partition. */
 int ramoops_stage_write(unsigned int slot, const void *data, size_t len);
 
+/* Diagnostic process-context wait for the first fully flushed flash snapshot. */
+#if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
+int ramoops_wait_snapshot_ready(unsigned int timeout_ms);
+#else
+static inline int ramoops_wait_snapshot_ready(unsigned int timeout_ms)
+{
+	return -ENODEV;
+}
+#endif
+
 /* Disjoint records in the existing Tissot diagnostic page, committed last. */
 #define RAMOOPS_RESET_MARK_OFFSET	0x100
 #define RAMOOPS_RESET_MARK_MAGIC	0x31545352	/* "RST1" */

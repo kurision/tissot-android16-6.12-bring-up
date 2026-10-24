@@ -4,3 +4,4 @@
 #
 
 obj-$(CONFIG_MSM_VIDC_3X_V4L2) += vidc_3x/
+obj-$(CONFIG_MSMB_CAMERA_LEGACY) += camera/

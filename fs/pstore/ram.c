@@ -28,6 +28,7 @@
 #if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
 #include <linux/bio.h>
 #include <linux/blkdev.h>
+#include <linux/completion.h>
 #include <linux/device/class.h>
 #include <linux/kmsg_dump.h>
 #include <linux/crc32.h>
@@ -628,7 +629,13 @@ static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
 #define RAMOOPS_SNAP_SLOT_STRIDE	(PAGE_SIZE + SZ_1M)
 #define RAMOOPS_SNAP_SLOTS		2
 #define RAMOOPS_SNAP_INTERVAL_MS	2000
-/* Legacy bring-up polling is off; panic and orderly-reset capture stay live. */
+/*
+ * 0 since 2026-10-24: the dim-screen boot-death era this monitored is closed,
+ * and the 2026-10-23 camera diagnosis no longer needs a pre-probe flush (its
+ * JPEG failures show in dmesg). Explicit panic capture and orderly-reset
+ * tails remain; with this 0 the camera late-init gates are released at
+ * snapshotter start instead of waiting for a flush that never comes.
+ */
 #define RAMOOPS_PERIODIC_SNAPSHOTS	0
 /*
  * run225: once the first KGSL stage record lands, shorten the cadence so the
@@ -752,6 +759,16 @@ struct ramoops_snapper {
 };
 
 static struct ramoops_snapper ramoops_snapper;
+static DECLARE_COMPLETION(ramoops_snapshot_ready);
+
+int ramoops_wait_snapshot_ready(unsigned int timeout_ms)
+{
+	if (!wait_for_completion_timeout(&ramoops_snapshot_ready,
+					 msecs_to_jiffies(timeout_ms)))
+		return -ETIMEDOUT;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(ramoops_wait_snapshot_ready);
 
 /* run225: set by the first stage record (KGSL up), never cleared. */
 static bool ramoops_snap_fast;
@@ -1089,6 +1106,17 @@ static int ramoops_snap_thread(void *unused)
 	bool previous_attempted = false;
 	(void)unused;
 
+	if (!RAMOOPS_PERIODIC_SNAPSHOTS) {
+		/*
+		 * No periodic sample will flush, so the camera late-init
+		 * callers parked on ramoops_snapshot_ready would burn their
+		 * 10 s timeout and then skip registration entirely. Release
+		 * them at once; the panic completion still captures on
+		 * demand.
+		 */
+		complete_all(&ramoops_snapshot_ready);
+	}
+
 	while (!kthread_should_stop()) {
 		if (!s->file) {
 			int err = ramoops_snap_open_logdump(s);
@@ -1171,6 +1199,7 @@ static int ramoops_snap_thread(void *unused)
 			pr_info("DIAG: snapshot format=%u CRC32 committed, periodic printk tail=%s offset=%llu\n",
 				RAMOOPS_SNAP_VERSION, s->tail_buf ? "on" : "off",
 				RAMOOPS_TAIL_OFFSET);
+			complete_all(&ramoops_snapshot_ready);
 		}
 		/*
 		 * Every tenth snapshot was ~1260 lines per boot, which is

@@ -1,10 +1,145 @@
 # Current state of the tissot port
 
-Updated **2026-10-22**. This is the detailed live status; the
+Camera checkpoint updated **2026-10-24**; other subsystem status below
+remains dated **2026-10-22**. This is the detailed live status; the
 [README](README.md) is the overview and [failing-components table](FAILING-COMPONENTS.md)
 is the work queue. Old dated reports describe their own runs, not this state.
 
-## Image and source provenance
+## Camera checkpoint: #44 JPEG failure and fix awaiting device test, 2026-10-24
+
+Latest inspected kernel: **`6.12.93-4k-gd13339db2abb #44`**, built
+2026-10-24 01:39:25 +0545. Branch is `ack-camera`; JPEG compatibility fix
+and its regression test are committed as `4646f53406c3`, after `6aba140ac`.
+The user built/booted #44. No kernel build, flash, reboot or controlled panic
+was performed by the agent. No packaged-image hash or boot ID was captured
+during this #44 camera inspection.
+
+The earlier user #43 (`6.12.93-4k-g6b7fe2b3628d-dirty`) reaches CPP hardware
+version `0x40030003` and working front/rear preview. Its dirty identity does
+not identify an exact source snapshot. The user reported upside-down rear
+preview, corrupt saved photos and playable videos. The QRD mount-angle
+correction `b74883f50` is in #44's reported source ancestry, but visual
+orientation correctness has **not been revalidated**. ACK exposed two cameras
+versus three on the donor; zoom, extra sensor/flash coverage and sustained
+capture/session reliability remain unqualified.
+
+### Committed camera and packaging changes
+
+| Commit(s) | Change / evidence boundary |
+|---|---|
+| `e7baf73f9`, `0ec6a8377`, `295563b9c`, `2d48ee98d` | Import/build/convert the CAF camera stack and describe board hardware; camera support is no longer unported. |
+| `437649518`, `a791620db`, `90952fd1d`, `5df45e0d2` | Fix shared probe/IRQ/resource lifetime, publish initialized CCI/CSI devices, and preserve diagnostics. See the dated camera findings for individual runs. |
+| `03a8f6566`, `28b40fcda`, `38cb1990e` | Native GCC power domains for VFE/ISPIF/CPP and corrected static SMMU routing evidence. |
+| `0ba1142af` | Restore donor time32 buffer/ioctl/event layouts; native UAPI unchanged. |
+| `37d207627`, `ec8ac3f59`, `906b00d7f` | CPP probe/cleanup/readiness gating, DT/SMMU resources and CPP/VPE entity-revision ABI. Combined changes reached preview on #43; not tested commit by commit. |
+| `b74883f50` | Correct inherited sensor mount angles to QRD `[90,90,270]`; source ancestry alone does not validate displayed orientation. |
+| `aa6d022dc` | Restore JPEG encoder resources, GCC power domain and APPS context bank `0x13`. #44 binds `1b1c000.qcom,jpeg` to `msm_jpeg` and creates `/dev/jpeg0`. |
+| `4646f53406c3` | Fix usercopy of translated kernel data in six JPEG compatibility paths and add regression coverage. Host-tested; not built or boot-tested. |
+| `d13339db2`, `6aba140ac` | Record that camera software AVC selection and absent framework OMX encoders match the same ROM on donor 4.19. Hardware encoder execution remains unverified. |
+| `a973e773c`, `683ed8d32`, `e37ff5d99`, `4fb0e03f7` | Preserve vendor rules/overlay labels, validate the real base ramdisk, deduplicate firmware command-line tokens and replace explicitly staged modules safely. Reuse a real known-good base. |
+| `0846a889f` | Assign stable MMC aliases after the observed boot-control/checkpoint failure. Full causal isolation and numbering with an SD card remain unverified. |
+
+The current camera configuration drops KASAN (hardware-tag KASAN never
+initializes on this non-MTE A53, so it cost image size for zero runtime
+diagnostics — `mm/kasan/hw_tags.c` bails without `system_supports_mte()`),
+disables UBSAN for image size, and sets `RAMOOPS_PERIODIC_SNAPSHOTS=0` in
+`fs/pstore/ram.c`:
+the periodic snapshotter is parked again (its thread cost was measured in
+[findings/2026-10-24-performance-battery-analysis.md](findings/2026-10-24-performance-battery-analysis.md)),
+and the snapshotter releases the EEPROM/CPP late-init snapshot gate at
+start instead of after a flushed sample. Explicit panic capture and
+orderly-reset tails remain. These are diagnostic
+settings, not evidence of low idle overhead or a guarantee that every failed
+boot leaves a log. The older periodic-snapshot cleanup below is historical.
+
+### #44: hardware reset fails, then malformed hybrid output is saved
+
+Read-only `adb shell` inspection confirmed the bound driver and `/dev/jpeg0`.
+The camera provider executable is 32-bit ARM. On fresh rear/front photos,
+`adb shell 'dmesg | grep -i jpeg'` returned two matching errors:
+
+```text
+[ 3473.715810] legacy_msm_jpeg_ioctl_reset:962] failed
+[ 3479.546861] legacy_msm_jpeg_ioctl_reset:962] failed
+```
+
+Line 962 in #44's `msm_jpeg_sync.c` returns `-EFAULT` after failed
+`copy_from_user()`. The RESET32 dispatcher has already copied/translated the
+user command, then incorrectly casts its kernel-stack address to `__user`
+and passes it to that helper. This violates the
+[Linux 6.12 usercopy contract](https://raw.githubusercontent.com/torvalds/linux/v6.12/include/linux/uaccess.h).
+The same misuse of kernel pointers affects input/output enqueue, input/output
+dequeue and event retrieval.
+
+Filtered live logcat at **10:11:48.209** and **10:11:54.040** reports
+`Error configuring HW params`, followed by
+`Main Image encoding failed to start, switching to alternative encoder`.
+Both captures then report hybrid completion and Skia/libjpeg warning 117.
+The earlier missing-device problem is resolved; a successful hardware encode
+has not been observed.
+
+The two fresh phone files were read and decoded in memory without changing
+or saving copies of them:
+
+| File under `/sdcard/DCIM/Camera/` | Bytes | Restart markers | DRI | Original decoder warnings | Warnings with diagnostic interval override |
+|---|---|---|---|---|---|
+| `2026-10-24-10-11-47-752.jpg` (rear) | 3,128,739 | 251 | absent | 252 | 3 |
+| `2026-10-24-10-11-53-806.jpg` (front) | 977,655 | 161 | absent | 162 | 0 |
+
+The read-only diagnostic is the retained
+[`jpeg-restart-diagnostic.c`](artifacts/snapshot60/camera-cpp-capture-20261023T190618Z/saved-media/jpeg-restart-diagnostic.c).
+The malformed restart stream repeats the retained #43 finding. The interval
+override is a diagnostic, not a repaired photo or proof that this is the only
+defect; three warnings remain for the rear sample.
+
+The `msm_jpeg_sync.c` fix keeps usercopy at the ioctl boundary and
+passes translated kernel data directly to all six affected shared handlers.
+It also propagates event copy-out errors. The new
+[`test_camera_jpeg_compat.py`](tests/test_camera_jpeg_compat.py) exercises real
+native/compat dispatchers, rejects kernel addresses in usercopy, and covers
+conversion, queue/mapping cleanup, empty queues and injected copy/allocation/
+mapping errors. Original code fails the reset regression; patched checks pass.
+**42 camera host tests plus the routing test pass**, with JPEG ASan/UBSan/leak
+checks passing outside sandbox ptrace. Strict driver checkpatch and the API
+pattern scan are clean; the new test has the generic MAINTAINERS reminder.
+The fix is committed as `4646f53406c3`, **not built, not checked with Sparse,
+and not boot-tested**. Correct saved photos remain **unverified** until that test.
+
+### Camera video: software selection matches stock
+
+Both retained #43 MP4s decode; one has a duplicate/non-monotonic timestamp
+warning. Metrics identify `c2.android.avc.encoder`, including `hardware=0`.
+The same ROM on working donor 4.19 selects that encoder too, and the retained
+framework lists omit OMX encoders on both kernels. Live port VIDC nodes
+answered QUERYCAP as `msm_vdec_8974` and `msm_venc_8974`. This establishes
+device presence, not a completed hardware encode. Hardware HEVC decoding was
+observed separately; it does not qualify the encoder.
+
+See [the stock comparison](findings/2026-10-24-software-avc-encoder-matches-stock.md).
+No port regression is established by software selection. Enabling framework
+hardware encoding is a ROM/codec-registration follow-up; a raw V4L2 encode
+test remains needed to qualify the kernel encoder path. The commit title
+"kernel side complete" must not be read as a hardware-encode test result.
+
+### Evidence and next test
+
+The [camera handoff](HANDOFF-camera-2026-10-24.md) and
+[#43 findings](findings/2026-10-24-camera-preview-capture.md) preserve the
+earlier checkpoint; their "JPEG absent" and "orientation not boot-tested"
+labels describe #43, not the newer #44 observations above. Original stock
+and #43 captures remain under `artifacts/snapshot60/`, including
+`camera-cpp-capture-20261023T190618Z/`. Large artifacts are local and must be
+retained separately. #44 command output and JPEG analysis above were session
+observations; no new raw-log/media archive was written during that read-only
+inspection.
+
+Next: on an authorized build/boot of the pending JPEG patch, check both still
+captures for reset success, absence of hardware-config failure/hybrid fallback
+and warning-free JPEG decoding. Recheck orientation separately. The older
+main-image provenance and other subsystem observations below have not been
+revalidated by this camera checkpoint.
+
+## Earlier main image and source provenance, 2026-10-22
 
 | Item | Evidence / state |
 |---|---|
@@ -185,7 +320,7 @@ prove this complete path works. The older run215/run216 controlled panic
 validated its own marker/snapshot retention, not #83. No new controlled panic
 was authorized or triggered. Do not claim that every freeze leaves a logdump.
 
-## Newer source cleanup: not verified on the last inspected image
+## Earlier source cleanup: status recorded on 2026-10-22
 
 | Commit | Change |
 |---|---|
@@ -196,11 +331,14 @@ was authorized or triggered. Do not claim that every freeze leaves a logdump.
 | `55d0d347c`, `7b70afd48`, `a8da8979c`, `2ba894be6`, `bad9216ae` | Remove legacy SCM/display/IOMMU/GPU-IRQ/FastRPC diagnostics |
 | `07ad1d695` | Use CLOCK_BOOTTIME and a 180 s Android boot-capture deadline; build init without always-on early-logcat services |
 
-These changes target diagnostic overhead, not a verified fix for the unplug
-failure. #83 still showed periodic snapshot heartbeats; do not confuse the
-new source's parked worker with the old flashed behavior. Ramdisk changes
-also require the corresponding init to be packaged; a kernel commit alone
-does not update the ramdisk.
+These changes targeted diagnostic overhead, not a verified fix for the unplug
+failure. #83 still showed periodic snapshot heartbeats. Periodic snapshots
+were re-enabled on 2026-10-23 as the camera-probe flush gate and are off
+again since 2026-10-24 with the gate released at snapshotter start, so the
+parked-worker description of this older cleanup describes the working tree
+again. Ramdisk changes
+require the corresponding init to be packaged; a kernel commit alone does not
+update the ramdisk.
 
 ## Evidence and next verification
 

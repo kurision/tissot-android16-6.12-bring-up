@@ -3,3 +3,4 @@
 comment "Qualcomm MSM media platform drivers"
 
 source "drivers/media/platform/msm/vidc_3x/Kconfig"
+source "drivers/media/platform/msm/camera/Kconfig"

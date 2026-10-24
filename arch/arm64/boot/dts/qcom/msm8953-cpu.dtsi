@@ -725,6 +725,16 @@
  * active; this restores CAF's behaviour.
  */
 &{/} {
+	/*
+	 * clock-latency-ns on every entry feeds both cpuinfo.transition_latency
+	 * and the schedutil rate limit through cpufreq-dt. Without it the 1 ms
+	 * default yields a 1.5 ms rate limit, which measured at 8.3 percent of
+	 * a core in sugov:0 against the stock msm cpufreq driver's 0.3 percent
+	 * (2026-10-24 perf comparison). 5 ms caps slow-path transitions at
+	 * about 133/s; check /sys/devices/system/cpu/cpufreq/policy0/stats/
+	 * total_trans on the next boot before tuning further. The overlay in
+	 * msm8953-xiaomi-tissot-oc.dtsi carries the same property.
+	 */
 	msm8953_cpu_opp: opp-table {
 		compatible = "operating-points-v2";
 		opp-shared;
@@ -732,36 +742,43 @@
 		opp-652800000 {
 			opp-hz = /bits/ 64 <652800000>;
 			opp-peak-kBps = <1689255>;
+			clock-latency-ns = <5000000>;
 		};
 
 		opp-1036800000 {
 			opp-hz = /bits/ 64 <1036800000>;
 			opp-peak-kBps = <3377463>;
+			clock-latency-ns = <5000000>;
 		};
 
 		opp-1401600000 {
 			opp-hz = /bits/ 64 <1401600000>;
 			opp-peak-kBps = <6143606>;
+			clock-latency-ns = <5000000>;
 		};
 
 		opp-1689600000 {
 			opp-hz = /bits/ 64 <1689600000>;
 			opp-peak-kBps = <6758072>;
+			clock-latency-ns = <5000000>;
 		};
 
 		opp-1804800000 {
 			opp-hz = /bits/ 64 <1804800000>;
 			opp-peak-kBps = <7449083>;
+			clock-latency-ns = <5000000>;
 		};
 
 		opp-1958400000 {
 			opp-hz = /bits/ 64 <1958400000>;
 			opp-peak-kBps = <7449083>;
+			clock-latency-ns = <5000000>;
 		};
 
 		opp-2016000000 {
 			opp-hz = /bits/ 64 <2016000000>;
 			opp-peak-kBps = <7449083>;
+			clock-latency-ns = <5000000>;
 		};
 	};
 };
