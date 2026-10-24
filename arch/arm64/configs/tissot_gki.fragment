@@ -10,3 +10,10 @@ CONFIG_ION_LEGACY=y
 CONFIG_ION_SYSTEM_HEAP=y
 CONFIG_ION_CMA_HEAP=y
 CONFIG_QSEECOM=y
+
+# Qualcomm diag char driver (drivers/char/diag) + DIAG USB gadget function.
+# Built-in: dpmd is an init-started service and needs /dev/diag before any
+# vendor module load. DIAG_OVER_USB matches the donor msm8953-perf_defconfig.
+CONFIG_DIAG_CHAR=y
+CONFIG_DIAG_OVER_USB=y
+CONFIG_USB_CONFIGFS_F_DIAG=y
