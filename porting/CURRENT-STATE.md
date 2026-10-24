@@ -40,8 +40,12 @@ capture/session reliability remain unqualified.
 | `0846a889f` | Assign stable MMC aliases after the observed boot-control/checkpoint failure. Full causal isolation and numbering with an SD card remain unverified. |
 
 The current camera configuration retains KASAN, disables UBSAN for image
-size, and sets `RAMOOPS_PERIODIC_SNAPSHOTS=1` in `fs/pstore/ram.c`.
-CPP registration waits for flushed snapshot readiness. These are diagnostic
+size, and sets `RAMOOPS_PERIODIC_SNAPSHOTS=0` in `fs/pstore/ram.c`:
+the periodic snapshotter is parked again (its thread cost was measured in
+[findings/2026-10-24-performance-battery-analysis.md](findings/2026-10-24-performance-battery-analysis.md)),
+and the snapshotter releases the EEPROM/CPP late-init snapshot gate at
+start instead of after a flushed sample. Explicit panic capture and
+orderly-reset tails remain. These are diagnostic
 settings, not evidence of low idle overhead or a guarantee that every failed
 boot leaves a log. The older periodic-snapshot cleanup below is historical.
 
@@ -325,9 +329,11 @@ was authorized or triggered. Do not claim that every freeze leaves a logdump.
 | `07ad1d695` | Use CLOCK_BOOTTIME and a 180 s Android boot-capture deadline; build init without always-on early-logcat services |
 
 These changes targeted diagnostic overhead, not a verified fix for the unplug
-failure. #83 still showed periodic snapshot heartbeats. Current camera source
-has periodic snapshots enabled again, so the parked-worker description from
-this older cleanup no longer describes the working tree. Ramdisk changes
+failure. #83 still showed periodic snapshot heartbeats. Periodic snapshots
+were re-enabled on 2026-10-23 as the camera-probe flush gate and are off
+again since 2026-10-24 with the gate released at snapshotter start, so the
+parked-worker description of this older cleanup describes the working tree
+again. Ramdisk changes
 require the corresponding init to be packaged; a kernel commit alone does not
 update the ramdisk.
 

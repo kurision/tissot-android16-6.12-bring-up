@@ -629,8 +629,14 @@ static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
 #define RAMOOPS_SNAP_SLOT_STRIDE	(PAGE_SIZE + SZ_1M)
 #define RAMOOPS_SNAP_SLOTS		2
 #define RAMOOPS_SNAP_INTERVAL_MS	2000
-/* Camera diagnosis: persist a sample before allowing EEPROM registration. */
-#define RAMOOPS_PERIODIC_SNAPSHOTS	1
+/*
+ * 0 since 2026-10-24: the dim-screen boot-death era this monitored is closed,
+ * and the 2026-10-23 camera diagnosis no longer needs a pre-probe flush (its
+ * JPEG failures show in dmesg). Explicit panic capture and orderly-reset
+ * tails remain; with this 0 the camera late-init gates are released at
+ * snapshotter start instead of waiting for a flush that never comes.
+ */
+#define RAMOOPS_PERIODIC_SNAPSHOTS	0
 /*
  * run225: once the first KGSL stage record lands, shorten the cadence so the
  * last sample falls inside the pre-reset blind window (~150 ms wide). The
@@ -1099,6 +1105,17 @@ static int ramoops_snap_thread(void *unused)
 	int ret;
 	bool previous_attempted = false;
 	(void)unused;
+
+	if (!RAMOOPS_PERIODIC_SNAPSHOTS) {
+		/*
+		 * No periodic sample will flush, so the camera late-init
+		 * callers parked on ramoops_snapshot_ready would burn their
+		 * 10 s timeout and then skip registration entirely. Release
+		 * them at once; the panic completion still captures on
+		 * demand.
+		 */
+		complete_all(&ramoops_snapshot_ready);
+	}
 
 	while (!kthread_should_stop()) {
 		if (!s->file) {

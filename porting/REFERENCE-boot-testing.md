@@ -20,6 +20,10 @@ ramdisk's primary kernel-log recorder remain enabled. Without periodic writes,
 old snapshot slots may still validate: do not attribute them to a new failed
 boot without fresh provenance. Pre-hang periodic samples are no longer promised.
 
+(Since 2026-10-24, with the flag off, the snapshotter also completes
+`ramoops_snapshot_ready` at thread start, so the camera EEPROM/CPP
+late-init gates are released immediately instead of timing out after 10 s.)
+
 Status as of 2026-10-10 (run2/run3/run4 of snapshot60). Written after the
 kgsl port's first two failed diag boots produced **zero** kernel logs while
 the identical flow on the last known-good kernel worked. Every claim below
