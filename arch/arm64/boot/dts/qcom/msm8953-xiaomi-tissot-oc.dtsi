@@ -84,64 +84,77 @@
  * lookup: below 652.8 MHz the first entry, above 2208 MHz the last.
  */
 &msm8953_cpu_opp {
+	/* clock-latency-ns mirrors msm8953-cpu.dtsi: see the note there. */
 	opp-480000000 {
 		opp-hz = /bits/ 64 <480000000>;
 		opp-peak-kBps = <1689255>;
+		clock-latency-ns = <5000000>;
 	};
 
 	opp-576000000 {
 		opp-hz = /bits/ 64 <576000000>;
 		opp-peak-kBps = <1689255>;
+		clock-latency-ns = <5000000>;
 	};
 
 	opp-806400000 {
 		opp-hz = /bits/ 64 <806400000>;
 		opp-peak-kBps = <3377463>;
+		clock-latency-ns = <5000000>;
 	};
 
 	opp-1248000000 {
 		opp-hz = /bits/ 64 <1248000000>;
 		opp-peak-kBps = <6143606>;
+		clock-latency-ns = <5000000>;
 	};
 
 	opp-2150400000 {
 		opp-hz = /bits/ 64 <2150400000>;
 		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
 	};
 
 	opp-2208000000 {
 		opp-hz = /bits/ 64 <2208000000>;
 		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
 	};
 
 	opp-2304000000 {
 		opp-hz = /bits/ 64 <2304000000>;
 		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
 	};
 
 	opp-2400000000 {
 		opp-hz = /bits/ 64 <2400000000>;
 		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
 	};
 
 	opp-2496000000 {
 		opp-hz = /bits/ 64 <2496000000>;
 		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
 	};
 
 	opp-2592000000 {
 		opp-hz = /bits/ 64 <2592000000>;
 		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
 	};
 
 	opp-2688000000 {
 		opp-hz = /bits/ 64 <2688000000>;
 		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
 	};
 
 	opp-2784000000 {
 		opp-hz = /bits/ 64 <2784000000>;
 		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
 	};
 };
 
