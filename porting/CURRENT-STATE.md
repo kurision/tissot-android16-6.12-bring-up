@@ -39,8 +39,11 @@ capture/session reliability remain unqualified.
 | `a973e773c`, `683ed8d32`, `e37ff5d99`, `4fb0e03f7` | Preserve vendor rules/overlay labels, validate the real base ramdisk, deduplicate firmware command-line tokens and replace explicitly staged modules safely. Reuse a real known-good base. |
 | `0846a889f` | Assign stable MMC aliases after the observed boot-control/checkpoint failure. Full causal isolation and numbering with an SD card remain unverified. |
 
-The current camera configuration retains KASAN, disables UBSAN for image
-size, and sets `RAMOOPS_PERIODIC_SNAPSHOTS=0` in `fs/pstore/ram.c`:
+The current camera configuration drops KASAN (hardware-tag KASAN never
+initializes on this non-MTE A53, so it cost image size for zero runtime
+diagnostics — `mm/kasan/hw_tags.c` bails without `system_supports_mte()`),
+disables UBSAN for image size, and sets `RAMOOPS_PERIODIC_SNAPSHOTS=0` in
+`fs/pstore/ram.c`:
 the periodic snapshotter is parked again (its thread cost was measured in
 [findings/2026-10-24-performance-battery-analysis.md](findings/2026-10-24-performance-battery-analysis.md)),
 and the snapshotter releases the EEPROM/CPP late-init snapshot gate at
