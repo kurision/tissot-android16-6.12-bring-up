@@ -713,6 +713,8 @@
 &usb3_dwc3 {
 	/delete-property/ usb-role-switch;
 	dr_mode = "peripheral";
+	snps,dis_u2_susphy_quirk;
+	snps,dis_enblslpm_quirk;
 };
 
 &mdss {
