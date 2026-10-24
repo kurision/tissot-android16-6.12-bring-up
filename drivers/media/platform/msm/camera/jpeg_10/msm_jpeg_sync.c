@@ -294,7 +294,7 @@ int legacy_msm_jpeg_framedone_irq(struct msm_jpeg_device *pgmn_dev,
 }
 
 int legacy_msm_jpeg_evt_get(struct msm_jpeg_device *pgmn_dev,
-	void __user *to)
+	struct msm_jpeg_ctrl_cmd *cmd)
 {
 	struct msm_jpeg_core_buf *buf_p;
 	struct msm_jpeg_ctrl_cmd ctrl_cmd;
@@ -323,10 +323,7 @@ int legacy_msm_jpeg_evt_get(struct msm_jpeg_device *pgmn_dev,
 	JPEG_DBG("%s:%d] 0x%08lx %d\n", __func__, __LINE__,
 		(unsigned long) ctrl_cmd.value, ctrl_cmd.len);
 
-	if (copy_to_user(to, &ctrl_cmd, sizeof(ctrl_cmd))) {
-		JPEG_PR_ERR("%s:%d]\n", __func__, __LINE__);
-		return -EFAULT;
-	}
+	*cmd = ctrl_cmd;
 
 	return 0;
 }
@@ -401,7 +398,8 @@ int legacy_msm_jpeg_we_pingpong_irq(struct msm_jpeg_device *pgmn_dev,
 	return rc;
 }
 
-int legacy_msm_jpeg_output_get(struct msm_jpeg_device *pgmn_dev, void __user *to)
+int legacy_msm_jpeg_output_get(struct msm_jpeg_device *pgmn_dev,
+			       struct msm_jpeg_buf *buf)
 {
 	struct msm_jpeg_core_buf *buf_p;
 	struct msm_jpeg_buf buf_cmd;
@@ -424,10 +422,7 @@ int legacy_msm_jpeg_output_get(struct msm_jpeg_device *pgmn_dev, void __user *to
 	JPEG_DBG("%s:%d] 0x%08lx %d\n", __func__, __LINE__,
 		(unsigned long) buf_cmd.vaddr, buf_cmd.y_len);
 
-	if (copy_to_user(to, &buf_cmd, sizeof(buf_cmd))) {
-		JPEG_PR_ERR("%s:%d]", __func__, __LINE__);
-		return -EFAULT;
-	}
+	*buf = buf_cmd;
 
 	return 0;
 }
@@ -452,21 +447,14 @@ static inline int msm_jpeg_add_u32_check(uint32_t *p, uint32_t n, uint32_t *res)
 }
 
 int legacy_msm_jpeg_output_buf_enqueue(struct msm_jpeg_device *pgmn_dev,
-	void __user *arg)
+	struct msm_jpeg_buf buf_cmd)
 {
-	struct msm_jpeg_buf buf_cmd;
 	struct msm_jpeg_core_buf *buf_p;
 	uint32_t buf_len_params[10];
 	uint32_t total_len = 0;
 	int n = 0;
 
-	memset(&buf_cmd, 0x0, sizeof(struct msm_jpeg_buf));
-
 	JPEG_DBG("%s:%d] Enter\n", __func__, __LINE__);
-	if (copy_from_user(&buf_cmd, arg, sizeof(struct msm_jpeg_buf))) {
-		JPEG_PR_ERR("%s:%d] failed\n", __func__, __LINE__);
-		return -EFAULT;
-	}
 
 	buf_len_params[n++] = buf_cmd.y_len;
 	buf_len_params[n++] = buf_cmd.cbcr_len;
@@ -566,7 +554,8 @@ int legacy_msm_jpeg_fe_pingpong_irq(struct msm_jpeg_device *pgmn_dev,
 	return rc;
 }
 
-int legacy_msm_jpeg_input_get(struct msm_jpeg_device *pgmn_dev, void __user *to)
+int legacy_msm_jpeg_input_get(struct msm_jpeg_device *pgmn_dev,
+			      struct msm_jpeg_buf *buf)
 {
 	struct msm_jpeg_core_buf *buf_p;
 	struct msm_jpeg_buf buf_cmd;
@@ -589,10 +578,7 @@ int legacy_msm_jpeg_input_get(struct msm_jpeg_device *pgmn_dev, void __user *to)
 	JPEG_DBG("%s:%d] 0x%08lx %d\n", __func__, __LINE__,
 		(unsigned long) buf_cmd.vaddr, buf_cmd.y_len);
 
-	if (copy_to_user(to, &buf_cmd, sizeof(buf_cmd))) {
-		JPEG_PR_ERR("%s:%d]\n", __func__, __LINE__);
-		return -EFAULT;
-	}
+	*buf = buf_cmd;
 
 	return 0;
 }
@@ -605,20 +591,13 @@ int legacy_msm_jpeg_input_get_unblock(struct msm_jpeg_device *pgmn_dev)
 }
 
 int legacy_msm_jpeg_input_buf_enqueue(struct msm_jpeg_device *pgmn_dev,
-	void __user *arg)
+	struct msm_jpeg_buf buf_cmd)
 {
 	struct msm_jpeg_core_buf *buf_p;
-	struct msm_jpeg_buf buf_cmd;
 	uint32_t buf_len_params[10];
 	uint32_t total_len = 0;
 	int n = 0;
 
-	memset(&buf_cmd, 0x0, sizeof(struct msm_jpeg_buf));
-
-	if (copy_from_user(&buf_cmd, arg, sizeof(struct msm_jpeg_buf))) {
-		JPEG_PR_ERR("%s:%d] failed\n", __func__, __LINE__);
-		return -EFAULT;
-	}
 	buf_len_params[n++] = buf_cmd.y_len;
 	buf_len_params[n++] = buf_cmd.cbcr_len;
 	buf_len_params[n++] = buf_cmd.pln2_len;
@@ -949,20 +928,14 @@ int legacy_msm_jpeg_start(struct msm_jpeg_device *pgmn_dev, void * __user arg,
 	return rc;
 }
 
-int legacy_msm_jpeg_ioctl_reset(struct msm_jpeg_device *pgmn_dev, void * __user arg)
+int legacy_msm_jpeg_ioctl_reset(struct msm_jpeg_device *pgmn_dev, uint32_t type)
 {
 	int rc;
-	struct msm_jpeg_ctrl_cmd ctrl_cmd, *p_ctrl_cmd;
 
 	JPEG_DBG("%s:%d] Enter\n", __func__, __LINE__);
-	p_ctrl_cmd = &ctrl_cmd;
 
 	if (pgmn_dev->state == MSM_JPEG_INIT) {
-		if (copy_from_user(&ctrl_cmd, arg, sizeof(ctrl_cmd))) {
-			JPEG_PR_ERR("%s:%d] failed\n", __func__, __LINE__);
-			return -EFAULT;
-		}
-		pgmn_dev->op_mode = p_ctrl_cmd->type;
+		pgmn_dev->op_mode = type;
 
 		rc = legacy_msm_jpeg_core_reset(pgmn_dev, pgmn_dev->op_mode,
 			pgmn_dev->base, pgmn_dev->res_size);
@@ -1261,7 +1234,7 @@ long legacy___msm_jpeg_compat_ioctl(struct msm_jpeg_device *pgmn_dev,
 	unsigned int cmd, unsigned long arg)
 {
 	int rc = 0;
-	struct msm_jpeg_ctrl_cmd *pctrl_cmd = NULL, ctrl_cmd;
+	struct msm_jpeg_ctrl_cmd ctrl_cmd;
 	struct msm_jpeg_buf jpeg_buf;
 
 
@@ -1276,7 +1249,12 @@ long legacy___msm_jpeg_compat_ioctl(struct msm_jpeg_device *pgmn_dev,
 		break;
 
 	case MSM_JPEG_IOCTL_RESET:
-		rc = legacy_msm_jpeg_ioctl_reset(pgmn_dev, (void __user *) arg);
+	case MSM_JPEG_IOCTL_INPUT_BUF_ENQUEUE:
+	case MSM_JPEG_IOCTL_INPUT_GET:
+	case MSM_JPEG_IOCTL_OUTPUT_BUF_ENQUEUE:
+	case MSM_JPEG_IOCTL_OUTPUT_GET:
+	case MSM_JPEG_IOCTL_EVT_GET:
+		rc = legacy___msm_jpeg_ioctl(pgmn_dev, cmd, arg);
 		break;
 
 	case MSM_JPEG_IOCTL_RESET32:
@@ -1285,8 +1263,7 @@ long legacy___msm_jpeg_compat_ioctl(struct msm_jpeg_device *pgmn_dev,
 		if (rc < 0)
 			break;
 
-		rc = legacy_msm_jpeg_ioctl_reset(pgmn_dev, (void __user *) &ctrl_cmd);
-		kfree(pctrl_cmd);
+		rc = legacy_msm_jpeg_ioctl_reset(pgmn_dev, ctrl_cmd.type);
 		break;
 
 	case MSM_JPEG_IOCTL_STOP:
@@ -1309,25 +1286,15 @@ long legacy___msm_jpeg_compat_ioctl(struct msm_jpeg_device *pgmn_dev,
 				legacy_msm_jpeg_ioctl_hw_cmds32);
 		break;
 
-	case MSM_JPEG_IOCTL_INPUT_BUF_ENQUEUE:
-		rc = legacy_msm_jpeg_input_buf_enqueue(pgmn_dev,
-			(void __user *) arg);
-		break;
-
 	case MSM_JPEG_IOCTL_INPUT_BUF_ENQUEUE32:
 		rc = legacy_msm_jpeg_get_jpeg_buf32(&jpeg_buf, (void __user *) arg);
 		if (rc < 0)
 			break;
-		rc = legacy_msm_jpeg_input_buf_enqueue(pgmn_dev,
-			(void __user *) &jpeg_buf);
-		break;
-
-	case MSM_JPEG_IOCTL_INPUT_GET:
-		rc = legacy_msm_jpeg_input_get(pgmn_dev, (void __user *) arg);
+		rc = legacy_msm_jpeg_input_buf_enqueue(pgmn_dev, jpeg_buf);
 		break;
 
 	case MSM_JPEG_IOCTL_INPUT_GET32:
-		rc = legacy_msm_jpeg_input_get(pgmn_dev, (void __user *) &jpeg_buf);
+		rc = legacy_msm_jpeg_input_get(pgmn_dev, &jpeg_buf);
 		if (rc < 0)
 			break;
 		rc = legacy_msm_jpeg_put_jpeg_buf32(&jpeg_buf, (void __user *) arg);
@@ -1338,25 +1305,15 @@ long legacy___msm_jpeg_compat_ioctl(struct msm_jpeg_device *pgmn_dev,
 		rc = legacy_msm_jpeg_input_get_unblock(pgmn_dev);
 		break;
 
-	case MSM_JPEG_IOCTL_OUTPUT_BUF_ENQUEUE:
-		rc = legacy_msm_jpeg_output_buf_enqueue(pgmn_dev,
-			(void __user *) arg);
-		break;
-
 	case MSM_JPEG_IOCTL_OUTPUT_BUF_ENQUEUE32:
 		rc = legacy_msm_jpeg_get_jpeg_buf32(&jpeg_buf, (void __user *) arg);
 		if (rc < 0)
 			break;
-		rc = legacy_msm_jpeg_output_buf_enqueue(pgmn_dev,
-			(void __user *) &jpeg_buf);
-		break;
-
-	case MSM_JPEG_IOCTL_OUTPUT_GET:
-		rc = legacy_msm_jpeg_output_get(pgmn_dev, (void __user *) arg);
+		rc = legacy_msm_jpeg_output_buf_enqueue(pgmn_dev, jpeg_buf);
 		break;
 
 	case MSM_JPEG_IOCTL_OUTPUT_GET32:
-		rc = legacy_msm_jpeg_output_get(pgmn_dev, (void __user *) &jpeg_buf);
+		rc = legacy_msm_jpeg_output_get(pgmn_dev, &jpeg_buf);
 		if (rc < 0)
 			break;
 		rc = legacy_msm_jpeg_put_jpeg_buf32(&jpeg_buf, (void __user *) arg);
@@ -1366,15 +1323,11 @@ long legacy___msm_jpeg_compat_ioctl(struct msm_jpeg_device *pgmn_dev,
 		rc = legacy_msm_jpeg_output_get_unblock(pgmn_dev);
 		break;
 
-	case MSM_JPEG_IOCTL_EVT_GET:
-		rc = legacy_msm_jpeg_evt_get(pgmn_dev, (void __user *) arg);
-		break;
-
 	case MSM_JPEG_IOCTL_EVT_GET32:
-		rc = legacy_msm_jpeg_evt_get(pgmn_dev, (void __user *) &ctrl_cmd);
+		rc = legacy_msm_jpeg_evt_get(pgmn_dev, &ctrl_cmd);
 		if (rc < 0)
 			break;
-		legacy_msm_jpeg_put_ctrl_cmd32(&ctrl_cmd, (void __user *) arg);
+		rc = legacy_msm_jpeg_put_ctrl_cmd32(&ctrl_cmd, (void __user *)arg);
 		break;
 
 	case MSM_JPEG_IOCTL_EVT_GET_UNBLOCK:
@@ -1430,6 +1383,10 @@ long legacy___msm_jpeg_ioctl(struct msm_jpeg_device *pgmn_dev,
 	unsigned int cmd, unsigned long arg)
 {
 	int rc = 0;
+	struct msm_jpeg_ctrl_cmd ctrl_cmd;
+	struct msm_jpeg_buf jpeg_buf;
+	void __user *argp = (void __user *)arg;
+
 	switch (cmd) {
 	case MSM_JPEG_IOCTL_GET_HW_VERSION:
 		JPEG_DBG("%s:%d] VERSION 1\n", __func__, __LINE__);
@@ -1437,7 +1394,9 @@ long legacy___msm_jpeg_ioctl(struct msm_jpeg_device *pgmn_dev,
 		break;
 
 	case MSM_JPEG_IOCTL_RESET:
-		rc = legacy_msm_jpeg_ioctl_reset(pgmn_dev, (void __user *) arg);
+		if (copy_from_user(&ctrl_cmd, argp, sizeof(ctrl_cmd)))
+			return -EFAULT;
+		rc = legacy_msm_jpeg_ioctl_reset(pgmn_dev, ctrl_cmd.type);
 		break;
 
 	case MSM_JPEG_IOCTL_STOP:
@@ -1451,12 +1410,15 @@ long legacy___msm_jpeg_ioctl(struct msm_jpeg_device *pgmn_dev,
 		break;
 
 	case MSM_JPEG_IOCTL_INPUT_BUF_ENQUEUE:
-		rc = legacy_msm_jpeg_input_buf_enqueue(pgmn_dev,
-			(void __user *) arg);
+		if (copy_from_user(&jpeg_buf, argp, sizeof(jpeg_buf)))
+			return -EFAULT;
+		rc = legacy_msm_jpeg_input_buf_enqueue(pgmn_dev, jpeg_buf);
 		break;
 
 	case MSM_JPEG_IOCTL_INPUT_GET:
-		rc = legacy_msm_jpeg_input_get(pgmn_dev, (void __user *) arg);
+		rc = legacy_msm_jpeg_input_get(pgmn_dev, &jpeg_buf);
+		if (!rc && copy_to_user(argp, &jpeg_buf, sizeof(jpeg_buf)))
+			rc = -EFAULT;
 		break;
 
 	case MSM_JPEG_IOCTL_INPUT_GET_UNBLOCK:
@@ -1464,12 +1426,15 @@ long legacy___msm_jpeg_ioctl(struct msm_jpeg_device *pgmn_dev,
 		break;
 
 	case MSM_JPEG_IOCTL_OUTPUT_BUF_ENQUEUE:
-		rc = legacy_msm_jpeg_output_buf_enqueue(pgmn_dev,
-			(void __user *) arg);
+		if (copy_from_user(&jpeg_buf, argp, sizeof(jpeg_buf)))
+			return -EFAULT;
+		rc = legacy_msm_jpeg_output_buf_enqueue(pgmn_dev, jpeg_buf);
 		break;
 
 	case MSM_JPEG_IOCTL_OUTPUT_GET:
-		rc = legacy_msm_jpeg_output_get(pgmn_dev, (void __user *) arg);
+		rc = legacy_msm_jpeg_output_get(pgmn_dev, &jpeg_buf);
+		if (!rc && copy_to_user(argp, &jpeg_buf, sizeof(jpeg_buf)))
+			rc = -EFAULT;
 		break;
 
 	case MSM_JPEG_IOCTL_OUTPUT_GET_UNBLOCK:
@@ -1477,7 +1442,9 @@ long legacy___msm_jpeg_ioctl(struct msm_jpeg_device *pgmn_dev,
 		break;
 
 	case MSM_JPEG_IOCTL_EVT_GET:
-		rc = legacy_msm_jpeg_evt_get(pgmn_dev, (void __user *) arg);
+		rc = legacy_msm_jpeg_evt_get(pgmn_dev, &ctrl_cmd);
+		if (!rc && copy_to_user(argp, &ctrl_cmd, sizeof(ctrl_cmd)))
+			rc = -EFAULT;
 		break;
 
 	case MSM_JPEG_IOCTL_EVT_GET_UNBLOCK:
