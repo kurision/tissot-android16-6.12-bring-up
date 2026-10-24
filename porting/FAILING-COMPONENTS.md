@@ -1,7 +1,7 @@
 # Open components and daily-driver blockers — tissot
 
-Camera/status updated **2026-10-24**; other subsystem observations remain dated
-**2026-10-22**. This is the current work queue, not a chronological bring-up
+Camera/status and the overnight failure audit updated **2026-10-24**; other
+subsystem observations remain dated **2026-10-22**. This is the current work queue, not a chronological bring-up
 log. See [CURRENT-STATE.md](CURRENT-STATE.md) for evidence and limits,
 [README.md](README.md) for the overview, and [BUILD_TISSOT.md](../BUILD_TISSOT.md)
 for build/packaging instructions.
@@ -11,6 +11,27 @@ Latest camera inspection: **`6.12.93-4k-gd13339db2abb #44`**. Source is
 **`4646f53406c3`**. That fix is host-tested, **not built or boot-tested**.
 Older #83 audio/power/unplug evidence below has not been revalidated on #44.
 Daily-driver readiness remains open.
+
+The [2026-10-24 failure inventory and repair ledger](findings/2026-10-24-live-failure-inventory.md)
+records current dpmd/peripheral/FastRPC failures, modem fatal/recovery evidence,
+USB resume errors and all captured warning/error/fatal loggers. Raw logs,
+line-level indexes, provenance labels and checksums are retained locally under
+`porting/artifacts/snapshot60/failure-audit-20261024/`. Counts describe retained
+windows, not a complete overnight trace or measured battery attribution.
+
+## Active repairs — one component at a time
+
+| Component | Repair / evidence | Current status |
+|---|---|---|
+| dpmd / HIDL — current repair | Reproduced mmap-size abort on run401 #46; hash-checked `porting/tools/patch-dpmd-hidl.py` aligns dpmd's explicit request with the installed HIDL default. Nine focused host tests passed. | Temporary candidate active on run401: two service starts stable for 120.647 s and 60.695 s, verified executable hashes/domain and no new matching aborts. Original file retained; reboot removes binding. Persistent integration, data-service qualification and battery benefit remain open. |
+| USB / DWC3 — source candidate | Retained prefix reports QUSB2 PLL failure / resume -16; live UDC not attached. Added two donor suspend quirks under board `&usb3_dwc3`. | Strict checkpatch/whitespace passed; not built or boot-tested. No proven PLL root cause or recovery yet. |
+| Crash-loop stop guards | Proposed dpmd/peripheral guards were removed after review. | Withdrawn; restoring the original file is not a crash fix. No current guard-based repair claim. |
+| Peripheral manager / proxy | Missing SSR discovery root and repeated manager/proxy exits. | Open; compare donor discovery and lifecycle before compatibility changes. |
+| FastRPC / adsprpcd | Thousands of listener initialization errors and 25 ms retries; ENOSPC reported. | Open; trace failing operation/allocation. Not evidence of full storage; earlier ioctl fixes do not establish recovery. |
+| Modem firmware / remoteproc | Earlier captured summary includes IPA assertion and remoteproc recovery, `handling crash #10`. | Open; full raw repeat and transaction correlation required. Counter is not ten independently retained reproductions. |
+| Camera LED flash / torch | Run401 HAL reports no flash on either camera; no torch LED node. Donor PMI8950 flash/torch resources and camera link are omitted from the port. | Confirmed missing hardware integration, not an app setting. Needs a separately reviewed/approved port; no source edit or LED activation performed. |
+
+Existing camera/audio fixes and qualification requirements below remain open.
 
 ## Current issues
 
@@ -28,6 +49,7 @@ Daily-driver readiness remains open.
 | 2 | Thermal HAL / vendor policy integration | Earlier Android thermal service reported `HAL Ready:false` while legacy thermal-engine ran. Thermal zones/cooling devices are registered and donor-compatible names are restored. | Recheck the exact image's HAL/daemon integration and sustained CPU/GPU mitigation. Do not invent a case-sensor mapping. |
 | 2 | Long-run GPU/display stability | Earlier GPU retirement stalls remain a historical open issue; the new media fixes do not establish that every GPU hang is resolved. No retirement-stall reproduction was captured in this session. | Exercise sustained graphics and inspect retired timestamps, pending fences and fault logs if the display hangs; keep this separate from the unplug event. |
 | 2 | Camera orientation / capture qualification | #43 has working front/rear preview with upside-down rear orientation. QRD mount-angle correction `b74883f50` is in #44's reported source ancestry; visual orientation has not been revalidated. ACK exposed two cameras versus three on the donor. | Check rear orientation/motion and retain front as control; separately qualify zoom, extra sensor/flash coverage and repeated preview/capture handoff. |
+| 2 | Initial camera failure on run401 / LED flash unavailable | User reports camera failed initially and then worked. Failure evidence saved before dpmd mutation; exact cause unverified. HAL explicitly reports no flash, and the port omits the donor PMI8950 flash path. | Retain the transient launch issue separately from the confirmed flash integration gap. Diagnose a repeated launch failure; trace donor flash resources/driver/ABI before proposing edits. |
 | 3 | Hardware video encode / performance | Software AVC selection matches the same ROM on donor 4.19; OMX encoders are absent from the framework list on both. Port VIDC encoder/decoder nodes answer QUERYCAP, and #43 has hardware HEVC decode evidence. QUERYCAP does not prove a completed hardware encode. | Treat encoder registration/selection as a ROM/framework follow-up; qualify hardware encoding with a raw V4L2 test if needed. Sustained decode, stop/error cleanup and the observed MP4 timestamp warning remain unqualified. Secure playback is out of scope. |
 | 3 | Fingerprint / haptics / IR / remaining sensors | Last dedicated inventory lists unported device-specific paths; no fresh end-to-end validation in this session. | Use [the hardware inventory](TRACKER-tissot-hardware.md) and verify each path before changing its status. |
 
