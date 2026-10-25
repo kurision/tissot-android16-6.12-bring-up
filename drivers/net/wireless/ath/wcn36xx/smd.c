@@ -3166,7 +3166,17 @@ int wcn36xx_smd_wlan_host_suspend_ind(struct wcn36xx *wcn)
 	mutex_lock(&wcn->hal_mutex);
 
 	INIT_HAL_MSG(msg_body, WCN36XX_HAL_HOST_SUSPEND_IND);
-	msg_body.configured_mcst_bcst_filter_setting = 0;
+	/*
+	 * Tell the firmware to drop multicast and broadcast frames while the
+	 * system is suspended (mcast|bcast filter bits, as the vendor driver
+	 * does with mcastBcastFilterSetting=3) instead of waking the host for
+	 * every one of them. The RX IRQ is wake-enabled, so each delivered
+	 * frame is a wakeup. Unicast frames still wake the host, and delivery
+	 * while awake stays governed by the multicast address list, so
+	 * userspace multicast locks keep working. A lock held across suspend
+	 * cannot serve any listener anyway.
+	 */
+	msg_body.configured_mcst_bcst_filter_setting = 3;
 	msg_body.active_session_count = 1;
 	PREPARE_HAL_BUF(wcn->hal_buf, msg_body);
 
