@@ -37,6 +37,8 @@ struct msm_audio_ion_private {
 	struct mutex list_mutex;
 	u64 smmu_sid_bits;
 	u32 smmu_version;
+	u32 iova_start;
+	u32 iova_size;
 };
 
 struct msm_audio_alloc_data {
@@ -49,6 +51,20 @@ struct msm_audio_alloc_data {
 };
 
 static struct msm_audio_ion_private msm_audio_ion_data = {0,};
+
+static bool msm_audio_ion_iova_valid(dma_addr_t addr, size_t size)
+{
+	u64 offset;
+
+	if (!msm_audio_ion_data.smmu_enabled || !msm_audio_ion_data.iova_size)
+		return true;
+	if (addr < msm_audio_ion_data.iova_start)
+		return false;
+
+	offset = addr - msm_audio_ion_data.iova_start;
+	return offset < msm_audio_ion_data.iova_size && size &&
+		size <= msm_audio_ion_data.iova_size - offset;
+}
 
 static void msm_audio_ion_add_allocation(
 	struct msm_audio_ion_private *msm_audio_ion_data,
@@ -133,11 +149,20 @@ static int msm_audio_dma_buf_map(struct dma_buf *dma_buf,
 
 	/* physical address from mapping */
 	*addr = MSM_AUDIO_ION_PHYS_ADDR(alloc_data);
+	if (!msm_audio_ion_iova_valid(*addr, *len)) {
+		dev_err(cb_dev, "IOVA %pad size %zu outside audio pool\n",
+			addr, *len);
+		rc = -ENOMEM;
+		goto unmap_dma_buf;
+	}
 
 	msm_audio_ion_add_allocation(&msm_audio_ion_data,
 				     alloc_data);
 	return rc;
 
+unmap_dma_buf:
+	dma_buf_unmap_attachment_unlocked(alloc_data->attach,
+					  alloc_data->table, DMA_BIDIRECTIONAL);
 detach_dma_buf:
 	dma_buf_detach(alloc_data->dma_buf,
 		       alloc_data->attach);
@@ -441,6 +466,12 @@ int msm_audio_ion_dma_map(dma_addr_t *phys_addr, dma_addr_t *iova_base,
 		pr_err("%s: dma_mapping_error\n", __func__);
 		return -EIO;
 	}
+	if (!msm_audio_ion_iova_valid(iova, size)) {
+		dev_err(cb_dev, "IOVA %pad size %u outside audio pool\n",
+			&iova, size);
+		dma_unmap_resource(cb_dev, iova, size, dir, 0);
+		return -ENOMEM;
+	}
 	pr_debug("%s: dma_mapping_success iova:0x%lx\n", __func__,
 			 (unsigned long)iova);
 	if (msm_audio_ion_data.smmu_enabled)
@@ -705,6 +736,33 @@ EXPORT_SYMBOL(msm_audio_populate_upper_32_bits);
 
 static int msm_audio_smmu_init(struct device *dev)
 {
+	u32 pool[2];
+	u64 end;
+	int rc;
+
+	msm_audio_ion_data.iova_size = 0;
+	if (of_find_property(dev->of_node, "qcom,iommu-dma-addr-pool", NULL)) {
+		if (of_property_count_u32_elems(dev->of_node,
+						"qcom,iommu-dma-addr-pool") != ARRAY_SIZE(pool))
+			return dev_err_probe(dev, -EINVAL, "Invalid audio pool\n");
+		rc = of_property_read_u32_array(dev->of_node,
+						"qcom,iommu-dma-addr-pool", pool, ARRAY_SIZE(pool));
+		if (rc)
+			return rc;
+
+		end = (u64)pool[0] + pool[1] - 1;
+		if (!pool[1] || ((pool[0] | pool[1]) & (PAGE_SIZE - 1)) ||
+		    end > U32_MAX)
+			return dev_err_probe(dev, -EINVAL, "Invalid audio pool\n");
+
+		/* CAF constrained this window in its ARM64 DMA setup. */
+		rc = dma_set_mask_and_coherent(dev, end);
+		if (rc)
+			return dev_err_probe(dev, rc, "Cannot limit audio DMA\n");
+		msm_audio_ion_data.iova_start = pool[0];
+		msm_audio_ion_data.iova_size = pool[1];
+	}
+
 	INIT_LIST_HEAD(&msm_audio_ion_data.alloc_list);
 	mutex_init(&(msm_audio_ion_data.list_mutex));
 

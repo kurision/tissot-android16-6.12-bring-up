@@ -53,6 +53,7 @@
 			iommus = <&apps_iommu 0xf>;
 			qcom,smmu-sid = /bits/ 64 <0x2401>;
 			qcom,smmu-sid-mask = /bits/ 64 <0xf>;
+			qcom,iommu-dma-addr-pool = <0x10000000 0x10000000>;
 		};
 
 		/* Unlabelled: msm8953.dtsi's upstream APR already has q6core. */
