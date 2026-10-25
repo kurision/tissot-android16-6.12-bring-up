@@ -19,6 +19,7 @@
 #include <asm/dma.h>
 #include <linux/of_device.h>
 #include <dsp/q6voice.h>
+#include <trace/hooks/sound.h>
 
 #include "msm-pcm-voice-v2.h"
 
@@ -147,10 +148,26 @@ static int msm_pcm_capture_prepare(struct snd_pcm_substream *substream)
 
 	return 0;
 }
+
+static void msm_pcm_voice_no_buffer(void *data,
+				    struct snd_pcm_substream *substream,
+				    bool *no_buffer)
+{
+	/* Voice samples stay in the DSP rather than a host PCM buffer. */
+	if (data == substream)
+		*no_buffer = true;
+}
+
 static int msm_pcm_open(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct msm_voice *voice;
+	int ret;
+
+	ret = register_trace_android_vh_snd_pcm_check_no_buffer(msm_pcm_voice_no_buffer,
+								substream);
+	if (ret)
+		return ret;
 
 	if (!strncmp("VoLTE", substream->pcm->id, 5)) {
 		voice = &voice_info[VOLTE_SESSION_INDEX];
@@ -233,6 +250,10 @@ static int msm_pcm_close(struct snd_soc_component *component, struct snd_pcm_sub
 	struct msm_voice *prtd = runtime->private_data;
 	uint32_t session_id = 0;
 	int ret = 0;
+
+	unregister_trace_android_vh_snd_pcm_check_no_buffer(msm_pcm_voice_no_buffer,
+							    substream);
+	tracepoint_synchronize_unregister();
 
 	mutex_lock(&prtd->lock);
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
