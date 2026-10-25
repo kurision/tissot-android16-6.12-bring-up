@@ -1,13 +1,127 @@
 # Current state of the tissot port
 
-Camera checkpoint updated **2026-10-24**; other subsystem status below
-remains dated **2026-10-22**. This is the detailed live status; the
+Status reviewed **2026-10-25**, including successful call-audio tests on
+ACK 6.12 and the 4.19 comparison kernel. This is the detailed live status; the
 [README](README.md) is the overview and [failing-components table](FAILING-COMPONENTS.md)
-is the work queue. Old dated reports describe their own runs, not this state.
+is the work queue. The current summary below supersedes the dated camera,
+audio and power checkpoints retained later in this document. An older
+failure is not proof that a later image still fails, and a source fix is
+not proof that every affected feature has passed a device test.
 
-## Camera checkpoint: #44 JPEG failure and fix awaiting device test, 2026-10-24
+## Current checkpoint and device identity — 2026-10-25
 
-Latest inspected kernel: **`6.12.93-4k-gd13339db2abb #44`**, built
+**Two-way handset and speaker call audio is working with a temporary ROM
+HAL setting.** Two calls passed on ACK kernel #93; a subsequent slot-A
+4.19 call also passed both modes. Daily-driver readiness remains unproven:
+the property is not persistent, and the camera, suspend, charging and
+service-compatibility qualification gaps below remain open.
+
+| Item | Latest verified observation |
+|---|---|
+| Device / ROM | Xiaomi Mi A1, serial `2819f2320604`; Evolution X / Android 17 |
+| Latest ACK call-test image | `6.12.96-4k-gc9d35ed0d67f-dirty #93`, built 2026-10-24 21:48:58 +0545; successful-test boot `a98ac416-a276-4ad7-b1e3-efa74f3ca13f` |
+| Most recently inspected phone | Already on slot `_a`, `4.19.325-cip136-st20-perf-mglru-next-gdf4a1f863991 #5`, boot `cdea609a-193a-46ed-ae96-f271c55d6557`; Magisk root / USB ADB |
+| Current runtime workaround | `vendor.audio.feature.multi_voice_session.enable=true`; `vendor.audio-hal` restarted and verified running, PID 11313 on the 4.19 test |
+| Source versus image | Current `main` contains the audio fixes below and later USB/performance work. The old dirty build string does not attest every source file or qualify newer changes |
+| Test operations | No kernel build or slot switch was needed for the slot-A test: the phone was already on 4.19. The HAL property/restart were the requested runtime changes |
+
+## Working, partial and unqualified components
+
+"Working" names the observed function, not complete subsystem coverage.
+Rows retain their latest evidence window; the call tests did not retest
+all hardware on #93 or on 4.19.
+
+| Component | Status | Evidence and remaining limit |
+|---|---|---|
+| Android boot, display, touch, navigation | Working interactive paths | Android UI and vendor graphics demonstrated on ACK; freeze and suspend/wake reliability remain open |
+| CPU frequency / idle | Working with qualification gaps | Shared eight-core schedutil policy, 480–2784 MHz, and increasing per-core power-collapse residency observed; battery endurance and all thermal scenarios are unqualified |
+| GPU / KGSL | Working GLES rendering | Sustained graphics, fault recovery and energy efficiency still need coverage |
+| RAM / zram | Runtime operation and direct measurements observed | Direct run403 memory tests are retained; reclaim/swap activity and the exec-performance gap remain open. A matched same-tool donor bandwidth comparison is not complete |
+| Hardware video decode | Working in tested playback | Hardware AVC decode and user-reported 1080p playback; retained AVC measurement is 1920×816, about 24 fps. Other codecs/resolutions and cleanup paths are not exhaustively qualified |
+| Screen recording | Recording and saving demonstrated | Software AVC; save succeeded after the one-directory permission repair. Hardware encoding is unqualified |
+| Camera preview / video | Working in retained tests | Front/rear preview and decodable MP4s; this does not establish corrected stills, orientation, telephoto/zoom or flash |
+| Camera still photos | Last retained failure; post-fix result unverified | #44 rear/front JPEG reset fails and saved output is malformed. The six-path compatibility fix is in current source and host-tested; no newer still-photo validation is claimed here |
+| Telephoto / third camera / orientation | Incomplete qualification | Earlier ACK exposes two cameras versus three on donor. Mount-angle and EEPROM-constraint changes are in source; later three-camera enumeration and correct orientation remain unverified |
+| Camera flash / torch | Confirmed porting gap | Run401 HAL reports no flash; donor PMIC flash connection/resources are omitted. No flash integration fix is established |
+| Voice-call audio | Working with temporary ROM setting | Two ACK #93 calls and one 4.19 slot-A call; user confirms two-way handset/speaker audio. Persistence, other SIM/accessory paths and comprehensive voice-technology coverage remain open |
+| Media audio | Playback demonstrated; errors remain | Earlier speaker playback/deep-buffer progress; EOS close timeouts and underruns remain. The latest call tests are not an independent media-playback qualification |
+| Wi-Fi / Bluetooth | Basic operation demonstrated | Wi-Fi association, wireless ADB and Bluetooth operation; Wi-Fi suspend/resume, wake traffic, Bluetooth call audio and endurance remain unqualified |
+| Modem / cellular services | Registration and tested calls work | Retained modem recovery, peripheral-manager, FastRPC and data-service failures still require separate follow-up; not a complete cellular-data/IMS qualification |
+| Battery / charger / USB | Basic operation; reliability open | Battery/charging interfaces and USB ADB demonstrated. Current reporting, charging rate, cable reattachment and suspend recovery remain open; new extcon wiring needs its own test |
+| dpmd / diagnostic transport | Partial repair | dpmd mapping-size candidate survived two temporary service-start trials; persistence and functional data services are unqualified. CAF diag is now in source, so the older absent-node report is historical |
+| Fingerprint | Retained HAL failure; unresolved | Run401 contains a fingerprint-service SIGSEGV. No later successful end-to-end test or fix is recorded |
+| GNSS, haptics, IR, remaining sensors / notification LED | Unverified end-to-end | Historical inventory contains porting gaps; no new functional pass was obtained. Do not classify every device as broken from old probe/config data |
+| Crash capture / security services | Partial validation | Ramoops retention and selected QSEE transactions observed; current-image controlled-panic persistence, all-CPU-freeze capture and full credential/keystore coverage are unqualified |
+
+## Call audio: verified success and ROM workaround
+
+The [complete investigation report](REPORT-call-audio-2026-10-25.md) records
+the failure chain, experiments and two successful #93 calls. Kernel fixes
+remain in place: legacy eight-entry CVP channel-info layout/flexible
+payload (`0f033a84a7`), donor audio IOVA window (`c63c7a8b3d`), and scoped
+hostless PCM startup/donor voice-link settings (`82513bf45b`). These are
+the current commit IDs after the approved attribution-only rewrite;
+older IDs in the report identify the same code through retained history.
+
+After kernel setup succeeded, the remaining silence was resolved by the
+HAL multi-session setting. RIL requests VoiceMMode1 VSID `0x11c05000`,
+while the disabled feature selected legacy voice `0x10c01000`. The actual
+loaded HAL analysis, live flag change and #93 kernel probes support the
+session correction. Both #93 calls start `0x11c05000` with return 0;
+the user confirmed two-way handset/speaker audio and then repeated success.
+
+On the same ROM, slot-A 4.19 was subsequently tested with the property
+enabled and the HAL restarted through Magisk. The user explicitly confirmed
+"Two-way audio on handset and speaker". Retained
+`artifacts/snapshot60/call-audio-slot-a-20261025T170447Z/logcat-after-call.txt`
+records mmode1 selection at lines 22442–22443, successful start at 22772,
+speaker route at 23684, and successful stop at 24222.
+`identity-after-call.txt` pins the boot, property, PID and matching HAL hash.
+The route collector failed preflight because its expected debugfs component
+path was absent on 4.19; this call has retained buffers and user audibility
+confirmation,
+not a complete active-route/probe capture. No property-off call was made
+on that 4.19 boot.
+
+With the phone booted and no call active, run from the connected PC and
+grant Magisk root if prompted:
+
+```sh
+adb -s 2819f2320604 shell "su -c 'setprop vendor.audio.feature.multi_voice_session.enable true'"
+adb -s 2819f2320604 shell "su -c 'setprop ctl.restart vendor.audio-hal'"
+```
+
+Wait a few seconds, then call. Repeat after reboot until the ROM supplies
+`vendor.audio.feature.multi_voice_session.enable=true` before HAL startup.
+No persistent override/module was installed or reboot-tested. The property
+test needs no kernel rebuild. Separate EOS/volume/near-teardown errors
+also appear during working calls and are not a renewed silence diagnosis.
+
+## Power and source changes since the older checkpoints
+
+Current source sets `RAMOOPS_PERIODIC_SNAPSHOTS=0`; the snapshot worker
+parks and releases the camera gates at start. Run403/#48 measured the
+worker at 0.0% CPU, versus the earlier 1.4%. The schedutil latency change
+was also observed live there, with governor CPU reduced from about 8.3%
+to 2.5%; transition overhead and the exec gap remain. See the
+[dated comparison and run403 measurements](findings/2026-10-24-stock-baseline-perf-comparison.md).
+These are workload observations, not proof of battery-life parity.
+
+The Wi-Fi suspend filter (`a9222818a3`), USB charger-extcon wiring
+(`7089aa7edb`) and later AutoFDO/RCU configuration (`4dc2e25371`) are source
+changes with distinct validation requirements. No repeated-call success
+or existing USB connection qualifies their suspend, cable or battery
+behavior. Current history/source must not be presented as the exact #93
+packaged image without a matching artifact.
+
+## Historical camera checkpoint: #44 JPEG failure — 2026-10-24
+
+This section preserves the #44 inspection. The JPEG fix is now in `main`;
+the next requirement is post-fix still-photo qualification, not a claim
+that every later image lacks the patch. The newer voice tests did not
+retake camera stills or validate every camera mode.
+
+Inspected camera kernel at this checkpoint: **`6.12.93-4k-gd13339db2abb #44`**, built
 2026-10-24 01:39:25 +0545. Branch is `ack-camera`; JPEG compatibility fix
 and its regression test are committed as `4646f53406c3`, after `6aba140ac`.
 The user built/booted #44. No kernel build, flash, reboot or controlled panic
@@ -34,7 +148,7 @@ capture/session reliability remain unqualified.
 | `37d207627`, `ec8ac3f59`, `906b00d7f` | CPP probe/cleanup/readiness gating, DT/SMMU resources and CPP/VPE entity-revision ABI. Combined changes reached preview on #43; not tested commit by commit. |
 | `b74883f50` | Correct inherited sensor mount angles to QRD `[90,90,270]`; source ancestry alone does not validate displayed orientation. |
 | `aa6d022dc` | Restore JPEG encoder resources, GCC power domain and APPS context bank `0x13`. #44 binds `1b1c000.qcom,jpeg` to `msm_jpeg` and creates `/dev/jpeg0`. |
-| `4646f53406c3` | Fix usercopy of translated kernel data in six JPEG compatibility paths and add regression coverage. Host-tested; not built or boot-tested. |
+| `4646f53406c3` | Fix usercopy of translated kernel data in six JPEG compatibility paths and add regression coverage. Host-tested; no retained post-fix still-photo pass is established here. |
 | `d13339db2`, `6aba140ac` | Record that camera software AVC selection and absent framework OMX encoders match the same ROM on donor 4.19. Hardware encoder execution remains unverified. |
 | `a973e773c`, `683ed8d32`, `e37ff5d99`, `4fb0e03f7` | Preserve vendor rules/overlay labels, validate the real base ramdisk, deduplicate firmware command-line tokens and replace explicitly staged modules safely. Reuse a real known-good base. |
 | `0846a889f` | Assign stable MMC aliases after the observed boot-control/checkpoint failure. Full causal isolation and numbering with an SD card remain unverified. |
@@ -102,8 +216,9 @@ mapping errors. Original code fails the reset regression; patched checks pass.
 **42 camera host tests plus the routing test pass**, with JPEG ASan/UBSan/leak
 checks passing outside sandbox ptrace. Strict driver checkpatch and the API
 pattern scan are clean; the new test has the generic MAINTAINERS reminder.
-The fix is committed as `4646f53406c3`, **not built, not checked with Sparse,
-and not boot-tested**. Correct saved photos remain **unverified** until that test.
+At the #44 checkpoint, `4646f53406c3` was committed but not built, checked
+with Sparse or boot-tested. It is now in current source; correct saved
+photos remain **unverified** without a retained post-fix capture test.
 
 ### Camera video: software selection matches stock
 
@@ -133,7 +248,7 @@ retained separately. #44 command output and JPEG analysis above were session
 observations; no new raw-log/media archive was written during that read-only
 inspection.
 
-Next: on an authorized build/boot of the pending JPEG patch, check both still
+Next camera qualification: on a 6.12 image verified to contain the JPEG fix, check both still
 captures for reset success, absence of hardware-config failure/hybrid fallback
 and warning-free JPEG decoding. Recheck orientation separately. The older
 main-image provenance and other subsystem observations below have not been
@@ -168,7 +283,7 @@ source reverts, and predates the latest diagnostic-overhead cleanup.
 | Video stop | The inspected stop sequence removed the decoder and released Venus clocks/power domains. It does not prove every error path releases resources. |
 | Screen recording | Later recording attempts reached encoding and video-instance closure without either captured #79 oops. The successful save used software `c2.android.avc.encoder`; hardware encode remains unverified. |
 | Audio playback | Speaker playback was demonstrated on earlier builds. Deep-buffer 48 kHz stereo 16-bit counters advanced; low-latency underruns and EOS close timeouts remain. Audio quality has not been benchmarked. |
-| Connectivity | Wi-Fi association, Bluetooth ON/operation and modem bring-up demonstrated. Voice-call audio and reliable suspend recovery remain open. |
+| Connectivity | Wi-Fi association, Bluetooth ON/operation and modem bring-up demonstrated. Newer voice-call results are above; reliable suspend recovery remains open. |
 | Battery / charger | Battery and charger interfaces report values and distinguish charger removal. Reported health is not a battery-wear or capacity test. |
 
 ## Media fixes and screen-recording save repair
@@ -220,7 +335,10 @@ That supports investigating the storage transition; it does not prove the ROM
 set the wrong mode or that the port originally changed it. No recursive chmod,
 chown, SELinux change or general storage migration fix was applied.
 
-## Audio: unresolved behavior and source changes
+## Historical audio failures and source changes — #79–83
+
+The following describes the older investigation. The newer successful
+call tests and remaining persistence requirement are recorded above.
 
 * `CMD_EOS` close timeouts occurred repeatedly. Diagnostic #79/#80 captures
   show successful APR TX and, for some streams, a rendered-EOS RX; other
@@ -228,14 +346,16 @@ chown, SELinux change or general storage migration fix was applied.
 * `f431b1110` and `97afb7703` added PCM/ASM/APR traces; **`833a2ad73` reverts
   both in current source**. The original timeout error remains. Do not expect
   those diagnostic messages in an image built after the revert.
-* Voice calls reach a CVP channel-info rejection (`0x1133d`,
-  `ADSP_EBADPARAM`); working modem registration is not working call audio.
+* Those earlier voice calls reached a CVP channel-info rejection (`0x1133d`,
+  `ADSP_EBADPARAM`); the later packet-layout correction and #93 tests
+  supersede this as the current call status.
 * `c23444468` tried legacy ADSP format fallbacks. **`555056679` reverts it**:
   donor include-chain review showed that tissot does not enable that property,
   and playback open failed with `ADSP_EUNSUPPORTED` in the experiment.
   The last inspected #83 contains the experiment, not its revert.
 * `c3ec18206` restores legacy voice front ends; `455203f9f` adds CVP
-  channel-info diagnostics. Neither establishes a resolved call path.
+  channel-info diagnostics. Neither alone established a resolved call path;
+  the later kernel/ROM changes and audibility tests did.
 
 ## CPU, GPU, thermals and charging observations
 

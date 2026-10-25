@@ -1,92 +1,111 @@
 # Xiaomi Mi A1 / tissot — Linux 6.12 port
 
-## Status
+## Status — 2026-10-25
 
-Camera/status updated **2026-10-24** from commits and live inspection of user
-kernel #44. Other subsystem observations remain dated **2026-10-22**.
-Target: responsive daily use, low battery drain, and controlled temperatures
-on Evolution X / Android 17.
+The port boots Android with working display, touch, vendor GLES, tested media
+paths and **two-way handset/speaker call audio**. Calls passed twice on ACK
+6.12 #93 and then on slot-A 4.19 with the same ROM HAL setting enabled.
 
-**Daily-driver readiness is not established.** Android boots and the major
-interactive paths run, but corrupt saved photos, the unplug-related failure,
-audio shutdown/calls, and power-management validation remain open.
+**Daily-driver readiness is not established.** The call setting is temporary;
+suspend/USB/charging reliability, battery efficiency, service compatibility and
+complete camera qualification remain open. Working features and untested modes
+must not be conflated.
 
-| Identity | Last verified state |
+| Checkpoint | Verified observation |
 |---|---|
-| Latest inspected kernel | `6.12.93-4k-gd13339db2abb #44`, built 2026-10-24 01:39:25 +0545; camera inspection only |
-| Camera source checkpoint | `ack-camera`, JPEG compatibility fix and regression test committed as `4646f53406c3`; not built or boot-tested |
-| Earlier general-system evidence | #83 / boot `4aba5d4d-433d-4266-97cc-191fbf70f3b1`; retained in current-state history |
-| Build/flash | User performed the observed builds/flashes; this documentation refresh did neither |
+| Device / ROM | Xiaomi Mi A1 (`tissot`, MSM8953), Evolution X / Android 17 |
+| Latest ACK call-test image | `6.12.96-4k-gc9d35ed0d67f-dirty #93`; successful-test boot `a98ac416-a276-4ad7-b1e3-efa74f3ca13f` |
+| Most recent phone test | Slot `_a`, `4.19.325-cip136-st20-perf-mglru-next-gdf4a1f863991 #5`, boot `cdea609a-193a-46ed-ae96-f271c55d6557`, Magisk root |
+| Source / image boundary | Current `main` includes newer audio, USB and tuning changes; an old dirty build string does not attest all current source or qualify those newer changes |
+| Camera evidence | #43 preview/video and #44 failing stills remain the retained camera checkpoints. JPEG compatibility fix is in source; no newer successful still-photo test is claimed here |
 
-The latest camera inspection does not revalidate the older audio, power or
-unplug investigations. The JPEG compatibility patch is **not built or
-boot-tested**. A source change is not a flashed-image result.
+## Working functions and their limits
 
-## Verified progress
+| Area | Verified progress | Remaining limit |
+|---|---|---|
+| Boot / display / input / root | Android UI, touch/navigation, USB/wireless ADB and root demonstrated on ACK | Suspend/wake and long-run stability |
+| GPU | Adreno 506 vendor GLES through KGSL | Sustained performance, energy use and fault recovery |
+| CPU / idle | Shared eight-core schedutil policy, 480–2784 MHz; per-core power-collapse residency increases | Endurance, transition overhead and sustained thermal behavior |
+| Memory | Direct run403 memory measurements and functioning zram | Reclaim/exec-performance gap; matched same-tool donor comparison is incomplete |
+| Hardware decode | Hardware AVC playback; user reports 1080p working | Retained measured AVC sample is 1920×816 at about 24 fps; broader codec/resolution coverage remains open |
+| Screen recording | Recording and saving demonstrated after a one-directory permission repair | Software AVC; hardware encoding is not qualified |
+| Camera preview / video | Front/rear preview and decodable MP4s | Correct still photos, orientation, telephoto/zoom, flash and repeated-session coverage |
+| Voice calls | Two-way audio on handset and speaker: two ACK #93 calls plus a 4.19 comparison call | Temporary ROM property; persistence and other SIM/accessory/voice modes remain unqualified |
+| Media audio | Earlier speaker playback and deep-buffer progress | EOS close timeouts, underruns and independent post-change media checks |
+| Wi-Fi / Bluetooth / cellular | Basic connectivity and tested calls | Wi-Fi resume/wakes, Bluetooth call audio, modem recovery and complete data-service qualification |
+| Battery / charging / USB | Interfaces report state; charging and ADB demonstrated | Current accuracy, charge rate, cable recovery and suspend reliability |
 
-| Area | Result and limit |
-|---|---|
-| Boot, display, touch, root | Android UI, USB/wireless ADB, touchscreen/navigation keys and KernelSU work. Suspend/wake reliability is still open. |
-| GPU | Adreno 506 runs the vendor GLES driver through KGSL. Sustained performance and energy use are not qualified. |
-| CPU | One shared `schedutil` policy, 480–2784 MHz. `psci_idle` / `menu`; standalone power-collapse residency increases on all eight CPUs. Shared policy matches the donor's clock arrangement. |
-| Hardware decode | User reports 1080p playback working. A measured hardware AVC sample was **1920×816 at about 24 fps**, not a full 1920×1080 qualification. |
-| Video crash fixes | `5cff6896e` fixes partial ION cache synchronization; `defe506a4` fixes VIDC debugfs naming/error handling. Old production code fails the focused host regressions; patched code passes. Later recording attempts did not repeat those oopses. |
-| Screen recording | Recording and saving succeeded after a directory-permission repair. Capture used **`c2.android.avc.encoder` (software)**; hardware encode is not verified. |
-| Cameras | Front/rear preview works on #43 after the CPP and vendor ABI repairs. #44 binds the restored JPEG driver and creates `/dev/jpeg0`, but both fresh still captures fail hardware reset and save malformed hybrid-encoder output. A six-path compatibility fix passes host checks and awaits a build/device test. |
-| Camera recording / codec selection | Both retained #43 MP4s decode. Camera recording selects software AVC on both this port and the working donor kernel with the same ROM. OMX encoder registration is a ROM/framework issue; raw hardware encoding remains unverified. |
-| Audio | Speaker playback worked on earlier images; underruns and `CMD_EOS` timeouts remain. The earlier #83 contains the legacy-format experiment reverted in newer source; no new audio qualification on #44. |
-| Charging | Dedicated charger detected; battery reported charging, with sane voltage/temperature samples. Charging-rate, capacity accuracy and unplug reliability are not qualified. |
-| Wi-Fi / Bluetooth / modem | Association and Bluetooth operation were demonstrated; modem comes up. This does not establish reliable voice calls or suspend recovery. |
-| Crash evidence | Previous-boot ramoops console survived the older unplug event. Current camera source enables periodic disk snapshots and gates CPP registration on snapshot readiness. Complete panic persistence remains **unverified** on #44. |
+## Call-audio workaround
 
-The saved recording was **26,553,766 bytes**, with **673 encoded frames** and
-no new kernel oops in its capture. `Movies/ScreenRecords` was owned by
-`media_rw:media_rw` but mode `2700`; changing only that directory to `2775`
-allowed MediaProvider to save. The origin of the restrictive mode is unknown.
-The donor used sdcardfs; the port gives MediaProvider a direct F2FS backing
-view. Treat this as a storage-compatibility investigation, not a proven ROM
-bug or a verified general migration fix.
+The final silence blocker was the ROM HAL selecting legacy voice while RIL
+requested VoiceMMode1. The earlier kernel setup corrections remain required in
+the tested configuration; the successful property test does not undo them.
+See the [full investigation report](REPORT-call-audio-2026-10-25.md).
 
-## Open priorities
+After boot, connect USB with ADB debugging enabled. With no call active, run
+from the PC and allow Magisk root if prompted:
 
-1. Reproduce charger-unplug / screen-off / wake failure with live evidence.
-   The last event has no recorded panic or orderly shutdown and no confirmed
-   cause. Do not attribute it to Wi-Fi, heat or battery loss from the log tail.
-2. Verify the current audio-format revert on the next user-built image;
-   investigate EOS timeouts, low-latency underruns and CVP voice-call setup.
-3. Validate battery use after background compilation finishes, then screen-off
-   idle, suspend/wake cycles, thermal throttling and sustained GPU work.
-4. Build/test the pending JPEG compatibility patch: rear and front stills
-   must complete without reset `-EFAULT`, hybrid fallback or decoder warnings.
-   Recheck preview orientation after the QRD mount-angle correction and
-   qualify zoom, camera coverage and repeated sessions separately.
-5. Treat hardware AVC selection as a ROM/framework follow-up matching stock;
-   a raw V4L2 encoder test is still needed to qualify hardware encoding.
-6. Validate panic capture on the exact image with a separately approved
-   controlled-panic/recovery test. No such test was run in this session.
+```sh
+adb -s 2819f2320604 shell "su -c 'setprop vendor.audio.feature.multi_voice_session.enable true'"
+adb -s 2819f2320604 shell "su -c 'setprop ctl.restart vendor.audio-hal'"
+```
+
+Wait a few seconds, then call. **Repeat after reboot** until the ROM sets
+`vendor.audio.feature.multi_voice_session.enable=true` before audio-HAL startup.
+No persistent override was installed or reboot-tested. This runtime workaround
+needs no kernel rebuild.
+
+## Known gaps and next priorities
+
+1. Persist the ROM call setting and verify calls after reboot. Keep EOS/media
+   completion errors separate from the now-working handset/speaker call path.
+2. Qualify USB cable attachment, suspend/wake and charger removal on a known
+   image. The older unresponsive-phone event has no established cause. New
+   extcon and Wi-Fi suspend-filter source changes need their own runtime proof.
+3. Recheck rear/front stills on a verified JPEG-fix image. The last retained
+   #44 photos are corrupt; a later successful post-fix capture is unverified.
+   Camera flash/torch integration is missing. Orientation, telephoto/third-camera
+   enumeration, zoom and repeated camera sessions remain unqualified.
+4. Resolve retained fingerprint HAL, FastRPC and peripheral-manager failures;
+   qualify modem/data recovery. The dpmd mapping repair has only prior temporary
+   service-start trials, not persistent functional data-service coverage.
+5. Measure controlled screen-off drain, charging-current accuracy, sustained
+   thermal mitigation and performance. Run403 reduced governor overhead and
+   parked the snapshotter; it did not establish battery-life parity. Later
+   AutoFDO/RCU source settings are not a verified runtime improvement.
+6. Qualify hardware video encoding, GNSS, haptics, IR, remaining sensors and
+   notification LED. Software AVC selection matches this ROM on donor 4.19;
+   device enumeration alone is not proof of a hardware encode.
+7. Qualify panic capture on the exact image with a separately approved recovery
+   test. Console retention is not a guarantee of evidence from every freeze.
+
+Current source has periodic ramoops disk snapshots disabled and releases the
+camera gates at worker start. Older enabled-snapshot/overhead descriptions are
+historical. Explicit panic/reset capture and its validation limits remain.
 
 ## Documentation and evidence
 
-* [Current state](CURRENT-STATE.md): verified behavior, source/image boundary,
-  important commits, measurements and evidence limitations.
-* [Failing components](FAILING-COMPONENTS.md): current blockers and next checks.
-* [Camera handoff](HANDOFF-camera-2026-10-24.md): retained #43/stock evidence;
-  [current state](CURRENT-STATE.md) adds the newer #44 JPEG findings.
-* [Software AVC comparison](findings/2026-10-24-software-avc-encoder-matches-stock.md):
-  donor/port codec selection and the limits of the hardware-device probe.
-* [Build and packaging](../BUILD_TISSOT.md): established build/flash procedure.
-* [Boot evidence reference](REFERENCE-boot-testing.md): capture/recovery tooling
-  and persistence limitations; dated operational claims need current checks.
-* [Driver forward-porting reference](REFERENCE-driver-forward-porting.md):
-  donor/API/lifetime review requirements.
-* Selected session captures are preserved under
-  `porting/artifacts/snapshot60/status-20261022/`, with `SHA256SUMS`.
-  They are **local evidence: untracked text and gitignored binary captures**,
-  not committed documentation.
-* Camera #43 originals are under
-  `porting/artifacts/snapshot60/camera-cpp-capture-20261023T190618Z/`.
-  The #44 live commands and in-memory JPEG analysis are session observations;
-  no new capture archive was written during that read-only inspection.
+- [Current state](CURRENT-STATE.md): detailed component matrix, build/boot
+  identities, call evidence, commands and dated subsystem checkpoints.
+- [Failing components](FAILING-COMPONENTS.md): known failures, temporary repairs,
+  missing integration and qualification work.
+- [Call-audio report](REPORT-call-audio-2026-10-25.md): experiments, kernel fixes,
+  final HAL blocker and two successful ACK calls. The subsequent 4.19 result is
+  recorded in [current state](CURRENT-STATE.md).
+- [Camera handoff](HANDOFF-camera-2026-10-24.md) and
+  [software AVC comparison](findings/2026-10-24-software-avc-encoder-matches-stock.md):
+  retained historical camera evidence and codec-selection limits.
+- [Failure inventory](findings/2026-10-24-live-failure-inventory.md): dated raw
+  evidence references and repair trials; not every old failure was retested.
+- [Performance comparison](findings/2026-10-24-stock-baseline-perf-comparison.md):
+  donor/port sampling and run403 follow-up, with workload/measurement limits.
+- [Build and packaging](../BUILD_TISSOT.md),
+  [boot evidence reference](REFERENCE-boot-testing.md) and
+  [driver forward-porting reference](REFERENCE-driver-forward-porting.md).
 
-Existing dated bring-up reports and plans are historical material. They are
-not the current status or the current work queue; use these three live docs.
+Compact selected evidence is tracked with the call report. Large captures,
+vendor binaries and boot images remain local under `porting/artifacts/`;
+ignore rules preserve them on disk but do not make them recoverable from Git.
+No new build, boot, flash, call or phone change was performed to refresh these
+three documents. Dated reports describe their own runs; these live documents
+provide the current overview and work queue.
