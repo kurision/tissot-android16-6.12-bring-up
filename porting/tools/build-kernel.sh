@@ -228,7 +228,13 @@ test -n "$CROSS_CC" && test -x "$CROSS_CC" || {
 # Rust 1.99 renamed -Zdebug-info-for-profiling. Keep the existing AutoFDO
 # settings through the make command; the new spelling does not remove the
 # old option and still fails.
-RUST_PROFILE_FLAGS=${RUST_PROFILE_FLAGS:-'-Zdebuginfo-for-profiling -Cllvm-args=-enable-fs-discriminator=true -Cllvm-args=-improved-fs-discriminator=true'}
+#
+# With CLANG_AUTOFDO_PROFILE set below, scripts/Makefile.autofdo would
+# compute the profile-use variant of these flags, but this variable is
+# passed on the make command line and therefore overrides it, so the
+# profile-use flags are mirrored here explicitly.
+AFDO_PROFILE="$REPO/gki/aarch64/afdo/kernel.afdo"
+RUST_PROFILE_FLAGS=${RUST_PROFILE_FLAGS:-"-Zdebuginfo-for-profiling -Cllvm-args=-enable-fs-discriminator=true -Cllvm-args=-improved-fs-discriminator=true -Zprofile-sample-use=$AFDO_PROFILE -Zfunction-sections=y -Cllvm-args=-split-machine-functions"}
 
 echo "=== the toolchain ==="
 "$CLANG" --version | head -1
@@ -253,9 +259,14 @@ for path in "$SNAP/boot-$RUN.img" "$SNAP/kdir-$RUN" "$SNAP/package-$RUN.json" \
 done
 trap 'rc=$?; printf "status=%s\n" "$rc" > "$SNAP/$RUN-build.status"' EXIT
 
+if [ ! -s "$AFDO_PROFILE" ]; then
+	echo "error: missing AutoFDO profile: $AFDO_PROFILE" >&2
+	exit 1
+fi
 make_args=(make -C "$REPO" "O=$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 "CC=$CLANG"
  "RUSTC=$RUSTC" "HOSTRUSTC=$HOSTRUSTC" "BINDGEN=$BINDGEN"
  "RUSTFLAGS_AUTOFDO_CLANG=$RUST_PROFILE_FLAGS"
+ "CLANG_AUTOFDO_PROFILE=$AFDO_PROFILE"
  KSU_GIT_VERSION=3355 KSU_GIT_VERSION_VALID=1 KSU_GIT_TAG=v3.4.2)
 
 # --- the configuration ------------------------------------------------------
