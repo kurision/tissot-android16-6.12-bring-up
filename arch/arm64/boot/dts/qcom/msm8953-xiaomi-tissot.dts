@@ -708,6 +708,7 @@
 
 &usb3 {
 	status = "okay";
+	extcon = <&qpnp_smbcharger>;
 };
 
 &usb3_dwc3 {
