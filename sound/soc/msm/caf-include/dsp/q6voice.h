@@ -237,7 +237,8 @@ struct vss_param_endpoint_media_format_info {
 struct vss_param_vocproc_dev_channel_info_t {
 	uint32_t num_channels;
 	uint32_t bits_per_sample;
-	uint8_t channel_mapping[VSS_NUM_CHANNELS_MAX];
+	/* Legacy CVD channel-info packets carry eight mapping entries. */
+	uint8_t channel_mapping[8];
 } __packed;
 
 struct vss_param_channel_mixer_info_t {
@@ -458,7 +459,7 @@ struct vss_icommon_cmd_set_param {
 	 * Parameter data payload when inband. Should have size param_size.
 	 * Bit size of payload must be a multiple of 4.
 	 */
-	uint8_t param_data[0];
+	uint8_t param_data[];
 } __packed;
 
 /* TO MVM commands */

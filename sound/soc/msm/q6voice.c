@@ -4132,7 +4132,7 @@ static int voice_send_cvp_channel_info_v2(struct voice_data *v,
 		channel_info->bits_per_sample = v->dev_rx.bits_per_sample;
 		memcpy(&channel_info->channel_mapping,
 		       v->dev_rx.channel_mapping,
-		       VSS_NUM_CHANNELS_MAX * sizeof(uint8_t));
+		       sizeof(channel_info->channel_mapping));
 		break;
 
 	case TX_PATH:
@@ -4142,7 +4142,7 @@ static int voice_send_cvp_channel_info_v2(struct voice_data *v,
 		channel_info->bits_per_sample = v->dev_tx.bits_per_sample;
 		memcpy(&channel_info->channel_mapping,
 		       v->dev_tx.channel_mapping,
-		       VSS_NUM_CHANNELS_MAX * sizeof(uint8_t));
+		       sizeof(channel_info->channel_mapping));
 		break;
 
 	case EC_REF_PATH:
@@ -4152,7 +4152,7 @@ static int voice_send_cvp_channel_info_v2(struct voice_data *v,
 		channel_info->bits_per_sample = v->dev_rx.bits_per_sample;
 		memcpy(&channel_info->channel_mapping,
 		       v->dev_rx.channel_mapping,
-		       VSS_NUM_CHANNELS_MAX * sizeof(uint8_t));
+		       sizeof(channel_info->channel_mapping));
 		break;
 	default:
 		pr_err("%s: Invalid param type\n",
@@ -4516,7 +4516,7 @@ static int voice_setup_vocproc(struct voice_data *v)
 		ret = -EINVAL;
 		goto fail;
 	}
-	pr_debug("%s: CVP Version %d\n", __func__, common.cvp_version);
+	pr_info("%s: CVP Version %d\n", __func__, common.cvp_version);
 
 	ret = voice_send_cvp_media_fmt_info_cmd(v);
 	if (ret < 0) {
@@ -8987,15 +8987,23 @@ int voice_set_topology_specific_info(struct voice_data *v,
 	}
 
 	if (topology_idx == CVP_VOC_RX_TOPOLOGY_CAL) {
-		topo_channels = ((struct audio_cal_info_voc_top *)
-				cal_block->cal_info)->num_channels;
+		struct audio_cal_info_voc_top *cal_info =
+			(struct audio_cal_info_voc_top *)
+			cal_block->cal_info;
+		u8 *cal_map = cal_info->channel_mapping;
+
+		topo_channels = cal_info->num_channels;
+		if (topo_channels > 0) {
+			pr_info("%s: Rx topo %d acdb %d ch %d map %u %u %u %u\n",
+				__func__, cal_info->topology,
+				cal_info->acdb_id, topo_channels,
+				cal_map[0], cal_map[1], cal_map[2], cal_map[3]);
+		}
 		if (topo_channels > 0) {
 			v->dev_rx.no_of_channels = topo_channels;
 			pr_debug("%s: Topology Rx no of channels: %d",
 				 __func__, v->dev_rx.no_of_channels);
-			memcpy(&v->dev_rx.channel_mapping,
-			       &((struct audio_cal_info_voc_top *)
-			       cal_block->cal_info)->channel_mapping,
+			memcpy(&v->dev_rx.channel_mapping, cal_map,
 			       VSS_CHANNEL_MAPPING_SIZE);
 		} else {
 			pr_debug("%s: cal data is zero, default to Rx backend config\n",
@@ -9012,15 +9020,23 @@ int voice_set_topology_specific_info(struct voice_data *v,
 			}
 		}
 	} else if (topology_idx == CVP_VOC_TX_TOPOLOGY_CAL) {
-		topo_channels = ((struct audio_cal_info_voc_top *)
-				cal_block->cal_info)->num_channels;
+		struct audio_cal_info_voc_top *cal_info =
+			(struct audio_cal_info_voc_top *)
+			cal_block->cal_info;
+		u8 *cal_map = cal_info->channel_mapping;
+
+		topo_channels = cal_info->num_channels;
+		if (topo_channels > 0) {
+			pr_info("%s: Tx topo %d acdb %d ch %d map %u %u %u %u\n",
+				__func__, cal_info->topology,
+				cal_info->acdb_id, topo_channels,
+				cal_map[0], cal_map[1], cal_map[2], cal_map[3]);
+		}
 		if (topo_channels > 0) {
 			v->dev_tx.no_of_channels = topo_channels;
 			pr_debug("%s: Topology Tx no of channels: %d",
 				 __func__, v->dev_tx.no_of_channels);
-			memcpy(&v->dev_tx.channel_mapping,
-			       &((struct audio_cal_info_voc_top *)
-			       cal_block->cal_info)->channel_mapping,
+			memcpy(&v->dev_tx.channel_mapping, cal_map,
 			       VSS_CHANNEL_MAPPING_SIZE);
 		} else {
 			pr_debug("%s: cal data is zero, default to Tx backend config\n",
