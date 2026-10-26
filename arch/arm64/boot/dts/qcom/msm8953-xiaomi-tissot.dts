@@ -11,6 +11,7 @@
 #include "msm8953-xiaomi-tissot-audio.dtsi"
 #include "msm8953-xiaomi-tissot-battery.dtsi"
 #include "msm8953-xiaomi-tissot-camera.dtsi"
+#include "msm8953-xiaomi-tissot-fingerprint.dtsi"
 #include "msm8953-xiaomi-tissot-mdss.dtsi"
 #include "msm8953-xiaomi-tissot-vidc.dtsi"
 #include "msm8953-xiaomi-tissot-thermal.dtsi"

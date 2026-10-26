@@ -1,0 +1,129 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Fingerprint sensors for Xiaomi Mi A1 (tissot), from the donor
+ * techpack/xiaomi-msm8953 tree (mi8953/tissot/fingerprint.dtsi and
+ * pinctrl.dtsi). The board shipped with either an FPC1020 or a Goodix
+ * GF3208 on the same pins; this unit has the FPC variant (fpsensor=1 in
+ * the stock boot log). Both nodes stay present, like stock: the unused
+ * driver loses the shared gpio140 pinctrl claim and keeps going.
+ *
+ * The vendor HAL drives the sensor from the fpctzapp/goodixfp trustlets
+ * over qseecom; the kernel drivers only provide the reset/irq/spi-mux
+ * plumbing these nodes describe.
+ */
+
+#include <dt-bindings/clock/qcom,gcc-msm8953.h>
+
+&soc {
+	fpc1020 {
+		compatible = "fpc,fpc1020";
+		spi-max-frequency = <1000000>;
+		input-device-name = "fpc1020";
+		interrupt-parent = <&tlmm>;
+		interrupts = <9 0x0>;
+
+		fpc,gpio_rst = <&tlmm 140 0>;
+		fpc,gpio_irq = <&tlmm 48 0>;
+
+		clock-names = "iface_clk", "core_clk";
+		clocks = <&gcc GCC_BLSP1_AHB_CLK>,
+			 <&gcc GCC_BLSP1_QUP1_SPI_APPS_CLK>;
+
+		pinctrl-names = "fpc1020_spi_active",
+				"fpc1020_reset_reset",
+				"fpc1020_reset_active",
+				"fpc1020_irq_active";
+		pinctrl-0 = <&fpc_spi_active>;
+		pinctrl-1 = <&fpc_reset_reset>;
+		pinctrl-2 = <&fpc_reset_active>;
+		pinctrl-3 = <&fpc_irq_active>;
+	};
+
+	goodix_fp {
+		compatible = "goodix,fingerprint";
+		spi-max-frequency = <1000000>;
+		input-device-name = "gf3208";
+		interrupt-parent = <&tlmm>;
+		interrupts = <9 0x0>;
+
+		goodix,gpio_reset = <&tlmm 140 0>;
+		goodix,gpio_irq = <&tlmm 48 0>;
+
+		clock-names = "iface_clk", "core_clk";
+		clocks = <&gcc GCC_BLSP1_AHB_CLK>,
+			 <&gcc GCC_BLSP1_QUP1_SPI_APPS_CLK>;
+
+		pinctrl-names = "goodixfp_spi_active",
+				"goodixfp_reset_reset",
+				"goodixfp_reset_active",
+				"goodixfp_irq_active";
+		pinctrl-0 = <&goodix_spi_active>;
+		pinctrl-1 = <&goodix_reset_reset>;
+		pinctrl-2 = <&goodix_reset_active>;
+		pinctrl-3 = <&goodix_irq_active>;
+	};
+};
+
+&tlmm {
+	fpc_spi_active: fpc-spi-active-state {
+		pins = "gpio16", "gpio17", "gpio18", "gpio19";
+		function = "blsp_spi5";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	fpc_reset_reset: fpc-reset-reset-state {
+		pins = "gpio140";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-low;
+	};
+
+	fpc_reset_active: fpc-reset-active-state {
+		pins = "gpio140";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+
+	fpc_irq_active: fpc-irq-active-state {
+		pins = "gpio48";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		input-enable;
+	};
+
+	goodix_spi_active: goodix-spi-active-state {
+		pins = "gpio16", "gpio17", "gpio18", "gpio19";
+		function = "blsp_spi5";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	goodix_reset_reset: goodix-reset-reset-state {
+		pins = "gpio140";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-low;
+	};
+
+	goodix_reset_active: goodix-reset-active-state {
+		pins = "gpio140";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+
+	goodix_irq_active: goodix-irq-active-state {
+		pins = "gpio48";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		input-enable;
+	};
+};

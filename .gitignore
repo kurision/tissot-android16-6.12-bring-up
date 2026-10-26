@@ -256,6 +256,9 @@ porting/artifacts/snapshot*/run*-live/
 porting/artifacts/snapshot*/run*-preboot/
 porting/artifacts/snapshot*/run*-postboot/
 porting/artifacts/snapshot*/run*-user-capture/
+porting/artifacts/snapshot*/camera-*/
+porting/artifacts/snapshot*/call-*/
+porting/artifacts/snapshot*/failure-*/
 # Boot images that landed in the repository root.
 boot-run*.img
 
@@ -339,3 +342,17 @@ porting/artifacts/**/package-control.json
 # A local scratch build script at the repository root, not part of the
 # porting tree.
 /build_tissot.sh
+
+# Generated porting captures and diagnostic output stay local.
+/porting/artifacts/
+/porting/logging/logs/
+/porting/findings/*.log
+/evidence/logs/
+/evidence/serial/
+/evidence/raw/
+/evidence/manifest.json
+/evidence/tissot-partitions.txt
+/*.log
+/data-recent.txt
+/tombstones-and-today.txt
+/tissot-snapshot15.config

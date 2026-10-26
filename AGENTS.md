@@ -30,7 +30,7 @@ trap that turns a driver-probe panic into a completely silent failed boot
 (`pstore_blk` is level 7, driver probes are level 6). Read it before any
 boot cycle; boot cycles are the scarce resource.
 
-Before coming to conclusion do a online research for cross-verification always. And please dont add assisted-by /co-authors in commits.
+Before coming to conclusion do a online research for cross-verification always.
 
 ## Verify before concluding
 

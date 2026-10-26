@@ -114,6 +114,8 @@ required=(
     CONFIG_WCN36XX            # WCN3680 WLAN (wcn36xx); deps MAC80211/HAS_DMA
     CONFIG_QCOM_WCNSS_PIL     # pronto remoteproc; blobs from modem harvest
     CONFIG_QCOM_SYSMON        # SSR crash detection; silent FW deaths visible
+    CONFIG_FINGERPRINT_FPC1020    # fpc HAL: sysfs legacy-path device + fpctzapp TA
+    CONFIG_FINGERPRINT_GOODIX_GF3208 # GF HAL: /dev/goodix_fp + netlink + TA
 )
 
 missing=()
