@@ -517,12 +517,16 @@ for token in "${drop_cmdline[@]}"; do
 done
 # Preserve the working GPU firmware path and append the modem image path.
 # Replacing the list with firmware_mnt alone breaks a530_pm4.fw loading.
-append_args=(--append-cmdline "firmware_class.path=/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image")
 # The DT restores the donor controller name (sdhci@7824900); the boot device
 # tokens follow it, so donor userspace that greps for "sdhci" (librpmb) and
-# first-stage init's boot_devices match both resolve.
-append_args+=(--append-cmdline "androidboot.boot_devices=soc@0/7824900.sdhci")
-append_args+=(--append-cmdline "androidboot.bootdevice=7824900.sdhci")
+# first-stage init's boot_devices match both resolve. All tokens go in ONE
+# --append-cmdline argument: the packager treats repeated flags as
+# last-one-wins.
+boot_tokens="androidboot.boot_devices=soc@0/7824900.sdhci"
+boot_tokens="$boot_tokens androidboot.bootdevice=7824900.sdhci"
+fw_path="firmware_class.path=/lib/firmware,/vendor/firmware"
+fw_path="$fw_path,/vendor/firmware_mnt/image"
+append_args=(--append-cmdline "$fw_path $boot_tokens")
 python3 -B porting/logging/package-diag-boot.py --base-image "$BASE_IMAGE" \
  --format anykernel \
  --kernel-dir "$SNAP/kdir-$RUN" --stage-kernel "$BOOT" --init "$SNAP/init-$RUN" \
