@@ -264,11 +264,9 @@ static void msm_buf_mngr_contq_listdel(struct msm_buf_mngr_device *dev,
 					&cont_bufs->map);
 				rc = dma_buf_end_cpu_access(cont_bufs->dmabuf,
 					DMA_BIDIRECTIONAL);
-				if (rc) {
+				if (rc)
 					pr_err("Failed in end cpu access, dmabuf=%pK",
 						cont_bufs->dmabuf);
-					return;
-				}
 				dma_buf_put(cont_bufs->dmabuf);
 			}
 			list_del_init(&cont_bufs->entry);
@@ -331,7 +329,7 @@ static int msm_buf_mngr_handle_cont_cmd(struct msm_buf_mngr_device *dev,
 					struct msm_buf_mngr_main_cont_info
 					*cont_cmd)
 {
-	int rc = 0, i = 0;
+	int rc = 0, i = 0, cleanup_rc;
 	struct dma_buf *dmabuf = NULL;
 	struct msm_camera_user_buf_cont_t *iaddr, *temp_addr;
 	struct iosys_map map;
@@ -389,13 +387,13 @@ static int msm_buf_mngr_handle_cont_cmd(struct msm_buf_mngr_device *dev,
 		rc = dma_buf_begin_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 		if (rc) {
 			pr_err("dma begin access failed rc=%d", rc);
-			return rc;
+			goto free_ion_handle;
 		}
 		rc = dma_buf_vmap_unlocked(dmabuf, &map);
 		if (rc) {
 			pr_err("dma_buf_vmap failed\n");
 			rc = -EINVAL;
-			goto free_ion_handle;
+			goto end_cpu_access;
 		}
 		iaddr = map.vaddr;
 		for (i = 0; i < cont_cmd->cnt; i++) {
@@ -448,11 +446,10 @@ free_list:
 	}
 	// ion_unmap_kernel(dev->ion_client, ion_handle);
 	dma_buf_vunmap_unlocked(dmabuf, &map);
-	rc = dma_buf_end_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
-	if (rc) {
+end_cpu_access:
+	cleanup_rc = dma_buf_end_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
+	if (cleanup_rc)
 		pr_err("Failed in end cpu access, dmabuf=%pK", dmabuf);
-		return rc;
-	}
 free_ion_handle:
 	// ion_free(dev->ion_client, ion_handle);
 	dma_buf_put(dmabuf);
