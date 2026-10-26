@@ -434,7 +434,7 @@ static struct dma_buf_attachment *mdss_smmu_dma_buf_attach_v2(
 
 	if (!mdss_smmu) {
 		pr_err("not able to get smmu context\n");
-		return NULL;
+		return ERR_PTR(-ENODEV);
 	}
 
 	return dma_buf_attach(dma_buf, mdss_smmu->base.dev);

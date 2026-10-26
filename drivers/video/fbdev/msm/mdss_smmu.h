@@ -4,6 +4,7 @@
 #ifndef MDSS_SMMU_H
 #define MDSS_SMMU_H
 
+#include <linux/err.h>
 #include <linux/ion.h>
 #include <linux/msm_mdp.h>
 #include <linux/mdss_io_util.h>
@@ -216,7 +217,7 @@ static inline struct dma_buf_attachment *mdss_smmu_dma_buf_attach(
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 
 	if (!mdata || !mdata->smmu_ops.smmu_dma_buf_attach)
-		return NULL;
+		return ERR_PTR(-ENODEV);
 
 	return mdata->smmu_ops.smmu_dma_buf_attach(dma_buf, dev, domain);
 }
