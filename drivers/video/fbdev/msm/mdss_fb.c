@@ -2264,7 +2264,7 @@ void mdss_fb_free_fb_ion_memory(struct msm_fb_data_type *mfd)
 	mfd->fbi->screen_base = NULL;
 	mfd->fbi->fix.smem_start = 0;
 
-	dma_buf_vunmap(mfd->fbmem_buf, &mfd->fbmem_map);
+	dma_buf_vunmap_unlocked(mfd->fbmem_buf, &mfd->fbmem_map);
 
 	dma_buf_end_cpu_access(mfd->fbmem_buf, DMA_BIDIRECTIONAL);
 
@@ -2338,17 +2338,19 @@ int mdss_fb_alloc_fb_ion_memory(struct msm_fb_data_type *mfd, size_t fb_size)
 	} else {
 		pr_err("No IOMMU Domain\n");
 		rc = -EINVAL;
-		goto fb_mmap_failed;
+		goto err_put;
 	}
 
-	dma_buf_begin_cpu_access(mfd->fbmem_buf, DMA_BIDIRECTIONAL);
+	rc = dma_buf_begin_cpu_access(mfd->fbmem_buf, DMA_BIDIRECTIONAL);
+	if (rc)
+		goto err_unmap;
 
-	vaddr = dma_buf_vmap(mfd->fbmem_buf, &mfd->fbmem_map) ?
+	vaddr = dma_buf_vmap_unlocked(mfd->fbmem_buf, &mfd->fbmem_map) ?
 		NULL : mfd->fbmem_map.vaddr;
 	if (!vaddr) {
 		pr_err("ION memory mapping failed\n");
 		rc = -ENOMEM;
-		goto err_unmap;
+		goto err_end_cpu_access;
 	}
 	pr_debug("alloc 0x%zxB vaddr = %pK for fb%d\n", fb_size,
 			vaddr, mfd->index);
@@ -2358,6 +2360,8 @@ int mdss_fb_alloc_fb_ion_memory(struct msm_fb_data_type *mfd, size_t fb_size)
 
 	return rc;
 
+err_end_cpu_access:
+	dma_buf_end_cpu_access(mfd->fbmem_buf, DMA_BIDIRECTIONAL);
 err_unmap:
 	dma_buf_unmap_attachment_unlocked(mfd->fb_attachment, mfd->fb_table,
 					DMA_BIDIRECTIONAL);
@@ -2365,7 +2369,6 @@ err_detach:
 	dma_buf_detach(mfd->fbmem_buf, mfd->fb_attachment);
 err_put:
 	dma_buf_put(mfd->fbmem_buf);
-fb_mmap_failed:
 	mfd->fb_attachment = NULL;
 	mfd->fb_table = NULL;
 	mfd->fbmem_buf = NULL;
