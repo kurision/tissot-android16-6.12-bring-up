@@ -1833,30 +1833,30 @@ done:
 }
 
 static int fastrpc_get_dsp_info(struct fastrpc_user *fl,
-				struct fastrpc_ioctl_capability cap)
+				struct fastrpc_ioctl_capability *cap)
 {
 	int err = 0;
 
-	cap.capability = 0;
-	if (cap.domain >= FASTRPC_DEV_MAX) {
+	cap->capability = 0;
+	if (cap->domain >= FASTRPC_DEV_MAX) {
 		dev_err(&fl->cctx->rpdev->dev, "Error: Invalid domain id:%d, err:%d\n",
-			cap.domain, err);
+			cap->domain, err);
 		return -ECHRNG;
 	}
 
 	/* Fastrpc Capablities does not support modem domain */
-	if (cap.domain == MDSP_DOMAIN_ID) {
+	if (cap->domain == MDSP_DOMAIN_ID) {
 		dev_err(&fl->cctx->rpdev->dev, "Error: modem not supported %d\n", err);
 		return -ECHRNG;
 	}
 
-	if (cap.attribute_id >= FASTRPC_MAX_DSP_ATTRIBUTES) {
+	if (cap->attribute_id >= FASTRPC_MAX_DSP_ATTRIBUTES) {
 		dev_err(&fl->cctx->rpdev->dev, "Error: invalid attribute: %d, err: %d\n",
-			cap.attribute_id, err);
+			cap->attribute_id, err);
 		return -EOVERFLOW;
 	}
 
-	err = fastrpc_get_info_from_kernel(&cap, fl);
+	err = fastrpc_get_info_from_kernel(cap, fl);
 	if (err)
 		return err;
 
@@ -1919,7 +1919,7 @@ static int fastrpc_req_munmap(struct fastrpc_user *fl, struct fastrpc_req_munmap
 }
 
 static int fastrpc_req_mmap(struct fastrpc_user *fl,
-			    struct fastrpc_req_mmap req)
+			    struct fastrpc_req_mmap *req)
 {
 	struct fastrpc_invoke_args args[3] = { [0 ... 2] = { 0 } };
 	struct fastrpc_buf *buf = NULL;
@@ -1931,21 +1931,21 @@ static int fastrpc_req_mmap(struct fastrpc_user *fl,
 	u32 sc;
 
 
-	if (req.flags != ADSP_MMAP_ADD_PAGES && req.flags != ADSP_MMAP_REMOTE_HEAP_ADDR) {
-		dev_err(dev, "flag not supported 0x%x\n", req.flags);
+	if (req->flags != ADSP_MMAP_ADD_PAGES && req->flags != ADSP_MMAP_REMOTE_HEAP_ADDR) {
+		dev_err(dev, "flag not supported 0x%x\n", req->flags);
 
 		return -EINVAL;
 	}
 
-	if (req.vaddrin) {
+	if (req->vaddrin) {
 		dev_err(dev, "adding user allocated pages is not supported\n");
 		return -EINVAL;
 	}
 
-	if (req.flags == ADSP_MMAP_REMOTE_HEAP_ADDR)
-		err = fastrpc_remote_heap_alloc(fl, dev, req.size, &buf);
+	if (req->flags == ADSP_MMAP_REMOTE_HEAP_ADDR)
+		err = fastrpc_remote_heap_alloc(fl, dev, req->size, &buf);
 	else
-		err = fastrpc_buf_alloc(fl, dev, req.size, &buf);
+		err = fastrpc_buf_alloc(fl, dev, req->size, &buf);
 
 	if (err) {
 		dev_err(dev, "failed to allocate buffer\n");
@@ -1953,8 +1953,8 @@ static int fastrpc_req_mmap(struct fastrpc_user *fl,
 	}
 
 	req_msg.pgid = fl->tgid;
-	req_msg.flags = req.flags;
-	req_msg.vaddr = req.vaddrin;
+	req_msg.flags = req->flags;
+	req_msg.vaddr = req->vaddrin;
 	req_msg.num = sizeof(pages);
 
 	args[0].ptr = (u64) (uintptr_t) &req_msg;
@@ -1982,10 +1982,10 @@ static int fastrpc_req_mmap(struct fastrpc_user *fl,
 	buf->raddr = (uintptr_t) rsp_msg.vaddr;
 
 	/* let the client know the address to use */
-	req.vaddrout = rsp_msg.vaddr;
+	req->vaddrout = rsp_msg.vaddr;
 
 	/* Add memory to static PD pool, protection thru hypervisor */
-	if (req.flags == ADSP_MMAP_REMOTE_HEAP_ADDR && fl->cctx->vmcount) {
+	if (req->flags == ADSP_MMAP_REMOTE_HEAP_ADDR && fl->cctx->vmcount) {
 		u64 src_perms = BIT(QCOM_SCM_VMID_HLOS);
 
 		err = qcom_scm_assign_mem(buf->phys, (u64)buf->size,
@@ -2514,9 +2514,18 @@ static int fastrpc_caf_req_mmap(struct fastrpc_user *fl, char __user *argp)
 	req.size = caf.size;
 	req.vaddrout = 0;
 
-	err = fastrpc_req_mmap(fl, req);
-	if (!err && copy_to_user(argp, &caf.vaddrout, sizeof(caf.vaddrout)))
+	err = fastrpc_req_mmap(fl, &req);
+	if (err)
+		return err;
+
+	caf.vaddrout = req.vaddrout;
+	if (copy_to_user(argp, &caf, sizeof(caf))) {
+		fastrpc_req_munmap(fl, (struct fastrpc_req_munmap) {
+			.vaddrout = req.vaddrout,
+			.size = req.size,
+		});
 		err = -EFAULT;
+	}
 
 	return err;
 }
@@ -2648,7 +2657,9 @@ static int fastrpc_caf_get_dsp_info(struct fastrpc_user *fl, char __user *argp)
 	/* CAF passes a list of attributes; this driver answers one at a time. */
 	cap.attribute_id = caf.dsp_attributes[0];
 
-	err = fastrpc_get_dsp_info(fl, cap);
+	err = fastrpc_get_dsp_info(fl, &cap);
+	if (err)
+		return err;
 
 	caf.dsp_attributes[0] = cap.capability;
 	if (copy_to_user(argp, &caf, sizeof(caf)))
@@ -2723,7 +2734,7 @@ static int fastrpc_caf_get_dsp_capability(struct fastrpc_user *fl, char __user *
 		memset(&cap, 0, sizeof(cap));
 		cap.domain = caf.domain;
 		cap.attribute_id = caf.attribute_id;
-		err = fastrpc_get_dsp_info(fl, cap);
+		err = fastrpc_get_dsp_info(fl, &cap);
 		if (err)
 			return err;
 		caf.capability = cap.capability;
@@ -2839,9 +2850,14 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 	case FASTRPC_IOCTL_MMAP:
 		if (copy_from_user(&req_mmap, argp, sizeof(req_mmap)))
 			return -EFAULT;
-		err = fastrpc_req_mmap(fl, req_mmap);
-		if (!err && copy_to_user(argp, &req_mmap, sizeof(req_mmap)))
+		err = fastrpc_req_mmap(fl, &req_mmap);
+		if (!err && copy_to_user(argp, &req_mmap, sizeof(req_mmap))) {
+			fastrpc_req_munmap(fl, (struct fastrpc_req_munmap) {
+				.vaddrout = req_mmap.vaddrout,
+				.size = req_mmap.size,
+			});
 			err = -EFAULT;
+		}
 		break;
 	case FASTRPC_IOCTL_MUNMAP:
 		if (copy_from_user(&req_munmap, argp, sizeof(req_munmap)))
@@ -2860,7 +2876,7 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 	case FASTRPC_IOCTL_GET_DSP_INFO:
 		if (copy_from_user(&cap, argp, sizeof(cap)))
 			return -EFAULT;
-		err = fastrpc_get_dsp_info(fl, cap);
+		err = fastrpc_get_dsp_info(fl, &cap);
 		if (!err && copy_to_user(argp, &cap, sizeof(cap)))
 			err = -EFAULT;
 		break;
