@@ -41,7 +41,7 @@ static int mdss_mdp_splash_alloc_memory(struct msm_fb_data_type *mfd,
 	sinfo->dma_buf = ion_alloc(size, ION_HEAP(ION_SYSTEM_HEAP_ID), 0);
 	if (IS_ERR_OR_NULL(sinfo->dma_buf)) {
 		pr_err("ion memory allocation failed\n");
-		rc = PTR_ERR_OR_ZERO(sinfo->dma_buf);
+		rc = IS_ERR(sinfo->dma_buf) ? PTR_ERR(sinfo->dma_buf) : -ENOMEM;
 		goto end;
 	}
 
@@ -68,17 +68,19 @@ static int mdss_mdp_splash_alloc_memory(struct msm_fb_data_type *mfd,
 	}
 	sinfo->size = buf_size;
 
-	dma_buf_begin_cpu_access(sinfo->dma_buf, DMA_BIDIRECTIONAL);
-	rc = dma_buf_vmap(sinfo->dma_buf, &sinfo->splash_map);
+	rc = dma_buf_begin_cpu_access(sinfo->dma_buf, DMA_BIDIRECTIONAL);
+	if (rc)
+		goto kmap_err;
+	rc = dma_buf_vmap_unlocked(sinfo->dma_buf, &sinfo->splash_map);
 	if (rc) {
 		pr_err("ion kernel memory mapping failed\n");
-		goto kmap_err;
+		goto end_cpu_access;
 	}
 	sinfo->splash_buffer = sinfo->splash_map.vaddr;
 
-	dma_buf_put(sinfo->dma_buf);
-
 	return rc;
+end_cpu_access:
+	dma_buf_end_cpu_access(sinfo->dma_buf, DMA_BIDIRECTIONAL);
 kmap_err:
 	mdss_smmu_unmap_dma_buf(sinfo->table, MDSS_IOMMU_DOMAIN_UNSECURE,
 			DMA_BIDIRECTIONAL, sinfo->dma_buf);
@@ -90,6 +92,13 @@ err_detach:
 err_put:
 	dma_buf_put(sinfo->dma_buf);
 end:
+	sinfo->dma_buf = NULL;
+	sinfo->attachment = NULL;
+	sinfo->table = NULL;
+	sinfo->splash_buffer = NULL;
+	sinfo->size = 0;
+	sinfo->iova = 0;
+	iosys_map_clear(&sinfo->splash_map);
 	return rc;
 }
 
@@ -107,9 +116,9 @@ static void mdss_mdp_splash_free_memory(struct msm_fb_data_type *mfd)
 	if (!mdata || !sinfo->dma_buf)
 		return;
 
-	dma_buf_end_cpu_access(sinfo->dma_buf,
-			       DMA_BIDIRECTIONAL);
-	dma_buf_vunmap(sinfo->dma_buf, &sinfo->splash_map);
+	dma_buf_vunmap_unlocked(sinfo->dma_buf, &sinfo->splash_map);
+	iosys_map_clear(&sinfo->splash_map);
+	dma_buf_end_cpu_access(sinfo->dma_buf, DMA_BIDIRECTIONAL);
 
 	mdss_smmu_unmap_dma_buf(sinfo->table, MDSS_IOMMU_DOMAIN_UNSECURE, 0,
 				sinfo->dma_buf);
@@ -118,7 +127,12 @@ static void mdss_mdp_splash_free_memory(struct msm_fb_data_type *mfd)
 	dma_buf_detach(sinfo->dma_buf, sinfo->attachment);
 	dma_buf_put(sinfo->dma_buf);
 
+	sinfo->dma_buf = NULL;
+	sinfo->attachment = NULL;
+	sinfo->table = NULL;
 	sinfo->splash_buffer = NULL;
+	sinfo->size = 0;
+	sinfo->iova = 0;
 }
 
 static int mdss_mdp_splash_iommu_attach(struct msm_fb_data_type *mfd)
