@@ -881,7 +881,7 @@ static int prefix_budget_selftest(void)
 
 #define GUARDED_FSTAB "/dev/block/ack-protected-fstab.qcom"
 #define GUARDED_CONTEXTS "/dev/block/ack-vendor-file-contexts"
-#define BOOT_CONTROLLER "/dev/block/platform/soc@0/7824900.mmc"
+#define BOOT_CONTROLLER "/dev/block/platform/soc@0/7824900.sdhci"
 
 static int guard_pre_policy(int proc)
 {
@@ -2441,7 +2441,7 @@ static int patch_config_ueventd(char *text, size_t size)
 	static const char old[] =
 		"/dev/block/platform/soc/7824900.sdhci/by-name/config";
 	static const char new[] =
-		"/dev/block/platform/soc@0/7824900.mmc/by-name/config";
+		"/dev/block/platform/soc@0/7824900.sdhci/by-name/config";
 	size_t offset = 0, match = 0;
 	int found = 0, changed = 0;
 
@@ -2762,7 +2762,7 @@ static void config_ueventd_selftest(void)
 		"# preserved\n/dev/block/platform/soc/7824900.sdhci/by-name/config"
 		"    0600   system     system\r\nother 0600 root root\n";
 	static const char new[] =
-		"# preserved\n/dev/block/platform/soc@0/7824900.mmc/by-name/config"
+		"# preserved\n/dev/block/platform/soc@0/7824900.sdhci/by-name/config"
 		"    0600   system     system\r\nother 0600 root root\n";
 	static const char *const invalid[] = {
 		"", "# /dev/block/platform/soc/7824900.sdhci/by-name/config\n",
@@ -2772,7 +2772,7 @@ static void config_ueventd_selftest(void)
 		"/dev/block/platform/soc/7824900.sdhci/by-name/config 0600 system\n",
 		"/dev/block/platform/soc/7824900.sdhci/by-name/config 0600 system system extra\n",
 		"/dev/block/platform/soc/7824900.sdhci/by-name/config 0600 system system\n"
-		"/dev/block/platform/soc@0/7824900.mmc/by-name/config 0600 system system\n",
+		"/dev/block/platform/soc@0/7824900.sdhci/by-name/config 0600 system system\n",
 	};
 	char text[512];
 	size_t i, size;

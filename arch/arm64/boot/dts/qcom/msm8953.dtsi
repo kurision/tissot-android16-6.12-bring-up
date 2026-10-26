@@ -1446,7 +1446,7 @@
 			};
 		};
 
-		sdhc_1: mmc@7824900 {
+		sdhc_1: sdhci@7824900 {
 			compatible = "qcom,msm8953-sdhci", "qcom,sdhci-msm-v4";
 
 			reg = <0x07824900 0x500>, <0x07824000 0x800>;
@@ -1506,7 +1506,7 @@
 			};
 		};
 
-		sdhc_2: mmc@7864900 {
+		sdhc_2: sdhci@7864900 {
 			compatible = "qcom,msm8953-sdhci", "qcom,sdhci-msm-v4";
 
 			reg = <0x07864900 0x500>, <0x07864000 0x800>;

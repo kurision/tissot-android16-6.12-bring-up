@@ -502,10 +502,12 @@ CMDLINE_OFF, CMDLINE_LEN = 64, 512
 with open(sys.argv[1], 'rb') as image:
     head = image.read(CMDLINE_OFF + CMDLINE_LEN)
 present = set(head[CMDLINE_OFF:].split(b'\0', 1)[0].decode().split())
-for token in ('earlycon', 'console=ttyMSM0,115200',
-              'firmware_class.path=/lib/firmware,/vendor/firmware',
-              'firmware_class.path=/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image'):
-    if token in present:
+for token in present:
+    if token in ('earlycon', 'console=ttyMSM0,115200',
+                 'firmware_class.path=/lib/firmware,/vendor/firmware',
+                 'firmware_class.path=/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image',
+                 'androidboot.bootdevice=../..') \
+            or token.startswith('androidboot.boot_devices='):
         print(token)
 PY
 )
@@ -516,6 +518,11 @@ done
 # Preserve the working GPU firmware path and append the modem image path.
 # Replacing the list with firmware_mnt alone breaks a530_pm4.fw loading.
 append_args=(--append-cmdline "firmware_class.path=/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image")
+# The DT restores the donor controller name (sdhci@7824900); the boot device
+# tokens follow it, so donor userspace that greps for "sdhci" (librpmb) and
+# first-stage init's boot_devices match both resolve.
+append_args+=(--append-cmdline "androidboot.boot_devices=soc@0/7824900.sdhci")
+append_args+=(--append-cmdline "androidboot.bootdevice=7824900.sdhci")
 python3 -B porting/logging/package-diag-boot.py --base-image "$BASE_IMAGE" \
  --format anykernel \
  --kernel-dir "$SNAP/kdir-$RUN" --stage-kernel "$BOOT" --init "$SNAP/init-$RUN" \
