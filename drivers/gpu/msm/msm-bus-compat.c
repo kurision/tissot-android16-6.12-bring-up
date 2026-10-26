@@ -140,6 +140,7 @@ static int parse_table(struct platform_device *pdev, struct device_node *node,
 
 	pdata->active_only = of_property_read_bool(node, "qcom,msm-bus,active-only");
 	pdata->dev = &pdev->dev;
+	pdata->owned_by_shim = true;
 
 	return 0;
 }
@@ -413,7 +414,8 @@ void msm_bus_scale_unregister_client(uint32_t cl)
 		client->paths[i] = NULL;
 	}
 
-	free_pdata(client->pdata);
+	if (client->pdata && client->pdata->owned_by_shim)
+		free_pdata(client->pdata);
 	memset(client, 0, sizeof(*client));
 }
 

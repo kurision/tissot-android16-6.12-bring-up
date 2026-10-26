@@ -78,6 +78,8 @@ struct msm_bus_scale_pdata {
 	 * clients do not overwrite each other.
 	 */
 	struct device *dev;
+	/* Static and caller-allocated tables remain owned by their callers. */
+	bool owned_by_shim;
 };
 
 #include <soc/qcom/tcs.h>
