@@ -115,12 +115,12 @@ void *msm_subsystem_get_with_fwname(struct device *dev, const char *name,
 	if (ret)
 		goto err_unmap;
 
-	release_firmware(mdt);
-
 	/* Let the secure world start the firmware. */
 	ret = qcom_scm_pas_auth_and_reset(VENUS_PAS_ID);
 	if (ret)
 		goto err_unmap;
+
+	release_firmware(mdt);
 
 	return cookie;
 
