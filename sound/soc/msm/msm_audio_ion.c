@@ -279,6 +279,9 @@ static void *msm_audio_ion_map_kernel(struct dma_buf *dma_buf)
 	if (dma_buf_vmap_unlocked(dma_buf, &addr)) {
 		pr_err("%s: kernel mapping of dma_buf failed\n",
 		       __func__);
+		rc = dma_buf_end_cpu_access(dma_buf, DMA_BIDIRECTIONAL);
+		if (rc)
+			pr_err("%s: kmap dma_buf_end_cpu_access fail\n", __func__);
 		goto exit;
 	}
 
