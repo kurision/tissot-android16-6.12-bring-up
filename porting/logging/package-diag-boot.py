@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package a diagnostic Tissot boot image: base header/ramdisk, new kernel, new /init.
+"""Package a Tissot boot image or AnyKernel ZIP from a real base ramdisk.
 
 The cpio record named "init" and explicitly supplied module files are replaced;
 other ramdisk changes require the options below. Every header byte except
@@ -21,6 +21,7 @@ import re
 import struct
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 
@@ -348,6 +349,64 @@ def new_cmdline(base, keep_console=False):
     die(f"unexpected base cmdline: {base!r}")
 
 
+def verify_ack_ramdisk(cpio):
+    records, _ = parse_cpio(cpio)
+    assert_unique_ramdisk(records)
+    files = {r["name"]: r["data"] for r in records}
+    for name in ("init", POLICY_CIL_RECORD, "ack-vendor-file-contexts",
+                 "ack-modules/load-order"):
+        if not files.get(name):
+            die(f"ACK ramdisk lacks {name}")
+    if "force_debuggable" not in files:
+        die("ACK ramdisk lacks force_debuggable")
+    lines = [line.split() for line in files["ack-vendor-file-contexts"].decode().splitlines()]
+    for name in (r"ack-config-ueventd\.rc", r"ack-qrtr-vendor\.rc",
+                 r"ack-usb-controller\.prop", r"ack-flags-health-check\.rc",
+                 r"ack-debuggable-0\.prop"):
+        pattern = "/dev/block/" + name
+        matches = [line for line in lines if line and line[0] == pattern]
+        if matches != [[pattern, "u:object_r:vendor_configs_file:s0"]]:
+            die(f"missing, duplicate or incorrect staging label: {pattern}")
+    for name in files["ack-modules/load-order"].decode().split():
+        if "/" in name or not name.endswith(".ko") or not files.get("ack-modules/" + name):
+            die(f"missing or invalid ACK module: {name}")
+
+
+def write_anykernel(out, kernel_dir, kernel, ramdisk, cmdline):
+    verify_ack_ramdisk(gzip.decompress(ramdisk))
+    image = gzip.decompress((Path(kernel_dir) / "Image.gz").read_bytes())
+    if len(image) < 64 or image[56:60] != b"ARM\x64":
+        die("not an arm64 Image")
+    image_size = struct.unpack_from("<Q", image, 16)[0]
+    # LK puts the DTB at 0x13400000 and the kernel at 0x10080000.
+    if not 0 < image_size <= 54001664:
+        die(f"kernel image_size={image_size} exceeds the Tissot bootloader limit")
+    tokens = cmdline.split()
+    if ("\n" in cmdline or "\r" in cmdline or
+            any(t == "earlycon" or t.startswith("earlycon=") or
+                t.startswith("console=ttyMSM") for t in tokens) or
+            "firmware_class.path=/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image"
+            not in tokens):
+        die("AnyKernel requires the ACK console and firmware command line")
+    payload = {"Image.gz-dtb": kernel, "ramdisk-new.cpio.gz": ramdisk,
+               "cmdline": (cmdline + "\n").encode()}
+    template = Path(__file__).resolve().parents[1] / "anykernel"
+    runtime = ["anykernel.sh", "LICENSE", "README.md", "tools/ak3-core.sh",
+               "tools/busybox", "tools/magiskboot",
+               "META-INF/com/google/android/update-binary",
+               "META-INF/com/google/android/updater-script"]
+    for name in runtime:
+        if not (template / name).is_file():
+            die(f"missing AnyKernel runtime: {template / name}")
+    with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in runtime:
+            archive.write(template / name, name)
+        for name, data in payload.items():
+            archive.writestr(name, data)
+        archive.writestr("payload.sha256", "".join(
+            f"{sha256(data)}  {name}\n" for name, data in payload.items()))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--base-image", required=True)
@@ -384,10 +443,14 @@ def main():
     ap.add_argument("--modem-firmware-readable", action="store_true",
                     help="set only the protected modem fstab masks to "
                          "0444 files/0555 directories, retaining ro and label")
+    ap.add_argument("--format", choices=("boot", "anykernel"), default="boot",
+                    help="output format (build-kernel.sh uses anykernel)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--report", required=True)
     args = ap.parse_args()
 
+    if args.format == "anykernel" and not args.modules_dir:
+        die("AnyKernel requires --modules-dir with modules matching this kernel")
     for path in (args.out, args.report):
         if os.path.exists(path):
             die(f"refusing to overwrite {path}")
@@ -427,7 +490,7 @@ def main():
         if not mod_entries:
             die(f"no files under {args.modules_dir}")
 
-    if base[:8] != b"ANDROID!":
+    if len(base) < PAGE or base[:8] != b"ANDROID!":
         die("base image magic is not ANDROID!")
     (ksize, _kaddr, rsize, _raddr, ssize, _saddr, _tags, page,
      version) = struct.unpack_from("<9I", base, 8)
@@ -460,30 +523,37 @@ def main():
     if len(cmdline) >= CMDLINE_LEN:
         die("cmdline too long")
 
-    header = bytearray(base[:PAGE])
-    struct.pack_into("<I", header, 8, len(kernel))
-    struct.pack_into("<I", header, 16, len(ramdisk))
-    header[CMDLINE_OFF:CMDLINE_OFF + CMDLINE_LEN] = cmdline.encode().ljust(CMDLINE_LEN, b"\0")
-    digest = hashlib.sha1(kernel + struct.pack("<I", len(kernel)) + ramdisk +
-                          struct.pack("<I", len(ramdisk)) + struct.pack("<I", 0)).digest()
-    header[ID_OFF:ID_OFF + ID_LEN] = digest + b"\0" * (ID_LEN - len(digest))
+    boot_size = PAGE + pad(len(kernel)) + pad(len(ramdisk))
+    if boot_size > MAX_IMAGE:
+        die(f"image is {boot_size} bytes, over {MAX_IMAGE}")
 
-    allowed = set(range(8, 12)) | set(range(16, 20)) | \
-        set(range(CMDLINE_OFF, CMDLINE_OFF + CMDLINE_LEN)) | set(range(ID_OFF, ID_OFF + ID_LEN))
-    changed = [i for i in range(PAGE) if header[i] != base[i] and i not in allowed]
-    if changed:
-        die(f"unexpected header bytes changed: {changed[:8]}")
+    if args.format == "anykernel":
+        write_anykernel(args.out, args.kernel_dir, kernel, ramdisk, cmdline)
+        image = Path(args.out).read_bytes()
+    else:
+        header = bytearray(base[:PAGE])
+        struct.pack_into("<I", header, 8, len(kernel))
+        struct.pack_into("<I", header, 16, len(ramdisk))
+        header[CMDLINE_OFF:CMDLINE_OFF + CMDLINE_LEN] = cmdline.encode().ljust(CMDLINE_LEN, b"\0")
+        digest = hashlib.sha1(kernel + struct.pack("<I", len(kernel)) + ramdisk +
+                              struct.pack("<I", len(ramdisk)) + struct.pack("<I", 0)).digest()
+        header[ID_OFF:ID_OFF + ID_LEN] = digest + b"\0" * (ID_LEN - len(digest))
 
-    image = bytes(header) + kernel.ljust(pad(len(kernel)), b"\0") + \
-        ramdisk.ljust(pad(len(ramdisk)), b"\0")
-    if len(image) > MAX_IMAGE:
-        die(f"image is {len(image)} bytes, over {MAX_IMAGE}")
+        allowed = set(range(8, 12)) | set(range(16, 20)) | \
+            set(range(CMDLINE_OFF, CMDLINE_OFF + CMDLINE_LEN)) | set(range(ID_OFF, ID_OFF + ID_LEN))
+        changed = [i for i in range(PAGE) if header[i] != base[i] and i not in allowed]
+        if changed:
+            die(f"unexpected header bytes changed: {changed[:8]}")
 
-    with open(args.out, "xb") as f:
-        f.write(image)
+        image = bytes(header) + kernel.ljust(pad(len(kernel)), b"\0") + \
+            ramdisk.ljust(pad(len(ramdisk)), b"\0")
+        with open(args.out, "xb") as f:
+            f.write(image)
     report = {
+        "format": args.format,
         "image": args.out,
         "size": len(image),
+        "boot_image_size": boot_size,
         "sha256": sha256(image),
         "kernel_payload_sha256": sha256(kernel),
         "kernel_size": len(kernel),

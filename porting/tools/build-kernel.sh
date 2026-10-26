@@ -32,8 +32,8 @@
 #      source tree is this repository, so a clone builds.
 #   4. Rebuilds the ramdisk's /init from scripts/initramfs-diag/init.c, so
 #      an image never carries a stale init binary.
-#   5. Packages: the base image's ramdisk and command line, this kernel,
-#      this init, and the port's SELinux genfs fragment
+#   5. Packages a flashable AnyKernel ZIP: the base image's ramdisk and
+#      command line, this kernel, this init, and the port's SELinux genfs fragment
 #      (porting/policy/port-genfs-kgsl.cil), which the base ramdisk's CIL
 #      is compiled with at boot.
 #
@@ -138,23 +138,30 @@ fi
 
 # The current init installs overlays whose staging labels must survive restorecon.
 check_ramdisk_contexts() {
-	python3 -B - "$1" <<'PY'
+	python3 -B - "$1" "${2:-boot}" <<'PY'
 import gzip
 from pathlib import Path
 import runpy
 import struct
 import sys
+import zipfile
 
 try:
-    image = Path(sys.argv[1]).read_bytes()
-    if image[:8] != b'ANDROID!':
-        raise ValueError('not an Android boot image')
-    kernel_size, _, ramdisk_size, _, second_size, _, _, page, version = struct.unpack_from('<9I', image, 8)
-    if page != 2048 or version != 0 or second_size != 0:
-        raise ValueError('unsupported boot header')
-    start = page + (kernel_size + page - 1) // page * page
     package = runpy.run_path('porting/logging/package-diag-boot.py')
-    records, _ = package['parse_cpio'](gzip.decompress(image[start:start + ramdisk_size]))
+    if sys.argv[2] == 'anykernel':
+        with zipfile.ZipFile(sys.argv[1]) as archive:
+            cpio = gzip.decompress(archive.read('ramdisk-new.cpio.gz'))
+        package['verify_ack_ramdisk'](cpio)
+    else:
+        image = Path(sys.argv[1]).read_bytes()
+        if image[:8] != b'ANDROID!':
+            raise ValueError('not an Android boot image')
+        kernel_size, _, ramdisk_size, _, second_size, _, _, page, version = struct.unpack_from('<9I', image, 8)
+        if page != 2048 or version != 0 or second_size != 0:
+            raise ValueError('unsupported boot header')
+        start = page + (kernel_size + page - 1) // page * page
+        cpio = gzip.decompress(image[start:start + ramdisk_size])
+    records, _ = package['parse_cpio'](cpio)
     contexts = [r['data'] for r in records if r['name'] == 'ack-vendor-file-contexts']
     if len(contexts) != 1:
         raise ValueError('expected exactly one ack-vendor-file-contexts record')
@@ -166,7 +173,7 @@ try:
         matches = [line for line in lines if line and line[0] == pattern]
         if matches != [[pattern, 'u:object_r:vendor_configs_file:s0']]:
             raise ValueError(f'missing, duplicate or incorrect staging label: {pattern}')
-except (OSError, ValueError, EOFError, struct.error) as error:
+except (OSError, ValueError, EOFError, KeyError, zipfile.BadZipFile, struct.error) as error:
     sys.exit(f'error: incompatible ramdisk in {sys.argv[1]}: {error}\n'
              'Select a verified base with the required staging labels, e.g.\n'
              '  bash porting/tools/build-kernel.sh <run-name> '
@@ -249,7 +256,7 @@ echo "  $BASE_IMAGE"
 
 # --- the run's outputs ------------------------------------------------------
 mkdir -p "$SNAP" "$OUT_DIR"
-for path in "$SNAP/boot-$RUN.img" "$SNAP/kdir-$RUN" "$SNAP/package-$RUN.json" \
+for path in "$SNAP/ack-tissot-$RUN.zip" "$SNAP/kdir-$RUN" "$SNAP/package-$RUN.json" \
 	    "$SNAP/modules-$RUN" "$SNAP/modules-$RUN-install"; do
 	if [ -e "$path" ]; then
 		echo "error: $path already exists" >&2
@@ -510,22 +517,31 @@ done
 # Replacing the list with firmware_mnt alone breaks a530_pm4.fw loading.
 append_args=(--append-cmdline "firmware_class.path=/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image")
 python3 -B porting/logging/package-diag-boot.py --base-image "$BASE_IMAGE" \
+ --format anykernel \
  --kernel-dir "$SNAP/kdir-$RUN" --stage-kernel "$BOOT" --init "$SNAP/init-$RUN" \
  --keep-stock-console --policy-append "$REPO/porting/policy/port-genfs-kgsl.cil" \
  --modem-firmware-readable \
  --modules-dir "$MOD_DIR" "${fw_args[@]}" "${drop_args[@]}" \
  "${append_args[@]}" \
- --out "$SNAP/boot-$RUN.img" --report "$SNAP/package-$RUN.json"
-check_ramdisk_contexts "$SNAP/boot-$RUN.img"
+ --out "$SNAP/ack-tissot-$RUN.zip" --report "$SNAP/package-$RUN.json"
+check_ramdisk_contexts "$SNAP/ack-tissot-$RUN.zip" anykernel
 scripts/extract-ikconfig "$SNAP/kdir-$RUN/Image.gz" > "$SNAP/$RUN-embedded.config"
 
 # --- check the result -------------------------------------------------------
 LLVM_NM=${LLVM_NM:-$(command -v llvm-nm || ls /usr/lib/llvm-*/bin/llvm-nm 2>/dev/null | head -1)}
 SNAP="$SNAP" LLVM_NM="$LLVM_NM" RUN="$RUN" python3 - <<'PY'
-import hashlib, os, pathlib, json, gzip, re, subprocess
+import hashlib, os, pathlib, json, gzip, re, subprocess, zipfile
 s=pathlib.Path(os.environ['SNAP'])
 run=os.environ['RUN']
 new=json.loads((s/f'package-{run}.json').read_text())
+assert new['format'] == 'anykernel'
+artifact=s/f'ack-tissot-{run}.zip'
+assert hashlib.sha256(artifact.read_bytes()).hexdigest() == new['sha256']
+with zipfile.ZipFile(artifact) as archive:
+    assert archive.testzip() is None, 'corrupt AnyKernel archive'
+    assert hashlib.sha256(archive.read('Image.gz-dtb')).hexdigest() == new['kernel_payload_sha256']
+    assert hashlib.sha256(archive.read('ramdisk-new.cpio.gz')).hexdigest() == new['ramdisk_sha256']
+    assert archive.read('cmdline').decode().strip() == new['cmdline']
 assert new['modem_firmware_readable'], 'the modem mount read masks were not patched'
 fragment=pathlib.Path('porting/policy/port-genfs-kgsl.cil').read_bytes()
 assert new['policy_append_sha256'] == hashlib.sha256(fragment).hexdigest(), \
@@ -561,3 +577,4 @@ print(json.dumps(new,indent=2))
 for m in re.finditer(rb'Linux version [^\0\n]+',gzip.decompress((s/f'kdir-{run}/Image.gz').read_bytes())):
     print('EMBEDDED BANNER:',m.group().decode())
 PY
+echo "Flashable ZIP: $SNAP/ack-tissot-$RUN.zip"

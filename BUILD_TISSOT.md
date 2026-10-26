@@ -4,24 +4,28 @@ This is the entry point for building this port on a Linux host. Read
 `porting/REFERENCE-boot-testing.md` before a boot. Do not build or boot
 without the user's authorization.
 
-The port kernel is **flashed to the boot partition**, not RAM-booted: it
-lives on slot b and the phone comes back on it by itself after a power
-cycle. The RAM-boot tooling in `porting/logging/` still works and is still
-the way to observe a boot, but the image under test is normally written to
-`boot_b`.
+The normal release artifact is a **flashable AnyKernel3 ZIP**. It installs
+to the active boot slot (a or b), including when replacing stock/Lucifer.
+Installation replaces the kernel, DTB, entire ramdisk and command line;
+existing Magisk ramdisk changes are replaced. KernelSU is built into the
+port kernel. Compatibility with a particular ROM still needs a hardware
+boot test. The diagnostic boot-image and RAM-boot tooling remains available.
 
 **The whole flow is scripted**: `porting/tools/build-kernel.sh` resolves the
 toolchain, writes the configuration, builds the kernel out of the
 repository, checks the device tree, rebuilds the ramdisk's `/init`,
-packages the result and verifies it. Read this document to know what it
+packages the ZIP and verifies it. Read this document to know what it
 does and why; run it rather than the individual steps.
 
 ```bash
-bash porting/tools/build-kernel.sh run289      # an unused run number
+bash porting/tools/build-kernel.sh run413 porting/artifacts/snapshot60/boot-run380-camera.img
 ```
 
 The run name is only a label: the script refuses to overwrite the outputs
-of an existing run, so pick a new one for every build.
+of an existing run, so replace `run413` with an unused name. Use the verified
+base available in your checkout; the example uses run380. The ZIP is written to
+`porting/artifacts/snapshot60/ack-tissot-<run>.zip` (or `ACK_SNAPSHOT_DIR`),
+alongside `package-<run>.json` and the build evidence.
 
 ## Layout: what is where
 
@@ -32,6 +36,7 @@ Every path below is relative to the repository root.
 | The repository | `.` — the kernel is built from it, so a fresh clone builds |
 | The port's kernel configuration | `porting/tools/kernel.config` |
 | The build script | `porting/tools/build-kernel.sh` |
+| The AnyKernel installer and pinned runtime | `porting/anykernel/` |
 | The output directory (one, reused) | `out/` |
 | The per-run evidence and the build log | `porting/artifacts/snapshot60/` |
 | The boot images, the stock boot backup | `../ack-kgsl-artifacts/` |
@@ -110,13 +115,15 @@ and still fails.
 
 ## The base image
 
-The packaging step takes a **real** boot image as its base: its ramdisk
-and its command line are what the result carries. The base is not
+The ZIP packaging step still takes a **real known-good ACK-port boot image**
+as its base: its ramdisk and command line are what the ZIP carries. It does
+not reconstruct a ramdisk from the stock/Lucifer installation or assemble
+an intermediate host boot image. The base is not
 redistributable, so it is not in the repository. Supply it as the second
 argument, or in `ACK_TISSOT_BASE_IMAGE`:
 
 ```bash
-bash porting/tools/build-kernel.sh run289 ../ack-kgsl-artifacts/boot-run258.img
+bash porting/tools/build-kernel.sh <run> porting/artifacts/snapshot60/boot-run380-camera.img
 ```
 
 **Never reconstruct the base.** The diag ramdisk carries a patched SELinux
@@ -226,16 +233,47 @@ before the header exists.
 ## Packaging and verification
 
 The base image's ramdisk and command line, this kernel and this init are
-combined by `porting/logging/package-diag-boot.py`, which writes the
-image and a report with the payload hashes:
+combined by `porting/logging/package-diag-boot.py`, which writes the ZIP
+and a report with the payload hashes. The build wrapper supplies the firmware,
+policy, matching modules and command-line adjustments automatically.
+
+To package **existing outputs without a kernel build**, use the matching
+`kdir-<run>`, `init-<run>` and `modules-<run>` from that same build. Choose a
+new output name and report; never mix a new kernel with old modules. For a
+base whose command line already has the full firmware path and no UART
+console (such as run380):
 
 ```bash
 python3 -B porting/logging/package-diag-boot.py \
+  --format anykernel \
   --base-image "$BASE" --kernel-dir porting/artifacts/snapshot60/kdir-<run> \
-  --stage-kernel out/arch/arm64/boot --init porting/artifacts/snapshot60/init-<run> \
-  --keep-stock-console --out porting/artifacts/snapshot60/boot-<run>.img \
-  --report porting/artifacts/snapshot60/package-<run>.json
+  --init porting/artifacts/snapshot60/init-<run> \
+  --modules-dir porting/artifacts/snapshot60/modules-<run> \
+  --firmware-dir porting/artifacts/firmware-wcnss \
+  --firmware-dir porting/artifacts/firmware-venus \
+  --policy-append porting/policy/port-genfs-kgsl.cil \
+  --modem-firmware-readable --keep-stock-console \
+  --out porting/artifacts/snapshot60/ack-tissot-<new-run>.zip \
+  --report porting/artifacts/snapshot60/package-<new-run>.json
 ```
+
+`--stage-kernel out/arch/arm64/boot` can stage the current build instead,
+but then the init and modules must also be from that build. For older base
+command lines, use the wrapper's drop/append logic; ZIP packaging rejects
+UART consoles and a missing full firmware search path.
+
+The ZIP contains `Image.gz-dtb`, `ramdisk-new.cpio.gz`, `cmdline`, payload
+checksums and the pinned AnyKernel runtime. The installer checks the Tissot
+identity, active slot, payload checksums and boot header v0 with 2048-byte
+pages and no second stage. It preserves the installed header's other
+metadata while replacing the command line. AnyKernel repacks and checks the
+result against the target partition size before flashing on the phone.
+The host also rejects kernels whose in-memory size would reach the DTB.
+
+The report's `size` and `sha256` describe the ZIP; `boot_image_size` is the
+calculated size of its header-v0 boot payload. Existing kernel, ramdisk,
+init and module hash fields keep their meanings. Omitting `--format` (or
+using `--format boot`) retains the old diagnostic boot-image output.
 
 Verify the package report and the **shipped** embedded config, not just
 the output-tree config — the kernel embeds its own configuration, and
@@ -258,7 +296,33 @@ not restore `panic=0`.
 
 ## Flash it
 
-The partition is 64 MiB and the image is not, so pad it:
+Back up the target slot's **complete existing boot partition** in recovery
+or a root-capable flasher before installing, and copy that backup off the
+phone. Record whether it is `boot_a` or `boot_b`; keep a known-good boot
+image available in fastboot for rollback. The ZIP updates the active slot
+and does not switch slots or update both.
+
+Flash `ack-tissot-<run>.zip` through an AnyKernel-compatible recovery or a
+root-capable kernel flasher with AnyKernel3 support. A stock recovery that
+requires OEM-signed updates cannot install this ZIP. Do not pass the ZIP
+to `fastboot flash`; AnyKernel assembles and writes the boot image on the
+phone. No manual padding is needed for the ZIP path.
+
+If installation fails, retain the flasher log and `/tmp/anykernel` where
+available (`do.cleanuponabort=0`). If the phone fails to boot, restore the
+full backup to the **same slot that was updated**:
+
+```bash
+fastboot getvar current-slot
+fastboot flash boot_b boot_b-before-ack.img    # use boot_a for an a-slot install
+fastboot reboot
+```
+
+ZIP installation over stock/Lucifer is not hardware-verified by host tests.
+Run the evidence procedure below for the first installation.
+
+For an explicitly requested diagnostic `.img`, the existing direct-fastboot
+workflow remains available. The partition is 64 MiB, so pad the image:
 
 ```bash
 cd porting/artifacts/snapshot60
@@ -276,9 +340,8 @@ fastboot reboot
 Add `-s <serial>` to `adb` and `fastboot` when more than one device is
 attached.
 
-The image that is currently on the phone is in the archive
-(`boot-run282-padded.img`); flash that back to return to the last known
-good kernel.
+Use the backup taken immediately before the installation for rollback;
+an old archived run is not evidence of what is currently on the phone.
 
 ## Preserve evidence and observe
 
