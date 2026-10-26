@@ -21,6 +21,7 @@
 
 #include <linux/interconnect.h>
 #include <linux/kernel.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
@@ -50,6 +51,7 @@ struct msm_bus_client {
 };
 
 static struct msm_bus_client clients[MAX_CLIENTS];
+static DEFINE_MUTEX(clients_lock);
 
 /*
  * The vendor tables name their endpoints with the msm-bus ids of the
@@ -95,7 +97,7 @@ static int parse_table(struct platform_device *pdev, struct device_node *node,
 		return -EINVAL;
 
 	if (of_property_read_u32(node, "qcom,msm-bus,num-paths",
-			&num_paths) || num_paths <= 0)
+				&num_paths) || num_paths <= 0 || num_paths > MAX_PATHS)
 		return -EINVAL;
 
 	count = of_property_count_elems_of_size(node,
@@ -283,10 +285,19 @@ uint32_t msm_bus_scale_register_client(
 		struct msm_bus_scale_pdata *pdata)
 {
 	struct msm_bus_client *client;
-	unsigned int i;
+	int i;
 
-	if (!pdata)
+	if (!pdata || pdata->num_usecases <= 0 || !pdata->usecase)
 		return 0;
+
+	for (i = 0; i < pdata->num_usecases; i++) {
+		if (pdata->usecase[i].num_paths <= 0 ||
+		    pdata->usecase[i].num_paths > MAX_PATHS ||
+		    !pdata->usecase[i].vectors)
+			return 0;
+	}
+
+	guard(mutex)(&clients_lock);
 
 	for (i = 0; i < MAX_CLIENTS; i++) {
 		client = &clients[i];
@@ -327,6 +338,8 @@ int msm_bus_scale_client_update_request(uint32_t cl, unsigned int index)
 	 */
 	if (!cl || cl > MAX_CLIENTS)
 		return -EINVAL;
+
+	guard(mutex)(&clients_lock);
 
 	client = &clients[cl - 1];
 	pdata = client->pdata;
@@ -369,6 +382,8 @@ int msm_bus_scale_client_update_context(uint32_t cl, bool active_only,
 	if (!cl || cl > MAX_CLIENTS)
 		return -EINVAL;
 
+	guard(mutex)(&clients_lock);
+
 	client = &clients[cl - 1];
 	pdata = client->pdata;
 	if (!pdata)
@@ -406,6 +421,8 @@ void msm_bus_scale_unregister_client(uint32_t cl)
 
 	if (cl == 0 || cl > MAX_CLIENTS)
 		return;
+
+	guard(mutex)(&clients_lock);
 
 	client = &clients[cl - 1];
 
