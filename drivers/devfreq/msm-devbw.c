@@ -75,8 +75,9 @@ static int devbw_target(struct device *dev, unsigned long *freq, u32 flags)
 	struct dev_pm_opp *opp;
 
 	opp = devfreq_recommended_opp(dev, freq, flags);
-	if (!IS_ERR(opp))
-		dev_pm_opp_put(opp);
+	if (IS_ERR(opp))
+		return PTR_ERR(opp);
+	dev_pm_opp_put(opp);
 
 	return devbw_set_bw(d, *freq);
 }
