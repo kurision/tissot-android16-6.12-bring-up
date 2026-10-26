@@ -338,6 +338,7 @@ static int msm_buf_mngr_handle_cont_cmd(struct msm_buf_mngr_device *dev,
 
 	if ((cont_cmd->cmd >= MSM_CAMERA_BUF_MNGR_CONT_MAX) ||
 		(cont_cmd->cmd < 0) ||
+		!cont_cmd->cnt ||
 		(cont_cmd->cnt > VB2_MAX_FRAME) ||
 		(cont_cmd->cont_fd < 0)) {
 		pr_debug("Invalid arg passed Cmd:%d, cnt:%d, fd:%d\n",
@@ -426,13 +427,17 @@ static int msm_buf_mngr_handle_cont_cmd(struct msm_buf_mngr_device *dev,
 		}
 		goto end;
 	} else if (cont_cmd->cmd == MSM_CAMERA_BUF_MNGR_CONT_UNMAP) {
-		if (!list_empty(&dev->cont_qhead)) {
+		rc = -EINVAL;
+		list_for_each_entry_safe(bufs, save, &dev->cont_qhead, entry) {
+			if (bufs->sessid != cont_cmd->session_id ||
+			    bufs->strid != cont_cmd->stream_id)
+				continue;
+			if (cont_cmd->cnt != bufs->cnt)
+				goto end;
 			msm_buf_mngr_contq_listdel(dev, cont_cmd->session_id,
-				cont_cmd->stream_id, 1, cont_cmd->cnt);
-		} else {
-			pr_err("Nothing mapped for %d,%d\n",
-				cont_cmd->session_id, cont_cmd->stream_id);
-			rc = -EINVAL;
+				cont_cmd->stream_id, 1, bufs->cnt);
+			rc = 0;
+			break;
 		}
 		goto end;
 	}
