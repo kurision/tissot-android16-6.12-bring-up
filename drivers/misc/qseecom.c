@@ -4390,6 +4390,10 @@ static int __qseecom_update_cmd_buf_64(void *msg, bool cleanup,
 					data->client.sec_buf_fd[i].vbase,
 					data->client.sec_buf_fd[i].pbase);
 			} else {
+				if (__boundary_checks_offset(req, lstnr_resp, data, i,
+							     QSEECOM_SG_LIST_BUF_HDR_SZ_64BIT))
+					goto err;
+
 				ret = __qseecom_allocate_sg_list_buffer(data,
 						field, i, sg_ptr);
 				if (ret) {
