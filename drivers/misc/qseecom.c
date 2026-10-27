@@ -4384,11 +4384,14 @@ static int __qseecom_update_cmd_buf_64(void *msg, bool cleanup,
 				sg_ptr->nents, QSEECOM_MAX_SG_ENTRY);
 			if (cleanup) {
 				if (data->client.sec_buf_fd[i].is_sec_buf_fd &&
-					data->client.sec_buf_fd[i].vbase)
+					data->client.sec_buf_fd[i].vbase) {
 					dma_free_coherent(qseecom.dev,
 					data->client.sec_buf_fd[i].size,
 					data->client.sec_buf_fd[i].vbase,
 					data->client.sec_buf_fd[i].pbase);
+					memset(&data->client.sec_buf_fd[i], 0,
+					       sizeof(data->client.sec_buf_fd[i]));
+				}
 			} else {
 				if (__boundary_checks_offset(req, lstnr_resp, data, i,
 							     QSEECOM_SG_LIST_BUF_HDR_SZ_64BIT))
@@ -4484,11 +4487,14 @@ cleanup:
 err:
 	for (i = 0; i < MAX_ION_FD; i++)
 		if (data->client.sec_buf_fd[i].is_sec_buf_fd &&
-			data->client.sec_buf_fd[i].vbase)
+			data->client.sec_buf_fd[i].vbase) {
 			dma_free_coherent(qseecom.dev,
 				data->client.sec_buf_fd[i].size,
 				data->client.sec_buf_fd[i].vbase,
 				data->client.sec_buf_fd[i].pbase);
+			memset(&data->client.sec_buf_fd[i], 0,
+			       sizeof(data->client.sec_buf_fd[i]));
+		}
 	if (!IS_ERR_OR_NULL(sg_ptr)) {
 		qseecom_dmabuf_unmap(sg_ptr, attach, dmabuf);
 		MAKE_NULL(sg_ptr, attach, dmabuf);
