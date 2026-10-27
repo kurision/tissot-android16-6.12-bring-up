@@ -334,11 +334,11 @@ static int msm_audio_ion_unmap_kernel(struct dma_buf *dma_buf)
 	iosys_map_clear(map);
 
 	rc = dma_buf_end_cpu_access(dma_buf, DMA_BIDIRECTIONAL);
-	if (rc) {
+	if (rc)
 		dev_err(cb_dev, "%s: kmap dma_buf_end_cpu_access fail\n",
 			__func__);
-		goto err;
-	}
+	/* The vmap is gone; let the caller finish releasing the allocation. */
+	return 0;
 
 err:
 	return rc;
