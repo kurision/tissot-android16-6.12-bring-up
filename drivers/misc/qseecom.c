@@ -4318,6 +4318,22 @@ static int __qseecom_allocate_sg_list_buffer(struct qseecom_dev_handle *data,
 	return 0;
 }
 
+static void __qseecom_free_sg_list_buffers(struct qseecom_dev_handle *data)
+{
+	int i;
+
+	for (i = 0; i < MAX_ION_FD; i++)
+		if (data->client.sec_buf_fd[i].is_sec_buf_fd &&
+		    data->client.sec_buf_fd[i].vbase) {
+			dma_free_coherent(qseecom.dev,
+					  data->client.sec_buf_fd[i].size,
+					  data->client.sec_buf_fd[i].vbase,
+					  data->client.sec_buf_fd[i].pbase);
+			memset(&data->client.sec_buf_fd[i], 0,
+			       sizeof(data->client.sec_buf_fd[i]));
+		}
+}
+
 static int __qseecom_update_cmd_buf_64(void *msg, bool cleanup,
 			struct qseecom_dev_handle *data)
 {
@@ -4485,16 +4501,7 @@ cleanup:
 	}
 	return ret;
 err:
-	for (i = 0; i < MAX_ION_FD; i++)
-		if (data->client.sec_buf_fd[i].is_sec_buf_fd &&
-			data->client.sec_buf_fd[i].vbase) {
-			dma_free_coherent(qseecom.dev,
-				data->client.sec_buf_fd[i].size,
-				data->client.sec_buf_fd[i].vbase,
-				data->client.sec_buf_fd[i].pbase);
-			memset(&data->client.sec_buf_fd[i], 0,
-			       sizeof(data->client.sec_buf_fd[i]));
-		}
+	__qseecom_free_sg_list_buffers(data);
 	if (!IS_ERR_OR_NULL(sg_ptr)) {
 		qseecom_dmabuf_unmap(sg_ptr, attach, dmabuf);
 		MAKE_NULL(sg_ptr, attach, dmabuf);
@@ -4588,6 +4595,8 @@ static int __qseecom_send_modfd_cmd(struct qseecom_dev_handle *data,
 	memcpy(origin_req_buf_kvirt, req.cmd_req_buf, req.cmd_req_len);
 
 out:
+	if (is_64bit_addr)
+		__qseecom_free_sg_list_buffers(data);
 	if (req.cmd_req_buf)
 		__qseecom_free_coherent_buf(req.cmd_req_len + req.resp_len,
 			req.cmd_req_buf, (phys_addr_t)send_cmd_req.cmd_req_buf);
