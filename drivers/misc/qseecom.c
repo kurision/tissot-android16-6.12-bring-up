@@ -5655,6 +5655,7 @@ static int __qseecom_send_modfd_resp(struct qseecom_dev_handle *data,
 {
 	struct qseecom_send_modfd_listener_resp resp;
 	struct qseecom_registered_listener_list *this_lstnr = NULL;
+	int ret;
 
 	if (copy_from_user(&resp, argp, sizeof(resp))) {
 		pr_err("copy_from_user failed\n");
@@ -5672,9 +5673,12 @@ static int __qseecom_send_modfd_resp(struct qseecom_dev_handle *data,
 		(uintptr_t)(resp.resp_buf_ptr - this_lstnr->user_virt_sb_base);
 
 	if (!is_64bit_addr)
-		__qseecom_update_cmd_buf(&resp, false, data);
+		ret = __qseecom_update_cmd_buf(&resp, false, data);
 	else
-		__qseecom_update_cmd_buf_64(&resp, false, data);
+		ret = __qseecom_update_cmd_buf_64(&resp, false, data);
+	if (ret)
+		return ret;
+
 	qseecom.send_resp_flag = 1;
 	this_lstnr->send_resp_flag = 1;
 	pr_debug("qseecom: listener %u modfd response ready len %u addr64 %d\n",
