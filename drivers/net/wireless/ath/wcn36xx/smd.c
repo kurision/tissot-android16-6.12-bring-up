@@ -937,6 +937,135 @@ out:
 	return ret;
 }
 
+/*
+ * Program the firmware's preferred-network offload. The wire layout is the
+ * base set_pref_netw_list_req: the vendor driver that shipped with this
+ * firmware selects it unless the firmware reported a PNO version in the
+ * UPDATE_SCAN_PARAM response, and wcn36xx never asks for that response.
+ *
+ * The request carries the same networks and intervals that mac80211 hands to
+ * sched_scan_start, so a single function serves both the enable and the
+ * disable request; passing @req as NULL disables the offload.
+ */
+int wcn36xx_smd_set_pref_netw_list(struct wcn36xx *wcn,
+				   struct cfg80211_sched_scan_request *req,
+				   bool enable)
+{
+	struct set_pref_netw_list_req *msg_body;
+	int ret, i;
+	u32 j;
+
+	if (enable && (!req ||
+		       req->n_match_sets < 1 ||
+		       req->n_match_sets > WCN36XX_HAL_PNO_MAX_SUPP_NETWORKS ||
+		       req->ie_len > WCN36XX_HAL_PNO_MAX_PROBE_SIZE))
+		return -EINVAL;
+
+	msg_body = kzalloc(sizeof(*msg_body), GFP_KERNEL);
+	if (!msg_body)
+		return -ENOMEM;
+
+	INIT_HAL_MSG((*msg_body), WCN36XX_HAL_SET_PREF_NETWORK_REQ);
+	msg_body->enable = enable;
+	msg_body->mode = PNO_MODE_IMMEDIATE;
+
+	if (enable) {
+		msg_body->networks_count = req->n_match_sets;
+
+		for (i = 0; i < req->n_match_sets; i++) {
+			struct network_type *net = &msg_body->networks[i];
+			const struct cfg80211_match_set *match = &req->match_sets[i];
+
+			if (match->ssid.ssid_len < 1 ||
+			    match->ssid.ssid_len > sizeof(net->ssid.ssid))
+				goto out_invalid;
+
+			net->ssid.length = match->ssid.ssid_len;
+			memcpy(net->ssid.ssid, match->ssid.ssid,
+			       match->ssid.ssid_len);
+			net->authentication = AUTH_TYPE_ANY;
+			net->encryption = ED_ANY;
+			net->rssi_threshold = 0;
+
+			/*
+			 * The wire field only holds 60 channels; the vendor
+			 * packer truncates here too instead of failing the
+			 * request.
+			 */
+			for (j = 0; j < req->n_channels; j++) {
+				u32 freq = req->channels[j]->center_freq;
+				int chan;
+
+				if (net->channel_count >=
+				    WCN36XX_HAL_PNO_MAX_NETW_CHANNELS)
+					break;
+
+				chan = ieee80211_frequency_to_channel(freq);
+				if (!chan)
+					continue;
+				net->channels[net->channel_count++] = chan;
+			}
+		}
+
+		/*
+		 * Nothing marks hidden match sets: the base wire layout has no
+		 * SSID-broadcast field, and the vendor packer drops it as well
+		 * when it selects this struct.
+		 */
+		msg_body->scan_timers.count =
+			min_t(u8, req->n_scan_plans,
+			      WCN36XX_HAL_PNO_MAX_SCAN_TIMERS);
+		for (i = 0; i < msg_body->scan_timers.count; i++) {
+			msg_body->scan_timers.values[i].value =
+				req->scan_plans[i].interval;
+			msg_body->scan_timers.values[i].repeat =
+				req->scan_plans[i].iterations;
+		}
+
+		if (req->ie_len) {
+			msg_body->band_24g_probe_size = req->ie_len;
+			memcpy(msg_body->band_24g_probe_template, req->ie,
+			       req->ie_len);
+			msg_body->band_5g_probe_size = req->ie_len;
+			memcpy(msg_body->band_5g_probe_template, req->ie,
+			       req->ie_len);
+		}
+	}
+
+	mutex_lock(&wcn->hal_mutex);
+	PREPARE_HAL_BUF(wcn->hal_buf, (*msg_body));
+
+	ret = wcn36xx_smd_send_and_wait(wcn, msg_body->header.len);
+	if (ret) {
+		/*
+		 * The vendor driver assumes PNO started when the enable
+		 * response does not arrive, because failing the request makes
+		 * the Wi-Fi settings UI give up on offload scanning. Keep the
+		 * same behaviour, but say so.
+		 */
+		if (ret == -ETIME) {
+			wcn36xx_warn("No PNO response, assuming it started\n");
+			ret = 0;
+			goto out_unlock;
+		}
+		wcn36xx_err("Sending hal_set_pref_netw_list failed\n");
+		goto out_unlock;
+	}
+	ret = wcn36xx_smd_rsp_status_check(wcn->hal_buf, wcn->hal_rsp_len);
+	if (ret)
+		wcn36xx_err("hal_set_pref_netw_list response failed err=%d\n",
+			    ret);
+out_unlock:
+	mutex_unlock(&wcn->hal_mutex);
+out:
+	kfree(msg_body);
+	return ret;
+
+out_invalid:
+	ret = -EINVAL;
+	goto out;
+}
+
 int wcn36xx_smd_update_channel_list(struct wcn36xx *wcn, struct cfg80211_scan_request *req)
 {
 	struct wcn36xx_hal_update_channel_list_req_msg *msg_body;
@@ -2783,6 +2912,81 @@ static int wcn36xx_smd_hw_scan_ind(struct wcn36xx *wcn, void *buf, size_t len)
 	return 0;
 }
 
+static int wcn36xx_smd_pref_netw_found_ind(struct wcn36xx *wcn,
+					   void *buf, size_t len)
+{
+	struct pref_netw_found_ind *ind = buf;
+	struct ieee80211_rx_status *status;
+	struct ieee80211_channel *channel;
+	struct ieee80211_hdr *hdr;
+	struct sk_buff *skb;
+	size_t frame_len;
+
+	if (len < sizeof(*ind)) {
+		wcn36xx_warn("Short PNO found indication (%zu bytes)\n", len);
+		return -EIO;
+	}
+
+	frame_len = ind->frame_length;
+	if (frame_len < offsetof(struct ieee80211_mgmt, u.probe_resp.variable) ||
+	    frame_len > len - sizeof(*ind)) {
+		wcn36xx_warn("Bad frame length %zu in PNO indication (%zu bytes)\n",
+			     frame_len, len);
+		return -EIO;
+	}
+
+	hdr = (struct ieee80211_hdr *)ind->frame;
+	if (!ieee80211_is_beacon(hdr->frame_control) &&
+	    !ieee80211_is_probe_resp(hdr->frame_control)) {
+		wcn36xx_warn("PNO indication carries unexpected frame 0x%04x\n",
+			     le16_to_cpu(hdr->frame_control));
+		return -EINVAL;
+	}
+
+	channel = ieee80211_get_channel(wcn->hw->wiphy, ind->freq);
+	if (!channel || (channel->flags & IEEE80211_CHAN_DISABLED)) {
+		wcn36xx_warn("PNO indication on unsupported frequency %u MHz\n",
+			     ind->freq);
+		return -EINVAL;
+	}
+
+	/*
+	 * Hand the frame to the normal RX path: ieee80211_scan_rx() needs the
+	 * private data that only mac80211's own inform-bss callback installs,
+	 * so cfg80211 must not be called directly here.
+	 */
+	skb = alloc_skb(frame_len, GFP_KERNEL);
+	if (!skb)
+		return -ENOMEM;
+
+	skb_put_data(skb, ind->frame, frame_len);
+
+	status = IEEE80211_SKB_RXCB(skb);
+	memset(status, 0, sizeof(*status));
+	status->band = channel->band;
+	status->freq = channel->center_freq;
+	status->boottime_ns = ktime_get_boottime_ns();
+	if (ind->rssi)
+		status->signal = -min_t(int, ind->rssi, 127);
+	else
+		status->flag |= RX_FLAG_NO_SIGNAL_VAL;
+
+	ieee80211_rx_irqsafe(wcn->hw, skb);
+
+	/*
+	 * mac80211 only inserts the BSS from its RX tasklet. Run the pending
+	 * bottom halves so the entry is in cfg80211's list before the results
+	 * work below dumps it: a dump that runs first would report nothing
+	 * for this round and delay the network to the next PNO interval.
+	 */
+	local_bh_disable();
+	local_bh_enable();
+
+	ieee80211_sched_scan_results(wcn->hw);
+
+	return 0;
+}
+
 static int wcn36xx_smd_missed_beacon_ind(struct wcn36xx *wcn,
 					 void *buf,
 					 size_t len)
@@ -3392,6 +3596,7 @@ int wcn36xx_smd_rsp_process(struct rpmsg_device *rpdev,
 	case WCN36XX_HAL_EXIT_IMPS_RSP:
 	case WCN36XX_HAL_UPDATE_CHANNEL_LIST_RSP:
 	case WCN36XX_HAL_ADD_BCN_FILTER_RSP:
+	case WCN36XX_HAL_SET_PREF_NETWORK_RSP:
 		memcpy(wcn->hal_buf, buf, len);
 		wcn->hal_rsp_len = len;
 		complete(&wcn->hal_rsp_compl);
@@ -3405,6 +3610,7 @@ int wcn36xx_smd_rsp_process(struct rpmsg_device *rpdev,
 	case WCN36XX_HAL_DELETE_STA_CONTEXT_IND:
 	case WCN36XX_HAL_PRINT_REG_INFO_IND:
 	case WCN36XX_HAL_SCAN_OFFLOAD_IND:
+	case WCN36XX_HAL_PREF_NETW_FOUND_IND:
 		msg_ind = kmalloc(struct_size(msg_ind, msg, len), GFP_ATOMIC);
 		if (!msg_ind) {
 			wcn36xx_err("Run out of memory while handling SMD_EVENT (%d)\n",
@@ -3482,6 +3688,10 @@ static void wcn36xx_ind_smd_work(struct work_struct *work)
 		case WCN36XX_HAL_SCAN_OFFLOAD_IND:
 			wcn36xx_smd_hw_scan_ind(wcn, hal_ind_msg->msg,
 						hal_ind_msg->msg_len);
+			break;
+		case WCN36XX_HAL_PREF_NETW_FOUND_IND:
+			wcn36xx_smd_pref_netw_found_ind(wcn, hal_ind_msg->msg,
+							hal_ind_msg->msg_len);
 			break;
 		default:
 			wcn36xx_err("SMD_EVENT (%d) not supported\n",

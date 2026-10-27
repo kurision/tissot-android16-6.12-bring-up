@@ -744,6 +744,50 @@ static void wcn36xx_cancel_hw_scan(struct ieee80211_hw *hw,
 	}
 }
 
+static int wcn36xx_sched_scan_start(struct ieee80211_hw *hw,
+				    struct ieee80211_vif *vif,
+				    struct cfg80211_sched_scan_request *req,
+				    struct ieee80211_scan_ies *ies)
+{
+	struct wcn36xx *wcn = hw->priv;
+	int ret;
+
+	if (!wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, SCAN_OFFLOAD))
+		return -EOPNOTSUPP;
+
+	mutex_lock(&wcn->scan_lock);
+	ret = wcn->scan_req ? -EBUSY : 0;
+	mutex_unlock(&wcn->scan_lock);
+	if (ret)
+		return ret;
+
+	return wcn36xx_smd_set_pref_netw_list(wcn, req, true);
+}
+
+static int wcn36xx_sched_scan_stop(struct ieee80211_hw *hw,
+				   struct ieee80211_vif *vif)
+{
+	struct wcn36xx *wcn = hw->priv;
+	int ret;
+
+	if (!wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, SCAN_OFFLOAD))
+		return -EOPNOTSUPP;
+
+	ret = wcn36xx_smd_set_pref_netw_list(wcn, NULL, false);
+
+	/*
+	 * mac80211 keeps its scheduled-scan state when this op fails and then
+	 * refuses every later start with -EBUSY, so report the failure and
+	 * let the state go instead of wedging PNO until the interface is
+	 * brought down.
+	 */
+	if (ret)
+		wcn36xx_warn("Failed to stop PNO (%d), assuming it stopped\n",
+			     ret);
+
+	return 0;
+}
+
 static void wcn36xx_sw_scan_start(struct ieee80211_hw *hw,
 				  struct ieee80211_vif *vif,
 				  const u8 *mac_addr)
@@ -1438,6 +1482,8 @@ static const struct ieee80211_ops wcn36xx_ops = {
 	.set_key		= wcn36xx_set_key,
 	.hw_scan		= wcn36xx_hw_scan,
 	.cancel_hw_scan		= wcn36xx_cancel_hw_scan,
+	.sched_scan_start	= wcn36xx_sched_scan_start,
+	.sched_scan_stop	= wcn36xx_sched_scan_stop,
 	.sw_scan_start		= wcn36xx_sw_scan_start,
 	.sw_scan_complete	= wcn36xx_sw_scan_complete,
 	.bss_info_changed	= wcn36xx_bss_info_changed,
@@ -1516,6 +1562,21 @@ static int wcn36xx_init_ieee80211(struct wcn36xx *wcn)
 
 	wcn->hw->wiphy->max_scan_ssids = WCN36XX_MAX_SCAN_SSIDS;
 	wcn->hw->wiphy->max_scan_ie_len = WCN36XX_MAX_SCAN_IE_LEN;
+
+	/*
+	 * The firmware scans preferred networks on its own. The limits come
+	 * from the HAL wire structures, not from mac80211: a request can hold
+	 * 16 networks with 60 channels each, 10 scan plans and a 450-byte
+	 * probe template. One request at a time keeps the legacy request id
+	 * (0) that ieee80211_sched_scan_results() reports on.
+	 */
+	wcn->hw->wiphy->max_sched_scan_reqs = 1;
+	wcn->hw->wiphy->max_sched_scan_ssids = WCN36XX_HAL_PNO_MAX_SUPP_NETWORKS;
+	wcn->hw->wiphy->max_match_sets = WCN36XX_HAL_PNO_MAX_SUPP_NETWORKS;
+	wcn->hw->wiphy->max_sched_scan_plans = WCN36XX_HAL_PNO_MAX_SCAN_TIMERS;
+	wcn->hw->wiphy->max_sched_scan_plan_interval = U32_MAX;
+	wcn->hw->wiphy->max_sched_scan_plan_iterations = U32_MAX;
+	wcn->hw->wiphy->max_sched_scan_ie_len = WCN36XX_HAL_PNO_MAX_PROBE_SIZE;
 
 	wcn->hw->wiphy->cipher_suites = cipher_suites;
 	wcn->hw->wiphy->n_cipher_suites = ARRAY_SIZE(cipher_suites);
