@@ -4168,6 +4168,22 @@ struct wcn36xx_hal_tx_compl_ind_msg {
 	u32 status;
 };
 
+/*
+ * WCN3680 firmware (API 1.5.1.2) appends the TX BD token, so the indication
+ * is 16 bytes instead of 12. The stock prima driver describes the same wire
+ * layout as tTxComplParams {status, dialogToken}. The token is not used here
+ * because the driver tracks a single outstanding management frame.
+ */
+struct wcn36xx_hal_tx_compl_ind_msg_ext {
+	struct wcn36xx_hal_msg_header header;
+
+	/* Tx Complete Indication Success or Failure */
+	u32 status;
+
+	/* TX BD token of the completed descriptor */
+	u32 tx_bd_token;
+};
+
 struct wcn36xx_hal_wlan_host_suspend_ind_msg {
 	struct wcn36xx_hal_msg_header header;
 

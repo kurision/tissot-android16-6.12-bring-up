@@ -2730,7 +2730,13 @@ static int wcn36xx_smd_tx_compl_ind(struct wcn36xx *wcn, void *buf, size_t len)
 {
 	struct wcn36xx_hal_tx_compl_ind_msg *rsp = buf;
 
-	if (len != sizeof(*rsp)) {
+	/*
+	 * Firmware may append the TX BD token to the indication; the status is
+	 * the first payload word in both layouts. Reject anything else so a
+	 * further layout change is still reported instead of misread.
+	 */
+	if (len != sizeof(*rsp) &&
+	    len != sizeof(struct wcn36xx_hal_tx_compl_ind_msg_ext)) {
 		wcn36xx_warn("Bad TX complete indication\n");
 		return -EIO;
 	}
