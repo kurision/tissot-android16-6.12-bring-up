@@ -392,7 +392,7 @@ static void wcn36xx_smd_set_sta_params(struct wcn36xx *wcn,
 	sta_params->short_preamble_supported = true;
 
 	sta_params->rifs_mode = 0;
-	sta_params->rmf = 0;
+	sta_params->rmf = sta ? sta->mfp : vif_priv->mfp;
 	sta_params->action = 0;
 	sta_params->uapsd = 0;
 	sta_params->mimo_ps = WCN36XX_HAL_HT_MIMO_PS_STATIC;
@@ -1651,7 +1651,7 @@ static void wcn36xx_smd_set_bss_params(struct wcn36xx *wcn,
 	memcpy(bss->ssid.ssid, vif_priv->ssid.ssid, vif_priv->ssid.length);
 
 	bss->obss_prot_enabled = 0;
-	bss->rmf = 0;
+	bss->rmf = sta ? sta->mfp : vif_priv->mfp;
 	bss->max_probe_resp_retry_limit = 0;
 	bss->hidden_ssid = vif->bss_conf.hidden_ssid;
 	bss->proxy_probe_resp = 0;
@@ -1868,6 +1868,9 @@ static int wcn36xx_smd_config_bss_rsp(struct wcn36xx *wcn,
 		    params->tx_mgmt_power, params->ucast_dpu_signature);
 
 	vif_priv->bss_index = params->bss_index;
+	vif_priv->mgmt_dpu_desc_index = params->mgmt_dpu_desc_index;
+	vif_priv->mgmt_dpu_signature = params->mgmt_dpu_signature;
+	vif_priv->bss_bcast_sta_index = params->bss_bcast_sta_idx;
 
 	if (sta) {
 		struct wcn36xx_sta *sta_priv = wcn36xx_sta_to_priv(sta);
@@ -1941,6 +1944,8 @@ int wcn36xx_smd_delete_bss(struct wcn36xx *wcn, struct ieee80211_vif *vif)
 	}
 
 	vif_priv->bss_index = WCN36XX_HAL_BSS_INVALID_IDX;
+	vif_priv->mfp = false;
+	vif_priv->igtk_mask = 0;
 out:
 	mutex_unlock(&wcn->hal_mutex);
 	return ret;
@@ -2118,10 +2123,15 @@ int wcn36xx_smd_set_bsskey(struct wcn36xx *wcn,
 			   u8 bssidx,
 			   u8 keyidx,
 			   u8 keylen,
-			   u8 *key)
+			   const u8 *key, const u8 *rsc, bool authenticator)
 {
 	struct wcn36xx_hal_set_bss_key_req_msg msg_body;
 	int ret;
+
+	if (keylen > sizeof(msg_body.keys[0].key) ||
+	    (enc_type == WCN36XX_HAL_ED_AES_128_CMAC &&
+	     (!rsc || keylen != 16 || keyidx < 4 || keyidx > 5)))
+		return -EINVAL;
 
 	mutex_lock(&wcn->hal_mutex);
 	INIT_HAL_MSG(msg_body, WCN36XX_HAL_SET_BSSKEY_REQ);
@@ -2134,6 +2144,12 @@ int wcn36xx_smd_set_bsskey(struct wcn36xx *wcn,
 	msg_body.keys[0].pae_role = 0;
 	msg_body.keys[0].length = keylen;
 	memcpy(msg_body.keys[0].key, key, keylen);
+	if (enc_type == WCN36XX_HAL_ED_AES_128_CMAC) {
+		msg_body.keys[0].direction = authenticator ?
+			WCN36XX_HAL_TX_RX : WCN36XX_HAL_RX_ONLY;
+		msg_body.keys[0].pae_role = authenticator;
+		memcpy(msg_body.keys[0].rsc, rsc, IEEE80211_CMAC_PN_LEN);
+	}
 
 	PREPARE_HAL_BUF(wcn->hal_buf, msg_body);
 
@@ -3055,6 +3071,10 @@ int wcn36xx_smd_gtk_offload(struct wcn36xx *wcn, struct ieee80211_vif *vif,
 	struct wcn36xx_hal_gtk_offload_req_msg msg_body;
 	int ret;
 
+	/* Firmware cannot report the replacement IGTK to mac80211. */
+	if (enable && vif_priv->mfp)
+		return 0;
+
 	mutex_lock(&wcn->hal_mutex);
 
 	INIT_HAL_MSG(msg_body, WCN36XX_HAL_GTK_OFFLOAD_REQ);
@@ -3133,6 +3153,9 @@ int wcn36xx_smd_gtk_offload_get_info(struct wcn36xx *wcn,
 	struct wcn36xx_vif *vif_priv = wcn36xx_vif_to_priv(vif);
 	struct wcn36xx_hal_gtk_offload_get_info_req_msg msg_body;
 	int ret;
+
+	if (vif_priv->mfp)
+		return 0;
 
 	mutex_lock(&wcn->hal_mutex);
 

@@ -24,6 +24,7 @@
 #define WCN36XX_802_11_HEADER_LEN	24
 #define WCN36XX_BMU_WQ_TX		25
 #define WCN36XX_TID			7
+#define WCN36XX_DPU_FEEDBACK_UNPROTECTED_ERROR	0x0f
 /* broadcast wq ID */
 #define WCN36XX_TX_B_WQ_ID		0xA
 #define WCN36XX_TX_U_WQ_ID		0x9

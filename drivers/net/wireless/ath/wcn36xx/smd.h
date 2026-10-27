@@ -107,7 +107,7 @@ int wcn36xx_smd_set_bsskey(struct wcn36xx *wcn,
 			   u8 bssidx,
 			   u8 keyidx,
 			   u8 keylen,
-			   u8 *key);
+			   const u8 *key, const u8 *rsc, bool authenticator);
 int wcn36xx_smd_remove_stakey(struct wcn36xx *wcn,
 			      enum ani_ed_type enc_type,
 			      u8 keyidx,

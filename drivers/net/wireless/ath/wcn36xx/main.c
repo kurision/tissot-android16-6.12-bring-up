@@ -496,6 +496,60 @@ static void wcn36xx_tx(struct ieee80211_hw *hw,
 		ieee80211_free_txskb(wcn->hw, skb);
 }
 
+static int wcn36xx_set_igtk(struct wcn36xx *wcn, enum set_key_cmd cmd,
+			    struct ieee80211_vif *vif,
+			    struct ieee80211_key_conf *key)
+{
+	struct wcn36xx_vif *vif_priv = wcn36xx_vif_to_priv(vif);
+	struct ieee80211_key_seq seq = {};
+	u8 rsc[IEEE80211_CMAC_PN_LEN];
+	bool authenticator = vif->type == NL80211_IFTYPE_AP ||
+			     vif->type == NL80211_IFTYPE_MESH_POINT;
+	int ret, i;
+
+	if (key->keyidx < 4 || key->keyidx > 5 || key->keylen != 16 ||
+	    key->flags & IEEE80211_KEY_FLAG_PAIRWISE)
+		return -EINVAL;
+	if (vif_priv->bss_index == WCN36XX_HAL_BSS_INVALID_IDX)
+		return -ENOTCONN;
+
+	if (cmd == DISABLE_KEY) {
+		if (!(vif_priv->igtk_mask & BIT(key->keyidx)))
+			return 0;
+		ret = wcn36xx_smd_remove_bsskey(wcn, WCN36XX_HAL_ED_AES_128_CMAC,
+						vif_priv->bss_index, key->keyidx);
+		if (!ret)
+			vif_priv->igtk_mask &= ~BIT(key->keyidx);
+		return ret;
+	}
+	if (cmd != SET_KEY)
+		return -EOPNOTSUPP;
+
+	if (!vif_priv->mfp) {
+		if (!authenticator)
+			return -EINVAL;
+		vif_priv->mfp = true;
+		ret = wcn36xx_smd_config_bss(wcn, vif, NULL, vif->addr, true);
+		if (ret) {
+			vif_priv->mfp = false;
+			return ret;
+		}
+	}
+
+	ieee80211_get_key_rx_seq(key, 0, &seq);
+	/* mac80211 stores the PN big-endian; the HAL takes the wire IPN. */
+	for (i = 0; i < IEEE80211_CMAC_PN_LEN; i++)
+		rsc[i] = seq.aes_cmac.pn[IEEE80211_CMAC_PN_LEN - i - 1];
+	ret = wcn36xx_smd_set_bsskey(wcn, WCN36XX_HAL_ED_AES_128_CMAC,
+				     vif_priv->bss_index, key->keyidx,
+				     key->keylen, key->key, rsc, authenticator);
+	if (!ret) {
+		key->hw_key_idx = key->keyidx;
+		vif_priv->igtk_mask |= BIT(key->keyidx);
+	}
+	return ret;
+}
+
 static int wcn36xx_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 			   struct ieee80211_vif *vif,
 			   struct ieee80211_sta *sta,
@@ -504,6 +558,7 @@ static int wcn36xx_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	struct wcn36xx *wcn = hw->priv;
 	struct wcn36xx_vif *vif_priv = wcn36xx_vif_to_priv(vif);
 	struct wcn36xx_sta *sta_priv = sta ? wcn36xx_sta_to_priv(sta) : NULL;
+	enum ani_ed_type old_encrypt_type;
 	int ret = 0;
 	u8 key[WLAN_MAX_KEY_LEN];
 
@@ -516,6 +571,12 @@ static int wcn36xx_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 			 key_conf->keylen);
 
 	mutex_lock(&wcn->conf_mutex);
+
+	old_encrypt_type = vif_priv->encrypt_type;
+	if (key_conf->cipher == WLAN_CIPHER_SUITE_AES_CMAC) {
+		ret = wcn36xx_set_igtk(wcn, cmd, vif, key_conf);
+		goto out;
+	}
 
 	switch (key_conf->cipher) {
 	case WLAN_CIPHER_SUITE_WEP40:
@@ -555,42 +616,41 @@ static int wcn36xx_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 		}
 
 		if (IEEE80211_KEY_FLAG_PAIRWISE & key_conf->flags) {
-			sta_priv->is_data_encrypted = true;
 			/* Reconfigure bss with encrypt_type */
 			if (NL80211_IFTYPE_STATION == vif->type) {
-				wcn36xx_smd_config_bss(wcn,
-						       vif,
-						       sta,
-						       sta->addr,
-						       true);
-				wcn36xx_smd_config_sta(wcn, vif, sta);
+				ret = wcn36xx_smd_config_bss(wcn, vif, sta,
+							     sta->addr, true);
+				if (ret)
+					goto out;
+				ret = wcn36xx_smd_config_sta(wcn, vif, sta);
+				if (ret)
+					goto out;
 			}
 
-			wcn36xx_smd_set_stakey(wcn,
-				vif_priv->encrypt_type,
-				key_conf->keyidx,
-				key_conf->keylen,
-				key,
-				get_sta_index(vif, sta_priv));
+			ret = wcn36xx_smd_set_stakey(wcn, vif_priv->encrypt_type,
+						     key_conf->keyidx, key_conf->keylen, key,
+						     get_sta_index(vif, sta_priv));
+			if (ret)
+				goto out;
+			sta_priv->is_data_encrypted = true;
 		} else {
-			wcn36xx_smd_set_bsskey(wcn,
-				vif_priv->encrypt_type,
-				vif_priv->bss_index,
-				key_conf->keyidx,
-				key_conf->keylen,
-				key);
+			ret = wcn36xx_smd_set_bsskey(wcn, vif_priv->encrypt_type,
+						     vif_priv->bss_index, key_conf->keyidx,
+						     key_conf->keylen, key, NULL, false);
+			if (ret)
+				goto out;
 
 			if ((WLAN_CIPHER_SUITE_WEP40 == key_conf->cipher) ||
 			    (WLAN_CIPHER_SUITE_WEP104 == key_conf->cipher)) {
 				list_for_each_entry(sta_priv,
 						    &vif_priv->sta_list, list) {
+					ret = wcn36xx_smd_set_stakey(wcn, vif_priv->encrypt_type,
+								     key_conf->keyidx,
+								     key_conf->keylen, key,
+								     get_sta_index(vif, sta_priv));
+					if (ret)
+						goto out;
 					sta_priv->is_data_encrypted = true;
-					wcn36xx_smd_set_stakey(wcn,
-						vif_priv->encrypt_type,
-						key_conf->keyidx,
-						key_conf->keylen,
-						key,
-						get_sta_index(vif, sta_priv));
 				}
 			}
 		}
@@ -598,20 +658,22 @@ static int wcn36xx_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	case DISABLE_KEY:
 		if (!(IEEE80211_KEY_FLAG_PAIRWISE & key_conf->flags)) {
 			if (vif_priv->bss_index != WCN36XX_HAL_BSS_INVALID_IDX)
-				wcn36xx_smd_remove_bsskey(wcn,
-					vif_priv->encrypt_type,
-					vif_priv->bss_index,
-					key_conf->keyidx);
+				ret = wcn36xx_smd_remove_bsskey(wcn, vif_priv->encrypt_type,
+								vif_priv->bss_index,
+								key_conf->keyidx);
+			if (ret)
+				goto out;
 
 			vif_priv->encrypt_type = WCN36XX_HAL_ED_NONE;
 		} else {
-			sta_priv->is_data_encrypted = false;
 			/* do not remove key if disassociated */
 			if (sta_priv->aid)
-				wcn36xx_smd_remove_stakey(wcn,
-					vif_priv->encrypt_type,
-					key_conf->keyidx,
-					get_sta_index(vif, sta_priv));
+				ret = wcn36xx_smd_remove_stakey(wcn, vif_priv->encrypt_type,
+								key_conf->keyidx,
+								get_sta_index(vif, sta_priv));
+			if (ret)
+				goto out;
+			sta_priv->is_data_encrypted = false;
 		}
 		break;
 	default:
@@ -621,6 +683,11 @@ static int wcn36xx_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	}
 
 out:
+	/* HAL status values are positive; mac80211 reserves 1 for SW crypto. */
+	if (ret > 0)
+		ret = -EIO;
+	if (ret)
+		vif_priv->encrypt_type = old_encrypt_type;
 	mutex_unlock(&wcn->conf_mutex);
 
 	return ret;
@@ -826,6 +893,8 @@ static void wcn36xx_bss_info_changed(struct ieee80211_hw *hw,
 
 		if (!is_zero_ether_addr(bss_conf->bssid)) {
 			vif_priv->is_joining = true;
+			vif_priv->mfp = false;
+			vif_priv->igtk_mask = 0;
 			vif_priv->bss_index = WCN36XX_HAL_BSS_INVALID_IDX;
 			wcn36xx_smd_set_link_st(wcn, bss_conf->bssid, vif->addr,
 						WCN36XX_HAL_LINK_PREASSOC_STATE);
@@ -881,6 +950,7 @@ static void wcn36xx_bss_info_changed(struct ieee80211_hw *hw,
 				goto out;
 			}
 			sta_priv = wcn36xx_sta_to_priv(sta);
+			vif_priv->mfp = sta->mfp;
 
 			wcn36xx_update_allowed_rates(sta, WCN36XX_BAND(wcn));
 
@@ -1421,6 +1491,7 @@ static int wcn36xx_init_ieee80211(struct wcn36xx *wcn)
 		WLAN_CIPHER_SUITE_WEP104,
 		WLAN_CIPHER_SUITE_TKIP,
 		WLAN_CIPHER_SUITE_CCMP,
+		WLAN_CIPHER_SUITE_AES_CMAC,
 	};
 
 	ieee80211_hw_set(wcn->hw, TIMING_BEACON_ONLY);
@@ -1448,6 +1519,12 @@ static int wcn36xx_init_ieee80211(struct wcn36xx *wcn)
 
 	wcn->hw->wiphy->cipher_suites = cipher_suites;
 	wcn->hw->wiphy->n_cipher_suites = ARRAY_SIZE(cipher_suites);
+	if (wcn->rf_id == RF_IRIS_WCN3680) {
+		ieee80211_hw_set(wcn->hw, MFP_CAPABLE);
+		ieee80211_hw_set(wcn->hw, SW_CRYPTO_CONTROL);
+	} else {
+		wcn->hw->wiphy->n_cipher_suites--;
+	}
 
 #ifdef CONFIG_PM
 	wcn->hw->wiphy->wowlan = &wowlan_support;

@@ -303,6 +303,25 @@ static void wcn36xx_update_survey(struct wcn36xx *wcn, int rssi, int snr,
 	add_device_randomness(&snr_sample, sizeof(snr_sample));
 }
 
+static int wcn36xx_rx_crypto(struct wcn36xx_rx_bd *bd,
+			     struct ieee80211_hdr *hdr,
+			     struct ieee80211_rx_status *status)
+{
+	if (!ieee80211_is_data(hdr->frame_control)) {
+		/* Keep group MMIEs visible for mac80211 MIC and replay checks. */
+		if (!ieee80211_is_mgmt(hdr->frame_control) ||
+		    is_multicast_ether_addr(hdr->addr1) ||
+		    !ieee80211_has_protected(hdr->frame_control) ||
+		    !bd->rmf || bd->dpu_ne)
+			return 0;
+		if (bd->pdu.dpu_fb & WCN36XX_DPU_FEEDBACK_UNPROTECTED_ERROR)
+			return -EBADMSG;
+	}
+	status->flag |= RX_FLAG_IV_STRIPPED | RX_FLAG_MMIC_STRIPPED |
+			RX_FLAG_DECRYPTED;
+	return 0;
+}
+
 int wcn36xx_rx_skb(struct wcn36xx *wcn, struct sk_buff *skb)
 {
 	struct ieee80211_rx_status status;
@@ -355,9 +374,8 @@ int wcn36xx_rx_skb(struct wcn36xx *wcn, struct sk_buff *skb)
 	status.antenna = 1;
 	status.flag = 0;
 	status.rx_flags = 0;
-	status.flag |= RX_FLAG_IV_STRIPPED |
-		       RX_FLAG_MMIC_STRIPPED |
-		       RX_FLAG_DECRYPTED;
+	if (wcn36xx_rx_crypto(bd, hdr, &status))
+		goto drop;
 
 	wcn36xx_dbg(WCN36XX_DBG_RX, "status.flags=%x\n", status.flag);
 
@@ -596,18 +614,49 @@ static void wcn36xx_set_tx_data(struct wcn36xx_tx_bd *bd,
 		wcn36xx_tx_start_ampdu(wcn, sta_priv, skb);
 }
 
-static void wcn36xx_set_tx_mgmt(struct wcn36xx_tx_bd *bd,
-				struct wcn36xx *wcn,
-				struct wcn36xx_vif **vif_priv,
-				struct sk_buff *skb,
-				bool bcast)
+static int wcn36xx_set_tx_mgmt(struct wcn36xx_tx_bd *bd,
+			       struct wcn36xx *wcn,
+			       struct wcn36xx_vif **vif_priv,
+			       struct wcn36xx_sta *sta_priv,
+			       struct sk_buff *skb,
+			       bool bcast)
 {
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
+	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
+	struct ieee80211_key_conf *key = info->control.hw_key;
 	struct wcn36xx_vif *__vif_priv =
 		get_vif_by_addr(wcn, hdr->addr2);
 	bd->sta_index = __vif_priv->self_sta_index;
 	bd->dpu_desc_idx = __vif_priv->self_dpu_desc_index;
 	bd->dpu_ne = 1;
+
+	if (key && !(info->flags & IEEE80211_TX_INTFL_DONT_ENCRYPT) &&
+	    ieee80211_is_robust_mgmt_frame(skb)) {
+		if (key->cipher == WLAN_CIPHER_SUITE_AES_CMAC && bcast) {
+			if (key->keyidx < 4 || key->keyidx > 5 ||
+			    !(__vif_priv->igtk_mask & BIT(key->keyidx)))
+				return -ENOKEY;
+			bd->sta_index = __vif_priv->bss_bcast_sta_index;
+			bd->dpu_desc_idx = __vif_priv->mgmt_dpu_desc_index;
+			bd->dpu_sign = __vif_priv->mgmt_dpu_signature;
+		} else if (key->cipher == WLAN_CIPHER_SUITE_CCMP && !bcast &&
+			   sta_priv && ieee80211_has_protected(hdr->frame_control)) {
+			struct ieee80211_vif *vif = wcn36xx_priv_to_vif(__vif_priv);
+
+			bd->dpu_sign = sta_priv->ucast_dpu_sign;
+			if (vif->type == NL80211_IFTYPE_STATION) {
+				bd->sta_index = sta_priv->bss_sta_index;
+				bd->dpu_desc_idx = sta_priv->bss_dpu_desc_index;
+			} else {
+				bd->sta_index = sta_priv->sta_index;
+				bd->dpu_desc_idx = sta_priv->dpu_desc_index;
+			}
+		} else {
+			return -EOPNOTSUPP;
+		}
+		bd->rmf = 1;
+		bd->dpu_ne = 0;
+	}
 
 	/* default rate for unicast */
 	if (ieee80211_is_mgmt(hdr->frame_control))
@@ -644,6 +693,7 @@ static void wcn36xx_set_tx_mgmt(struct wcn36xx_tx_bd *bd,
 			   sizeof(struct ieee80211_qos_hdr) :
 			   sizeof(struct ieee80211_hdr_3addr),
 			   skb->len, WCN36XX_TID);
+	return 0;
 }
 
 int wcn36xx_start_tx(struct wcn36xx *wcn,
@@ -685,17 +735,20 @@ int wcn36xx_start_tx(struct wcn36xx *wcn,
 		bd.tx_comp = 1;
 	}
 
-	/* Data frames served first*/
-	if (is_low)
+	if (is_low) {
 		wcn36xx_set_tx_data(&bd, wcn, &vif_priv, sta_priv, skb, bcast);
-	else
-		/* MGMT and CTRL frames are handeld here*/
-		wcn36xx_set_tx_mgmt(&bd, wcn, &vif_priv, skb, bcast);
+	} else {
+		ret = wcn36xx_set_tx_mgmt(&bd, wcn, &vif_priv, sta_priv, skb,
+					  bcast);
+		if (ret)
+			goto out;
+	}
 
 	buff_to_be(&bd, sizeof(bd)/sizeof(u32));
 	bd.tx_bd_sign = 0xbdbdbdbd;
 
 	ret = wcn36xx_dxe_tx_frame(wcn, vif_priv, &bd, skb, is_low);
+out:
 	if (unlikely(ret && ack_ind)) {
 		/* If the skb has not been transmitted, resume TX queue */
 		ieee80211_wake_queues(wcn->hw);

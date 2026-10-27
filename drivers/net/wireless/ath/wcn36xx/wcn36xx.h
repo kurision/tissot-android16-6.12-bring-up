@@ -135,6 +135,11 @@ struct wcn36xx_vif {
 	enum wcn36xx_power_state pw_state;
 
 	u8 bss_index;
+	bool mfp;
+	u8 igtk_mask;
+	u8 mgmt_dpu_desc_index;
+	u8 mgmt_dpu_signature;
+	u8 bss_bcast_sta_index;
 	/* Returned from WCN36XX_HAL_ADD_STA_SELF_RSP */
 	u8 self_sta_index;
 	u8 self_dpu_desc_index;
