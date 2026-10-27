@@ -1,35 +1,58 @@
 # Current state of the tissot port
 
-Status reviewed **2026-10-25**, including successful call-audio tests on
-ACK 6.12 and the 4.19 comparison kernel. This is the detailed live status; the
+Status reviewed **2026-10-27**, including a read-only live capture on ACK 6.12
+#106 and the earlier successful call-audio tests on ACK 6.12 #93 and the 4.19
+comparison kernel. This is the detailed live status; the
 [README](README.md) is the overview and [failing-components table](FAILING-COMPONENTS.md)
 is the work queue. The current summary below supersedes the dated camera,
 audio and power checkpoints retained later in this document. An older
 failure is not proof that a later image still fails, and a source fix is
 not proof that every affected feature has passed a device test.
 
-## Current checkpoint and device identity — 2026-10-25
+## Current checkpoint and device identity — 2026-10-27
 
-**Two-way handset and speaker call audio is working with a temporary ROM
-HAL setting.** Two calls passed on ACK kernel #93; a subsequent slot-A
-4.19 call also passed both modes. Daily-driver readiness remains unproven:
-the property is not persistent, and the camera, suspend, charging and
-service-compatibility qualification gaps below remain open.
+**The port now boots and stays up on #106, with no oops, panic, remoteproc
+recovery or crash-looping hardware service in the captured boot.** The live
+failures are service-definition and discovery gaps plus missing kernel
+interfaces, not kernel faults that take the phone down. The newest capture is
+read-only and covers one boot: it retested no call, camera still, torch, GNSS
+or thermal-mitigation path, and it could not test suspend because the phone was
+attached to a PC. The verified call-audio result below still stands from #93
+and from the 4.19 slot-A boot.
 
 | Item | Latest verified observation |
 |---|---|
 | Device / ROM | Xiaomi Mi A1, serial `2819f2320604`; Evolution X / Android 17 |
+| Latest inspected image | `6.12.96-4k-gdef5649d5de8-dirty #106`, built 2026-10-27 12:06:13 +0545, HEAD `def5649d5`; boot `c98735e3-6601-40dc-b6ce-6da95e73804e`, slot `_b`, `sys.boot_completed=1`, uptime past 4000 s, `oops_count=0` |
 | Latest ACK call-test image | `6.12.96-4k-gc9d35ed0d67f-dirty #93`, built 2026-10-24 21:48:58 +0545; successful-test boot `a98ac416-a276-4ad7-b1e3-efa74f3ca13f` |
-| Most recently inspected phone | Already on slot `_a`, `4.19.325-cip136-st20-perf-mglru-next-gdf4a1f863991 #5`, boot `cdea609a-193a-46ed-ae96-f271c55d6557`; Magisk root / USB ADB |
 | Current runtime workaround | `vendor.audio.feature.multi_voice_session.enable=true`; `vendor.audio-hal` restarted and verified running, PID 11313 on the 4.19 test |
 | Source versus image | Current `main` contains the audio fixes below and later USB/performance work. The old dirty build string does not attest every source file or qualify newer changes |
-| Test operations | No kernel build or slot switch was needed for the slot-A test: the phone was already on 4.19. The HAL property/restart were the requested runtime changes |
+| Test operations | The 10-27 capture built, flashed and rebooted nothing; it read buffers and live sysfs/debugfs on the running phone. Only the ftrace wakeup-source experiment and a `pm_debug_messages` toggle wrote to the device |
+
+### What the #106 capture establishes
+
+Details, counts, and `file:line` references are in
+[findings/2026-10-27-fresh-state-106.md](findings/2026-10-27-fresh-state-106.md);
+raw buffers are in `artifacts/snapshot60/logs-20261027-fresh-106/`.
+
+| Item | #106 observation |
+|---|---|
+| run414 boot blocker | Not reproduced. `by-name/misc` under `soc@0/7824900.sdhci` is `u:object_r:misc_block_device:s0` and the phone reaches boot complete, consistent with `aa6225801` |
+| Peripheral manager | Still failing: `/sys/bus/msm_subsys/devices` absent, 102 SSR-root failures, manager/proxy restarting every 5 s |
+| UCE / `data.factory` HIDL | Two unresolvable `ctl.interface_start` requests repeat ~2/s. Not a kernel fault, but it writes the 1 MiB kernel ring buffer away in minutes — the retained dmesg covers only 188 s |
+| Wi-Fi | Drops are local deauths (`reason=4 locally_generated=1`) and happen with the screen **on** as well as off, so screen-off is not the trigger. Verified cause: the stock WCN3680 firmware (`API 1.5.1.2`) sends every `OTA_TX_COMPL_IND` as **16 bytes**, `wcn36xx_smd_tx_compl_ind()` rejects anything that is not 12 (`smd.c:2733`) → `dxe_tx_ack_ind()` never runs → the 100 ms `tx_ack_timer` clears `IEEE80211_TX_STAT_ACK` (`dxe.c:393`) while the driver advertises `REPORTS_TX_ACK_STATUS`, so management frames are re-sent and the AP answers `Reason 2=PREV_AUTH_NOT_VALID`. Indication `312` is also dropped (`SMD_EVENT (312) not supported`, 36 B). Screen-off reconnect fails separately: `nl80211_start_sched_scan` returns `-95` 6/6 because `wcn36xx` has no `sched_scan_start` (`scan.c:1317`), so PNO never runs (`numPnoScanAttempts=0`); scans themselves continue. Screen-on reconnect measured at 2 s once but 2 min 22 s another time and absent within 30 s/20 s twice. `setSuspendModeEnabled` `errno:95` is post-disconnect cleanup, not the cause. See [findings/2026-10-27-wifi-tx-ack-and-pno.md](findings/2026-10-27-wifi-tx-ack-and-pno.md) |
+| Suspend | `suspend attempts: 0`, and the suspend thread is blocked in `pm_get_wakeup_count`. The `dwc3-link` wakeup source is held for the whole boot because a USB host owns the link (`078fe0316`). Not a new defect, and not a suspend qualification |
+| Fingerprint | HAL started at 57 s and was still running at 4010 s; the only tombstone is the stale 2026-10-09 one. `dumpsys fingerprint` reports one HAL death since reboot and zero enrolled prints, so no functional pass |
+| FastRPC / dpmd / modem | Not reproducing: no `ENOSPC` retry storm, no dpmd abort (PID 925 stable all boot), remoteproc0–2 all `running` |
+| Thermal HAL | Still `HAL Ready: false`; no vendor thermal HAL binary in `/vendor/{bin,lib64}/hw`, only `thermal-engine` |
+| Audio | 501 speaker `out_write: underrun` warnings in 7.2 s |
+| Kernel errors in window | Only `wcn36xx: Bad TX complete indication` (×2) and `SMD_EVENT (312) not supported`; both log-and-ignore, no oops/panic/watchdog |
 
 ## Working, partial and unqualified components
 
 "Working" names the observed function, not complete subsystem coverage.
 Rows retain their latest evidence window; the call tests did not retest
-all hardware on #93 or on 4.19.
+all hardware on #93 or on 4.19, and #106 was a read-only observation.
 
 | Component | Status | Evidence and remaining limit |
 |---|---|---|
@@ -45,12 +68,12 @@ all hardware on #93 or on 4.19.
 | Camera flash / torch | Confirmed porting gap | Run401 HAL reports no flash; donor PMIC flash connection/resources are omitted. No flash integration fix is established |
 | Voice-call audio | Working with temporary ROM setting | Two ACK #93 calls and one 4.19 slot-A call; user confirms two-way handset/speaker audio. Persistence, other SIM/accessory paths and comprehensive voice-technology coverage remain open |
 | Media audio | Playback demonstrated; errors remain | Earlier speaker playback/deep-buffer progress; EOS close timeouts and underruns remain. The latest call tests are not an independent media-playback qualification |
-| Wi-Fi / Bluetooth | Basic operation demonstrated | Wi-Fi association, wireless ADB and Bluetooth operation; Wi-Fi suspend/resume, wake traffic, Bluetooth call audio and endurance remain unqualified |
-| Modem / cellular services | Registration and tested calls work | Retained modem recovery, peripheral-manager, FastRPC and data-service failures still require separate follow-up; not a complete cellular-data/IMS qualification |
-| Battery / charger / USB | Basic operation; reliability open | Battery/charging interfaces and USB ADB demonstrated. Current reporting, charging rate, cable reattachment and suspend recovery remain open; new extcon wiring needs its own test |
-| dpmd / diagnostic transport | Partial repair | dpmd mapping-size candidate survived two temporary service-start trials; persistence and functional data services are unqualified. CAF diag is now in source, so the older absent-node report is historical |
-| Fingerprint | Retained HAL failure; unresolved | Run401 contains a fingerprint-service SIGSEGV. No later successful end-to-end test or fix is recorded |
-| GNSS, haptics, IR, remaining sensors / notification LED | Unverified end-to-end | Historical inventory contains porting gaps; no new functional pass was obtained. Do not classify every device as broken from old probe/config data |
+| Wi-Fi / Bluetooth | Basic operation demonstrated | Wi-Fi association, wireless ADB and Bluetooth operation. On #106 the link drops with local `reason=4` while the screen is on *and* off; every 16-byte firmware TX-completion indication is rejected by the driver's 12-byte length check, which leaves the tracked management frame reported unacknowledged (causal link inferred, not logged). Screen-off reconnect cannot happen because `sched_scan_start`/PNO is unimplemented (`-EOPNOTSUPP`). Suspend/resume, wake traffic, Bluetooth call audio and endurance remain unqualified |
+| Modem / cellular services | Registration and tested calls work | Retained modem recovery, peripheral-manager, FastRPC and data-service failures still require separate follow-up; not a complete cellular-data/IMS qualification. #106 shows all three remoteprocs `running` and one `.dataservices` ANR on the boot broadcast |
+| Battery / charger / USB | Basic operation; reliability open | Battery/charging interfaces and USB ADB demonstrated. On #106 attached to a PC: `USB_CDP` online, battery full at 4.311 V, −152 mA, no `INPUT_CURRENT_LIMIT` attribute. Current reporting, charging rate, cable reattachment and suspend recovery remain open; new extcon wiring needs its own test |
+| dpmd / diagnostic transport | Partial repair | dpmd mapping-size candidate survived two temporary service-start trials; on #106 there was no abort and PID 925 stayed up, but persistence and functional data services are still unqualified. CAF diag is now in source and `/dev/diag` exists; the daemon/HIDL path is not verified |
+| Fingerprint | HAL up; function untested | Run401 contains a fingerprint-service SIGSEGV. On #106 the service starts at 57 s and stays up, with only the stale 2026-10-09 tombstone retained, but the framework counts one HAL death since reboot and no print is enrolled. No end-to-end unlock test exists |
+| GNSS, haptics, IR, remaining sensors / notification LED | Unverified end-to-end | Historical inventory contains porting gaps; no new functional pass was obtained. #106 runs `gnss_service` with no `/dev/gnss*` node and records 4 QMI sensor transport `-16` errors. Do not classify every device as broken from old probe/config data |
 | Crash capture / security services | Partial validation | Ramoops retention and selected QSEE transactions observed; current-image controlled-panic persistence, all-CPU-freeze capture and full credential/keystore coverage are unqualified |
 
 ## Call audio: verified success and ROM workaround
@@ -114,6 +137,16 @@ or existing USB connection qualifies their suspend, cable or battery
 behavior. Current history/source must not be presented as the exact #93
 packaged image without a matching artifact.
 
+The USB link wake source from `078fe0316` is working as designed and has a
+measurement consequence: while a host owns the USB link, `dwc3-link` stays
+active, `pm_get_wakeup_count()` blocks, and Android records `suspend attempts:
+0` instead of failing to suspend. On #106 it had been continuously active since
+58 s uptime (3,331 s of active time in the sample). Any suspend or screen-off
+drain test must therefore be run with the phone unplugged; a PC-attached
+capture cannot qualify suspend in either direction. The 2026-10-24 overnight
+record of 6067 successful suspends was taken on battery and is consistent with
+this.
+
 ## Historical camera checkpoint: #44 JPEG failure — 2026-10-24
 
 This section preserves the #44 inspection. The JPEG fix is now in `main`;
@@ -148,7 +181,7 @@ capture/session reliability remain unqualified.
 | `37d207627`, `ec8ac3f59`, `906b00d7f` | CPP probe/cleanup/readiness gating, DT/SMMU resources and CPP/VPE entity-revision ABI. Combined changes reached preview on #43; not tested commit by commit. |
 | `b74883f50` | Correct inherited sensor mount angles to QRD `[90,90,270]`; source ancestry alone does not validate displayed orientation. |
 | `aa6d022dc` | Restore JPEG encoder resources, GCC power domain and APPS context bank `0x13`. #44 binds `1b1c000.qcom,jpeg` to `msm_jpeg` and creates `/dev/jpeg0`. |
-| `4646f53406c3` | Fix usercopy of translated kernel data in six JPEG compatibility paths and add regression coverage. Host-tested; no retained post-fix still-photo pass is established here. |
+| `e7bb44d74` | Current ID of the JPEG compatibility fix (`4646f53406c3` before the attribution-only rewrite). Fixes usercopy of translated kernel data in six JPEG compatibility paths and adds regression coverage. Host-tested; no retained post-fix still-photo pass is established here. |
 | `d13339db2`, `6aba140ac` | Record that camera software AVC selection and absent framework OMX encoders match the same ROM on donor 4.19. Hardware encoder execution remains unverified. |
 | `a973e773c`, `683ed8d32`, `e37ff5d99`, `4fb0e03f7` | Preserve vendor rules/overlay labels, validate the real base ramdisk, deduplicate firmware command-line tokens and replace explicitly staged modules safely. Reuse a real known-good base. |
 | `0846a889f` | Assign stable MMC aliases after the observed boot-control/checkpoint failure. Full causal isolation and numbering with an SD card remain unverified. |
@@ -381,8 +414,11 @@ retained benchmark artifact. Do not present them as endurance results.
 CPU/GPU cooling devices and TSENS zones are registered. The vendor thermal
 zone names were restored in `6afd89291` / `6a81997cf`. An earlier inspection
 had legacy thermal-engine running but Android thermal service `HAL Ready:false`;
-that readiness has not been rechecked on #83. Latest cooling-state snapshots
-were zero; sustained mitigation effectiveness is not established by them.
+rechecked on #106 it is still `false`, and no vendor thermal-HAL binary exists
+in `/vendor/{bin,lib64}/hw`, only `thermal-engine`. So the readiness gap is a
+missing HAL, not a kernel thermal-zone regression. Latest cooling-state
+snapshots were zero; sustained mitigation effectiveness is not established by
+them.
 Earlier run304 evidence documented CPU cooling state 4 limiting the shared
 policy to 2304 MHz (history correction `bb7a4ed9e`). That verifies the earlier
 CPU passive path, not current-image endurance or every renamed thermal zone.
@@ -472,6 +508,12 @@ Selected original captures are hash-verified under
 | `record-test-80/` | #80 identity, recording logs, software encoder selection and failed save |
 | `record-save-repair/` | Successful save capture after the one-directory mode repair |
 | `unexpected-stop-83/` | Identity, raw 64 MiB logdump, pstore archive/console, previous-kmsg DropBox text, decoder reports and power readings |
+
+The newest capture, `artifacts/snapshot60/logs-20261027-fresh-106/`, holds the
+full `-b all` logcat, the last 188 s of dmesg, suspend state, wakeup sources and
+the 25 s wakeup-source ftrace from ACK #106, with `SHA256SUMS`. It is index-only
+here; the readable summary is the
+[#106 findings note](findings/2026-10-27-fresh-state-106.md).
 
 `SHA256SUMS` covers these copies. Text files are untracked and binary captures
 are gitignored; none are committed evidence. Preserve them before cleanup.

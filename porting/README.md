@@ -1,10 +1,17 @@
 # Xiaomi Mi A1 / tissot — Linux 6.12 port
 
-## Status — 2026-10-25
+## Status — 2026-10-27
 
 The port boots Android with working display, touch, vendor GLES, tested media
 paths and **two-way handset/speaker call audio**. Calls passed twice on ACK
-6.12 #93 and then on slot-A 4.19 with the same ROM HAL setting enabled.
+6.12 #93 and then on slot-A 4.19 with the same ROM HAL setting enabled. A
+read-only capture on ACK #106 shows the phone booting and staying up with no
+oops or crash-looping hardware service; the live failures there are service
+definition/discovery gaps, a missing thermal HAL, and a Wi-Fi driver/firmware
+ABI mismatch on every TX completion that leaves management frames reported
+unacknowledged (cause under test; a source fix exists but is not built)
+([live state](findings/2026-10-27-fresh-state-106.md),
+[Wi-Fi diagnosis](findings/2026-10-27-wifi-tx-ack-and-pno.md)).
 
 **Daily-driver readiness is not established.** The call setting is temporary;
 suspend/USB/charging reliability, battery efficiency, service compatibility and
@@ -14,8 +21,9 @@ must not be conflated.
 | Checkpoint | Verified observation |
 |---|---|
 | Device / ROM | Xiaomi Mi A1 (`tissot`, MSM8953), Evolution X / Android 17 |
+| Latest inspected image | `6.12.96-4k-gdef5649d5de8-dirty #106` (`def5649d5`), boot `c98735e3-6601-40dc-b6ce-6da95e73804e`, slot `_b`, boot complete, `oops_count=0`. Read-only capture; no build, flash or reboot |
 | Latest ACK call-test image | `6.12.96-4k-gc9d35ed0d67f-dirty #93`; successful-test boot `a98ac416-a276-4ad7-b1e3-efa74f3ca13f` |
-| Most recent phone test | Slot `_a`, `4.19.325-cip136-st20-perf-mglru-next-gdf4a1f863991 #5`, boot `cdea609a-193a-46ed-ae96-f271c55d6557`, Magisk root |
+| Latest 4.19 comparison test | Slot `_a`, `4.19.325-cip136-st20-perf-mglru-next-gdf4a1f863991 #5`, boot `cdea609a-193a-46ed-ae96-f271c55d6557`, Magisk root |
 | Source / image boundary | Current `main` includes newer audio, USB and tuning changes; an old dirty build string does not attest all current source or qualify those newer changes |
 | Camera evidence | #43 preview/video and #44 failing stills remain the retained camera checkpoints. JPEG compatibility fix is in source; no newer successful still-photo test is claimed here |
 
