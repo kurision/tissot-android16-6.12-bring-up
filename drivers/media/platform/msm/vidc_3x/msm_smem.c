@@ -510,7 +510,9 @@ static int alloc_dma_mem(size_t size, u32 align, u32 flags,
 	}
 
 	if (map_kernel) {
-		dma_buf_begin_cpu_access(dbuf, DMA_BIDIRECTIONAL);
+		rc = dma_buf_begin_cpu_access(dbuf, DMA_BIDIRECTIONAL);
+		if (rc)
+			goto fail_put_address;
 		/*
 		 * 6.12's dma_buf_vmap() returns the error code and fills
 		 * the map in; the address is in map.vaddr.  The _unlocked
