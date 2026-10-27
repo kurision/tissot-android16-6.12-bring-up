@@ -151,7 +151,8 @@ try:
     if sys.argv[2] == 'anykernel':
         with zipfile.ZipFile(sys.argv[1]) as archive:
             cpio = gzip.decompress(archive.read('ramdisk-new.cpio.gz'))
-        package['verify_ack_ramdisk'](cpio)
+            cmdline = archive.read('cmdline').decode()
+        package['verify_ack_ramdisk'](cpio, cmdline)
     else:
         image = Path(sys.argv[1]).read_bytes()
         if image[:8] != b'ANDROID!':
@@ -165,6 +166,8 @@ try:
     contexts = [r['data'] for r in records if r['name'] == 'ack-vendor-file-contexts']
     if len(contexts) != 1:
         raise ValueError('expected exactly one ack-vendor-file-contexts record')
+    # Check the inherited base after the same path translation used by packaging.
+    package['sdhci_block_contexts'](contexts[0])
     lines = [line.split() for line in contexts[0].decode().splitlines()]
     for name in (r'ack-config-ueventd\.rc', r'ack-qrtr-vendor\.rc',
                  r'ack-usb-controller\.prop', r'ack-flags-health-check\.rc',
@@ -175,10 +178,10 @@ try:
             raise ValueError(f'missing, duplicate or incorrect staging label: {pattern}')
 except (OSError, ValueError, EOFError, KeyError, zipfile.BadZipFile, struct.error) as error:
     sys.exit(f'error: incompatible ramdisk in {sys.argv[1]}: {error}\n'
-             'Select a verified base with the required staging labels, e.g.\n'
+             'Select a verified base with the required staging and partition labels, e.g.\n'
              '  bash porting/tools/build-kernel.sh <run-name> '
              'porting/artifacts/snapshot60/boot-run380-camera.img')
-print(f'Ramdisk staging labels verified: {sys.argv[1]}')
+print(f'Ramdisk staging and partition labels verified: {sys.argv[1]}')
 PY
 }
 check_ramdisk_contexts "$BASE_IMAGE"

@@ -2,7 +2,8 @@
 """Package a Tissot boot image or AnyKernel ZIP from a real base ramdisk.
 
 The cpio record named "init" and explicitly supplied module files are replaced;
-other ramdisk changes require the options below. Every header byte except
+sdhci boot-device tokens also translate inherited MMC partition label paths.
+Other ramdisk changes require the options below. Every header byte except
 kernel_size, ramdisk_size, cmdline and id must stay identical. Opt-in
 extensions: --firmware-dir stages files as lib/firmware/<relpath> (with
 explicit dir records), --modules-dir stages files as ack-modules/<relpath>
@@ -145,6 +146,38 @@ def hex_upper(records):
 POLICY_CIL_RECORD = "userdebug_plat_sepolicy.cil"
 
 
+def uses_sdhci(cmdline):
+    return any(token in cmdline.split() for token in (
+        "androidboot.boot_devices=soc@0/7824900.sdhci",
+        "androidboot.bootdevice=7824900.sdhci"))
+
+
+def verify_sdhci_block_contexts(data):
+    prefix = "/dev/block/platform/soc@0/7824900\\.sdhci/by-name/"
+    lines = [line.split() for line in data.decode().splitlines()
+             if line.strip() and not line.lstrip().startswith("#")]
+    if any(line[0].startswith("/dev/block/platform/soc@0/7824900\\.mmc/by-name/")
+           for line in lines):
+        die("stale MMC partition labels for sdhci boot device")
+    for name, label in (("misc", "misc_block_device"), ("ssd", "ssd_device"),
+                        ("config", "frp_block_device"),
+                        ("userdata", "userdata_block_device")):
+        path = prefix.replace("\\.", ".") + name
+        matches = [line for line in lines if line[0].startswith(prefix)
+                   and re.fullmatch(line[0], path)]
+        if len(matches) != 1 or matches[0][1:] != [f"u:object_r:{label}:s0"]:
+            die(f"missing, duplicate or incorrect partition label: {path}")
+
+
+def sdhci_block_contexts(data):
+    old = b"/dev/block/platform/soc@0/7824900\\.mmc/by-name/"
+    new = b"/dev/block/platform/soc@0/7824900\\.sdhci/by-name/"
+    data = b"".join(line.replace(old, new, 1) if line.lstrip().startswith(old) else line
+                    for line in data.splitlines(keepends=True))
+    verify_sdhci_block_contexts(data)
+    return data
+
+
 def readable_modem_fstab(data):
     """Change only the read masks of the existing read-only modem mount."""
     lines = data.splitlines(keepends=True)
@@ -176,7 +209,7 @@ def readable_modem_fstab(data):
 
 
 def customize_ramdisk(cpio, init, fw_entries, debuggable, policy_append,
-                      modem_firmware_readable=False, mod_entries=()):
+                      modem_firmware_readable=False, mod_entries=(), cmdline=""):
     """Replace /init; optionally inject lib/firmware files, debuggable props,
     and extra sepolicy CIL text (harness-only policy deltas)."""
     records, tail = parse_cpio(cpio)
@@ -188,6 +221,13 @@ def customize_ramdisk(cpio, init, fw_entries, debuggable, policy_append,
     new = [dict(r, fields=list(r["fields"])) for r in records]
     new[hits[0]]["fields"][FILESIZE_FIELD] = fmt % len(init)
     new[hits[0]]["data"] = init
+    if uses_sdhci(cmdline):
+        contexts = [r for r in new if r["name"] == "ack-vendor-file-contexts"
+                    and int(r["fields"][1], 16) & S_IFMT == S_IFREG]
+        if len(contexts) != 1:
+            die("expected exactly one regular vendor contexts record")
+        contexts[0]["data"] = sdhci_block_contexts(contexts[0]["data"])
+        contexts[0]["fields"][FILESIZE_FIELD] = fmt % len(contexts[0]["data"])
     if modem_firmware_readable:
         fstab = [r for r in new if r["name"] == "ack-protected-fstab.qcom"
                  and int(r["fields"][1], 16) & S_IFMT == S_IFREG]
@@ -349,7 +389,7 @@ def new_cmdline(base, keep_console=False):
     die(f"unexpected base cmdline: {base!r}")
 
 
-def verify_ack_ramdisk(cpio):
+def verify_ack_ramdisk(cpio, cmdline=""):
     records, _ = parse_cpio(cpio)
     assert_unique_ramdisk(records)
     files = {r["name"]: r["data"] for r in records}
@@ -359,6 +399,8 @@ def verify_ack_ramdisk(cpio):
             die(f"ACK ramdisk lacks {name}")
     if "force_debuggable" not in files:
         die("ACK ramdisk lacks force_debuggable")
+    if uses_sdhci(cmdline):
+        verify_sdhci_block_contexts(files["ack-vendor-file-contexts"])
     lines = [line.split() for line in files["ack-vendor-file-contexts"].decode().splitlines()]
     for name in (r"ack-config-ueventd\.rc", r"ack-qrtr-vendor\.rc",
                  r"ack-usb-controller\.prop", r"ack-flags-health-check\.rc",
@@ -373,7 +415,7 @@ def verify_ack_ramdisk(cpio):
 
 
 def write_anykernel(out, kernel_dir, kernel, ramdisk, cmdline):
-    verify_ack_ramdisk(gzip.decompress(ramdisk))
+    verify_ack_ramdisk(gzip.decompress(ramdisk), cmdline)
     image = gzip.decompress((Path(kernel_dir) / "Image.gz").read_bytes())
     if len(image) < 64 or image[56:60] != b"ARM\x64":
         die("not an arm64 Image")
@@ -498,17 +540,6 @@ def main():
         die(f"unsupported base header page={page} version={version} second={ssize}")
     base_ramdisk = base[PAGE + pad(ksize):PAGE + pad(ksize) + rsize]
 
-    policy_append = b""
-    if args.policy_append:
-        with open(args.policy_append, "rb") as f:
-            policy_append = f.read()
-    cpio, records = customize_ramdisk(gzip.decompress(base_ramdisk), init,
-                                      fw_entries, args.debuggable,
-                                      policy_append, args.modem_firmware_readable,
-                                      mod_entries)
-    ramdisk = subprocess.run(["gzip", "-9", "-n"], input=cpio,
-                             stdout=subprocess.PIPE, check=True).stdout
-
     base_cmd = base[CMDLINE_OFF:CMDLINE_OFF + CMDLINE_LEN].split(b"\0", 1)[0].decode()
     cmdline = new_cmdline(base_cmd, args.keep_stock_console)
     if args.drop_cmdline:
@@ -522,6 +553,17 @@ def main():
         cmdline += " " + args.append_cmdline.strip()
     if len(cmdline) >= CMDLINE_LEN:
         die("cmdline too long")
+
+    policy_append = b""
+    if args.policy_append:
+        with open(args.policy_append, "rb") as f:
+            policy_append = f.read()
+    cpio, records = customize_ramdisk(gzip.decompress(base_ramdisk), init,
+                                      fw_entries, args.debuggable,
+                                      policy_append, args.modem_firmware_readable,
+                                      mod_entries, cmdline)
+    ramdisk = subprocess.run(["gzip", "-9", "-n"], input=cpio,
+                             stdout=subprocess.PIPE, check=True).stdout
 
     boot_size = PAGE + pad(len(kernel)) + pad(len(ramdisk))
     if boot_size > MAX_IMAGE:
