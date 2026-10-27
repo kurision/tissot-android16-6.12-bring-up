@@ -4864,6 +4864,9 @@ static int __qseecom_alloc_coherent_buf(
 	dma_addr_t coh_pmem;
 	void *buf = NULL;
 
+	if (size > U32_MAX - PAGE_SIZE)
+		return -EOVERFLOW;
+
 	/* Allocate a contiguous kernel buffer */
 	size = (size + PAGE_SIZE) & PAGE_MASK;
 	buf = dma_alloc_coherent(qseecom.dev,
