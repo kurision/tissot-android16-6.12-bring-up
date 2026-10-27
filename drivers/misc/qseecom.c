@@ -1480,7 +1480,9 @@ static int qseecom_vaddr_map(int ion_fd,
 	*paddr = sg_dma_address(new_sgt->sgl);
 	*sb_length = new_sgt->sgl->length;
 
-	dma_buf_begin_cpu_access(new_dma_buf, DMA_BIDIRECTIONAL);
+	ret = dma_buf_begin_cpu_access(new_dma_buf, DMA_BIDIRECTIONAL);
+	if (ret)
+		goto err_dma_unmap;
 	ret = dma_buf_vmap_unlocked(new_dma_buf, &map);
 	if (ret) {
 		pr_err("dma_buf_kmap failed\n");
@@ -1495,6 +1497,7 @@ static int qseecom_vaddr_map(int ion_fd,
 
 err_unmap:
 	dma_buf_end_cpu_access(new_dma_buf, DMA_BIDIRECTIONAL);
+err_dma_unmap:
 	qseecom_dmabuf_unmap(new_sgt, new_attach, new_dma_buf);
 	MAKE_NULL(*sgt, *attach, *dmabuf);
 err:
