@@ -9,7 +9,11 @@ read-only capture on ACK #106 shows the phone booting and staying up with no
 oops or crash-looping hardware service; the live failures there are service
 definition/discovery gaps, a missing thermal HAL, and a Wi-Fi driver/firmware
 ABI mismatch on every TX completion that leaves management frames reported
-unacknowledged (cause under test; a source fix exists but is not built)
+unacknowledged, and no scheduled scan, so nothing looks for the AP while the
+screen is off. Both have source fixes — the 16-byte completion layout is
+accepted, and `sched_scan_*` now drives the HAL's offloaded PNO — but neither
+is built or booted, and the firmware's acceptance of the PNO request is
+unverified
 ([live state](findings/2026-10-27-fresh-state-106.md),
 [Wi-Fi diagnosis](findings/2026-10-27-wifi-tx-ack-and-pno.md)).
 
