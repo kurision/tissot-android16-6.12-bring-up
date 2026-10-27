@@ -4653,6 +4653,11 @@ static bool __qseecom_is_fw_image_valid(const struct firmware *fw_entry)
 	struct elf32_hdr *ehdr;
 	struct elf64_hdr *ehdr64;
 
+	if (fw_entry->size < EI_NIDENT || fw_entry->size > U32_MAX) {
+		pr_err("Invalid firmware size %zu\n", fw_entry->size);
+		return false;
+	}
+
 	app_arch = *(unsigned char *)(fw_entry->data + EI_CLASS);
 
 	switch (app_arch) {
@@ -4759,7 +4764,7 @@ static int __qseecom_get_fw_size(const char *appname, uint32_t *fw_size,
 		ret = firmware_request_nowarn(&fw_entry, fw_name, qseecom.pdev);
 		if (ret)
 			goto err;
-		if (*fw_size > U32_MAX - fw_entry->size) {
+		if (fw_entry->size > U32_MAX - *fw_size) {
 			pr_err("QSEE %s app file size overflow\n", appname);
 			ret = -EINVAL;
 			goto err;
@@ -4798,13 +4803,17 @@ static int __qseecom_get_fw_data(const char *appname, u8 *img_data,
 		goto err;
 	}
 
-	load_req->img_len = fw_entry->size;
-	if (load_req->img_len > fw_size) {
+	if (!__qseecom_is_fw_image_valid(fw_entry)) {
+		ret = -EIO;
+		goto err;
+	}
+	if (fw_entry->size > fw_size) {
 		pr_err("app %s size %zu is larger than buf size %u\n",
 			appname, fw_entry->size, fw_size);
 		ret = -EINVAL;
 		goto err;
 	}
+	load_req->img_len = fw_entry->size;
 	memcpy(img_data_ptr, fw_entry->data, fw_entry->size);
 	img_data_ptr = img_data_ptr + fw_entry->size;
 	load_req->mdt_len = fw_entry->size; /*Get MDT LEN*/
