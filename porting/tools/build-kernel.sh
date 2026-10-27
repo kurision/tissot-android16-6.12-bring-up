@@ -32,10 +32,10 @@
 #      source tree is this repository, so a clone builds.
 #   4. Rebuilds the ramdisk's /init from scripts/initramfs-diag/init.c, so
 #      an image never carries a stale init binary.
-#   5. Packages a flashable AnyKernel ZIP: the base image's ramdisk and
-#      command line, this kernel, this init, and the port's SELinux genfs fragment
-#      (porting/policy/port-genfs-kgsl.cil), which the base ramdisk's CIL
-#      is compiled with at boot.
+#   5. Packages a flashable AnyKernel ZIP and a diagnostic boot image using
+#      the base image's ramdisk and command line, this kernel, this init,
+#      and the port's SELinux genfs fragment (porting/policy/port-genfs-kgsl.cil),
+#      which the base ramdisk's CIL is compiled with at boot.
 #
 # The output directory is out/ in this repository and it is reused. A
 # clean rebuild means emptying it, not making a new one:
@@ -260,6 +260,7 @@ echo "  $BASE_IMAGE"
 # --- the run's outputs ------------------------------------------------------
 mkdir -p "$SNAP" "$OUT_DIR"
 for path in "$SNAP/ack-tissot-$RUN.zip" "$SNAP/kdir-$RUN" "$SNAP/package-$RUN.json" \
+	    "$SNAP/boot-$RUN.img" "$SNAP/package-$RUN-boot.json" \
 	    "$SNAP/modules-$RUN" "$SNAP/modules-$RUN-install"; do
 	if [ -e "$path" ]; then
 		echo "error: $path already exists" >&2
@@ -530,21 +531,24 @@ boot_tokens="$boot_tokens androidboot.bootdevice=7824900.sdhci"
 fw_path="firmware_class.path=/lib/firmware,/vendor/firmware"
 fw_path="$fw_path,/vendor/firmware_mnt/image"
 append_args=(--append-cmdline "$fw_path $boot_tokens")
-python3 -B porting/logging/package-diag-boot.py --base-image "$BASE_IMAGE" \
- --format anykernel \
- --kernel-dir "$SNAP/kdir-$RUN" --stage-kernel "$BOOT" --init "$SNAP/init-$RUN" \
- --keep-stock-console --policy-append "$REPO/porting/policy/port-genfs-kgsl.cil" \
- --modem-firmware-readable \
- --modules-dir "$MOD_DIR" "${fw_args[@]}" "${drop_args[@]}" \
- "${append_args[@]}" \
+package_args=(--base-image "$BASE_IMAGE"
+ --kernel-dir "$SNAP/kdir-$RUN" --init "$SNAP/init-$RUN"
+ --keep-stock-console --policy-append "$REPO/porting/policy/port-genfs-kgsl.cil"
+ --modem-firmware-readable
+ --modules-dir "$MOD_DIR" "${fw_args[@]}" "${drop_args[@]}" "${append_args[@]}")
+python3 -B porting/logging/package-diag-boot.py "${package_args[@]}" \
+ --stage-kernel "$BOOT" --format anykernel \
  --out "$SNAP/ack-tissot-$RUN.zip" --report "$SNAP/package-$RUN.json"
+python3 -B porting/logging/package-diag-boot.py "${package_args[@]}" --format boot \
+ --out "$SNAP/boot-$RUN.img" --report "$SNAP/package-$RUN-boot.json"
 check_ramdisk_contexts "$SNAP/ack-tissot-$RUN.zip" anykernel
+check_ramdisk_contexts "$SNAP/boot-$RUN.img"
 scripts/extract-ikconfig "$SNAP/kdir-$RUN/Image.gz" > "$SNAP/$RUN-embedded.config"
 
 # --- check the result -------------------------------------------------------
 LLVM_NM=${LLVM_NM:-$(command -v llvm-nm || ls /usr/lib/llvm-*/bin/llvm-nm 2>/dev/null | head -1)}
 SNAP="$SNAP" LLVM_NM="$LLVM_NM" RUN="$RUN" python3 - <<'PY'
-import hashlib, os, pathlib, json, gzip, re, subprocess, zipfile
+import hashlib, os, pathlib, json, gzip, re, struct, subprocess, zipfile
 s=pathlib.Path(os.environ['SNAP'])
 run=os.environ['RUN']
 new=json.loads((s/f'package-{run}.json').read_text())
@@ -553,9 +557,28 @@ artifact=s/f'ack-tissot-{run}.zip'
 assert hashlib.sha256(artifact.read_bytes()).hexdigest() == new['sha256']
 with zipfile.ZipFile(artifact) as archive:
     assert archive.testzip() is None, 'corrupt AnyKernel archive'
-    assert hashlib.sha256(archive.read('Image.gz-dtb')).hexdigest() == new['kernel_payload_sha256']
-    assert hashlib.sha256(archive.read('ramdisk-new.cpio.gz')).hexdigest() == new['ramdisk_sha256']
+    kernel=archive.read('Image.gz-dtb')
+    ramdisk=archive.read('ramdisk-new.cpio.gz')
+    assert hashlib.sha256(kernel).hexdigest() == new['kernel_payload_sha256']
+    assert hashlib.sha256(ramdisk).hexdigest() == new['ramdisk_sha256']
     assert archive.read('cmdline').decode().strip() == new['cmdline']
+boot=json.loads((s/f'package-{run}-boot.json').read_text())
+image=(s/f'boot-{run}.img').read_bytes()
+assert boot['format'] == 'boot'
+assert len(image) == boot['size'] == new['boot_image_size']
+assert hashlib.sha256(image).hexdigest() == boot['sha256']
+for key in ('kernel_payload_sha256', 'ramdisk_sha256', 'init_sha256', 'modules',
+            'firmware', 'policy_append_sha256', 'modem_firmware_readable', 'cmdline'):
+    assert boot[key] == new[key], f'boot image and ZIP differ: {key}'
+assert image[:8] == b'ANDROID!', 'invalid boot image magic'
+ksize, _, rsize, _, second, _, _, page, version=struct.unpack_from('<9I', image, 8)
+assert page == 2048 and version == 0 and second == 0, 'unsupported boot header'
+start=page + (ksize + page - 1) // page * page
+assert image[page:page + ksize] == kernel, 'boot image and ZIP kernels differ'
+assert image[start:start + rsize] == ramdisk, 'boot image and ZIP ramdisks differ'
+assert image[64:576].split(b'\0', 1)[0].decode() == new['cmdline'], \
+    'boot image and ZIP command lines differ'
+print('Boot image and flashable ZIP payloads match.')
 assert new['modem_firmware_readable'], 'the modem mount read masks were not patched'
 fragment=pathlib.Path('porting/policy/port-genfs-kgsl.cil').read_bytes()
 assert new['policy_append_sha256'] == hashlib.sha256(fragment).hexdigest(), \
@@ -592,3 +615,4 @@ for m in re.finditer(rb'Linux version [^\0\n]+',gzip.decompress((s/f'kdir-{run}/
     print('EMBEDDED BANNER:',m.group().decode())
 PY
 echo "Flashable ZIP: $SNAP/ack-tissot-$RUN.zip"
+echo "Boot image: $SNAP/boot-$RUN.img"

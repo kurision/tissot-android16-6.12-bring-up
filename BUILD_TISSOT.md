@@ -9,13 +9,13 @@ to the active boot slot (a or b), including when replacing stock/Lucifer.
 Installation replaces the kernel, DTB, entire ramdisk and command line;
 existing Magisk ramdisk changes are replaced. KernelSU is built into the
 port kernel. Compatibility with a particular ROM still needs a hardware
-boot test. The diagnostic boot-image and RAM-boot tooling remains available.
+boot test. Each build also produces a diagnostic boot image for RAM booting.
 
 **The whole flow is scripted**: `porting/tools/build-kernel.sh` resolves the
 toolchain, writes the configuration, builds the kernel out of the
 repository, checks the device tree, rebuilds the ramdisk's `/init`,
-packages the ZIP and verifies it. Read this document to know what it
-does and why; run it rather than the individual steps.
+packages the ZIP and boot image and verifies both. Read this document to
+know what it does and why; run it rather than the individual steps.
 
 ```bash
 bash porting/tools/build-kernel.sh run413 porting/artifacts/snapshot60/boot-run380-camera.img
@@ -23,9 +23,14 @@ bash porting/tools/build-kernel.sh run413 porting/artifacts/snapshot60/boot-run3
 
 The run name is only a label: the script refuses to overwrite the outputs
 of an existing run, so replace `run413` with an unused name. Use the verified
-base available in your checkout; the example uses run380. The ZIP is written to
-`porting/artifacts/snapshot60/ack-tissot-<run>.zip` (or `ACK_SNAPSHOT_DIR`),
-alongside `package-<run>.json` and the build evidence.
+base available in your checkout; the example uses run380. Outputs are written
+to `porting/artifacts/snapshot60/` (or `ACK_SNAPSHOT_DIR`):
+
+- `ack-tissot-<run>.zip` and `package-<run>.json` for flashing.
+- `boot-<run>.img` and `package-<run>-boot.json` for diagnostic RAM booting.
+
+Both carry identical kernel, ramdisk and command-line payloads. The script
+checks this before reporting success and refuses to overwrite either output.
 
 ## Layout: what is where
 
@@ -233,9 +238,10 @@ before the header exists.
 ## Packaging and verification
 
 The base image's ramdisk and command line, this kernel and this init are
-combined by `porting/logging/package-diag-boot.py`, which writes the ZIP
-and a report with the payload hashes. The build wrapper supplies the firmware,
-policy, matching modules and command-line adjustments automatically.
+combined by `porting/logging/package-diag-boot.py`. The build wrapper invokes
+it for both the ZIP and boot image with the same base, firmware, policy,
+matching modules and command-line adjustments. Each output has its own JSON
+report with payload hashes; the wrapper also compares the actual payloads.
 
 To package **existing outputs without a kernel build**, use the matching
 `kdir-<run>`, `init-<run>` and `modules-<run>` from that same build. Choose a
@@ -272,8 +278,10 @@ The host also rejects kernels whose in-memory size would reach the DTB.
 
 The report's `size` and `sha256` describe the ZIP; `boot_image_size` is the
 calculated size of its header-v0 boot payload. Existing kernel, ramdisk,
-init and module hash fields keep their meanings. Omitting `--format` (or
-using `--format boot`) retains the old diagnostic boot-image output.
+init and module hash fields keep their meanings. In `package-<run>-boot.json`,
+`size` and `sha256` describe the boot image. For manual packaging, use
+`--format boot`, `--out boot-<new-run>.img` and a separate report path to
+produce the diagnostic image from the same inputs.
 
 Verify the package report and the **shipped** embedded config, not just
 the output-tree config — the kernel embeds its own configuration, and
