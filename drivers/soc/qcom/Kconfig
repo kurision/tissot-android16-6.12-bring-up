@@ -191,8 +191,9 @@ config QCOM_RPMH
 	  help apply the aggregated state on the resource.
 
 config QCOM_SUBSYSTEM_COMPAT
-	bool "Qualcomm subsystem framework compatibility for the CAF video codec"
+	bool "Qualcomm subsystem framework compatibility for CAF userspace and video"
 	depends on ARCH_QCOM && OF
+	depends on REMOTEPROC=y
 	select QCOM_MDT_LOADER
 	select QCOM_SCM
 	help
@@ -206,7 +207,13 @@ config QCOM_SUBSYSTEM_COMPAT
 	  core and loading the firmware again.  The donor's ramdump on
 	  crash is not provided.
 
-	  Say Y here if the CAF video codec is enabled.
+	  It also provides the framework's userspace interface for the
+	  vendor peripheral manager: /sys/bus/msm_subsys with a subsysN
+	  device per remote processor, and /dev/subsys_<name> nodes that
+	  hold a vote on the processor while they are open.
+
+	  Say Y here if the CAF video codec or the vendor peripheral
+	  manager is used.
 
 config QCOM_SMEM
 	tristate "Qualcomm Shared Memory Manager (SMEM)"
