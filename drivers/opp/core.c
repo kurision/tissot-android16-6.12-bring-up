@@ -1809,6 +1809,7 @@ bool _opp_remove_all_static(struct opp_table *opp_table)
 		return true;
 	}
 
+	opp_table->static_opps_ready = false;
 	mutex_unlock(&opp_table->lock);
 
 	_opp_remove_all(opp_table, false);

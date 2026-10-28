@@ -1002,14 +1002,16 @@ static int adreno_of_parse_pwrlevels(struct adreno_device *adreno_dev,
 		 */
 		static const u32 gpu_supported_hw[] = { 0xff };
 
-		dev_pm_opp_set_supported_hw(&device->pdev->dev,
-				gpu_supported_hw, 1);
-		ret = dev_pm_opp_of_add_table(&device->pdev->dev);
-		if (ret) {
-			dev_err(device->dev,
-				"Unable to set the GPU OPP table: %d\n", ret);
-			return ret;
-		}
+		ret = devm_pm_opp_set_supported_hw(&device->pdev->dev,
+						   gpu_supported_hw, 1);
+		if (ret)
+			return dev_err_probe(&device->pdev->dev, ret,
+					"Unable to set supported GPU hardware\n");
+
+		ret = devm_pm_opp_of_add_table(&device->pdev->dev);
+		if (ret)
+			return dev_err_probe(&device->pdev->dev, ret,
+					"Unable to set the GPU OPP table\n");
 	}
 
 	pwr->num_pwrlevels = 0;
@@ -1228,6 +1230,7 @@ static int adreno_of_get_power(struct adreno_device *adreno_dev,
 	struct device_node *node = pdev->dev.of_node;
 	struct resource *res;
 	unsigned int timeout;
+	int ret;
 
 	if (of_property_read_string(node, "label", &pdev->name)) {
 		dev_err(device->dev, "Unable to read 'label'\n");
@@ -1254,10 +1257,10 @@ static int adreno_of_get_power(struct adreno_device *adreno_dev,
 	device->reg_phys = res->start;
 	device->reg_len = resource_size(res);
 
-	if (adreno_of_get_pwrlevels(adreno_dev, node)) {
-		dev_err(device->dev, "adreno_of_get_pwrlevels failed\n");
-		return -EINVAL;
-	}
+	ret = adreno_of_get_pwrlevels(adreno_dev, node);
+	if (ret)
+		return dev_err_probe(&pdev->dev, ret,
+				"adreno_of_get_pwrlevels failed\n");
 
 	/* Get context aware DCVS properties */
 	adreno_of_get_ca_aware_properties(adreno_dev, node);
@@ -1522,9 +1525,9 @@ static int adreno_probe(struct platform_device *pdev)
 
 	status = adreno_of_get_power(adreno_dev, pdev);
 	if (status) {
-		dev_err(&pdev->dev, "adreno_of_get_power failed: %d\n", status);
 		device->pdev = NULL;
-		return status;
+		return dev_err_probe(&pdev->dev, status,
+				"adreno_of_get_power failed\n");
 	}
 
 	/*
