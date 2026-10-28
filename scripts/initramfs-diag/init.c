@@ -3228,8 +3228,7 @@ static void boot_deadline(int kin, int klog)
  * Load the port's kernel modules from the ramdisk, in the order the build
  * wrote to /ack-modules/load-order. Built in, the CAF audio stack takes the
  * kernel's image_size past the DTB the bootloader places at 0x13400000 and
- * the phone does not boot, so it is modules
- * (porting/findings/2026-10-21-kernel-overruns-the-dtb.md).
+ * the phone does not boot, so it is modules.
  *
  * They are not in /lib/modules on purpose: Android's first-stage init loads
  * that directory itself and aborts the boot if any module fails. Here a

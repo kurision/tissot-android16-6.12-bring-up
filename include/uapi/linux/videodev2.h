@@ -1392,8 +1392,7 @@ static inline __u64 v4l2_timeval_to_ns(const struct timeval *tv)
  * the driver (V4L2_BUFFER_MASK_FLAGS in
  * drivers/media/common/videobuf2/videobuf2-v4l2.c) and treats a
  * queued buffer with V4L2_BUF_FLAG_REQUEST_FD as a request, which
- * a queue without the requests API rejects with -EBADR.  See
- * porting/findings/2026-10-22-vidc3x-import-research.md.
+ * a queue without the requests API rejects with -EBADR.
  */
 #define V4L2_QCOM_BUF_FLAG_EOSEQ                0x00040000
 #define V4L2_QCOM_BUF_TIMESTAMP_INVALID         0x00080000

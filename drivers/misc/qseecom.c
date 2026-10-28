@@ -9810,7 +9810,6 @@ static void qseecom_deregister_shmbridge(void)
  * cause for the third-request capture cutoff.
  * Upstream TZ pools address per-call DMA overhead and shared-memory needs;
  * they are not evidence for a board-specific storage failure.
- * See porting/findings/11-session-report-spill-blocker-20261009.md.
  *
  * Allocate once, never free. The lock taken in alloc is released in free, so
  * the buffer is owned across the whole SMC call and never shared between

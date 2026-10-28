@@ -18,8 +18,7 @@ ccflags-y += -Wno-unused-but-set-variable -Wno-unused-variable \
 # The stack is split into CAF's loadable modules, one per role, with the
 # donor's names (techpack/audio: ipc/, dsp/, asoc/, asoc/codecs/). Built in,
 # it is 3.6 MB of image_size, which takes the kernel past the DTB the
-# bootloader places at 0x13400000 and the phone does not boot
-# (porting/findings/2026-10-21-kernel-overruns-the-dtb.md). Each module
+# bootloader places at 0x13400000 and the phone does not boot. Each module
 # has exactly one module_init; the load order is apr, q6, wglink,
 # platform, the codecs and mbhc, then machine.
 #
