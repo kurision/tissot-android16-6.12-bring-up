@@ -30,16 +30,38 @@ jobs:
           set -euo pipefail
           git check-ref-format "refs/tags/$TAG"
           test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$TAG^{commit}")"
+      # Caches are scoped per ref: tag runs can only restore entries saved by
+      # a run on the default branch, so seed it with workflow_dispatch from there.
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ccache
+            ~/.cargo/bin/bindgen
+          key: kbuild-${{ github.run_id }}
+          restore-keys: kbuild-
       - name: Install build dependencies
         run: |
           set -euo pipefail
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-snapshot.gpg
           echo 'deb [signed-by=/usr/share/keyrings/llvm-snapshot.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main' | sudo tee /etc/apt/sources.list.d/llvm-23.list
           sudo apt-get update
-          sudo apt-get install -y clang-23 lld-23 llvm-23 libclang-23-dev gcc-aarch64-linux-gnu bc bison flex kmod libssl-dev libelf-dev libdw-dev device-tree-compiler python3-pip python3-venv ripgrep pahole
+          sudo apt-get install -y clang-23 lld-23 llvm-23 libclang-23-dev gcc-aarch64-linux-gnu bc bison flex kmod libssl-dev libelf-dev libdw-dev device-tree-compiler python3-pip python3-venv ripgrep pahole ccache
           rustup toolchain install 1.99.0 --profile minimal --component rust-src
           rustup default 1.99.0
-          cargo install --locked bindgen-cli --version 0.73.2
+          "$HOME/.cargo/bin/bindgen" --version 2>/dev/null | grep -qx 'bindgen 0.73.2' ||
+            cargo install --locked --force bindgen-cli --version 0.73.2
+          # build-kernel.sh needs CLANG to be one executable path.
+          mkdir -p "$RUNNER_TEMP/cc"
+          printf '#!/bin/sh\nexec ccache /usr/lib/llvm-23/bin/clang "$@"\n' > "$RUNNER_TEMP/cc/clang"
+          chmod +x "$RUNNER_TEMP/cc/clang"
+          {
+            echo "CLANG=$RUNNER_TEMP/cc/clang"
+            echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+            echo 'CCACHE_MAXSIZE=3G'
+            echo 'CCACHE_COMPILERCHECK=content'
+            echo "CCACHE_EXTRAFILES=$GITHUB_WORKSPACE/gki/aarch64/afdo/kernel.afdo"
+          } >> "$GITHUB_ENV"
           python3 -m venv "$RUNNER_TEMP/dtschema-venv"
           "$RUNNER_TEMP/dtschema-venv/bin/pip" install dtschema
           echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
@@ -53,6 +75,19 @@ jobs:
         run: |
           set -euo pipefail
           bash porting/tools/build-kernel.sh release
+      - name: Compiler cache stats
+        if: always()
+        run: ccache -s
+      - name: Upload build evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-evidence-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/ack-kernel-${{ github.run_id }}-${{ github.run_attempt }}/*.log
+            ${{ runner.temp }}/ack-kernel-${{ github.run_id }}-${{ github.run_attempt }}/*.config
+            ${{ runner.temp }}/ack-kernel-${{ github.run_id }}-${{ github.run_attempt }}/*.diff
+          if-no-files-found: ignore
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
