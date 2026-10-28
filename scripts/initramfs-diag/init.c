@@ -1658,7 +1658,7 @@ static int mounts_contain(const char *word)
  */
 static void start_remoteproc(const char *match, int log)
 {
-	char message[256], dirpath[128], name[64], state[32];
+	char message[512], dirpath[320], name[64], state[32];
 	DIR *rp;
 	struct dirent *entry;
 	int ret;
@@ -1708,7 +1708,7 @@ static void start_remoteproc(const char *match, int log)
 static void harvest_modem_child(int log)
 {
 	time_t deadline = monotonic_seconds() + 240;
-	char message[256];
+	char message[512];
 	int pathset = 0;
 	int patherr = 0;
 	/*
@@ -2100,7 +2100,8 @@ static void adsprpc_compat_child(int log)
 	 * avc denied on the tmpfs default context.
 	 */
 	chmod("/dev/adsprpc-smd", 0664);
-	chown("/dev/adsprpc-smd", 1000, 1000);
+	if (chown("/dev/adsprpc-smd", 1000, 1000))
+		say(log, "DIAG: adsprpc compat: chown failed\n");
 	n = setxattr("/dev/adsprpc-smd", "security.selinux",
 		     "u:object_r:qdsp_device:s0",
 		     sizeof("u:object_r:qdsp_device:s0") - 1, 0);

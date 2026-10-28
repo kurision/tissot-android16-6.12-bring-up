@@ -426,7 +426,7 @@
 	 * receivers and the sensors that hang on them.
 	 */
 	cci: qcom,cci@1b0c000 {
-		status = "ok";
+		status = "okay";
 		cell-index = <0>;
 		compatible = "qcom,cci";
 		reg = <0x1b0c000 0x4000>;
@@ -633,7 +633,7 @@
 		qcom,cam-power-seq-cfg-val = <0 1 1 1 24000000 1>;
 		qcom,cam-power-seq-delay = <1 0 0 0 10 1>;
 
-		status = "ok";
+		status = "okay";
 		clocks = <&gcc MCLK1_CLK_SRC>,
 			 <&gcc GCC_CAMSS_MCLK1_CLK>;
 		clock-names = "cam_src_clk", "cam_clk";
@@ -719,7 +719,7 @@
 		qcom,cam-power-seq-cfg-val = <0 1 1 1 24000000 1>;
 		qcom,cam-power-seq-delay = <1 0 0 0 10 1>;
 
-		status = "ok";
+		status = "okay";
 		clocks = <&gcc MCLK1_CLK_SRC>,
 			 <&gcc GCC_CAMSS_MCLK1_CLK>;
 		clock-names = "cam_src_clk", "cam_clk";
@@ -769,7 +769,7 @@
 			"cam_vdig",	"cam_vio", "cam_vaf", "sensor_cam_mclk", "sensor_gpio_reset", "sensor_gpio_standby";
 		qcom,cam-power-seq-cfg-val = <0 0 1 1 1 1 24000000 1 1>;
 		qcom,cam-power-seq-delay = <1 1 0 0 0 0 10 1 1>;
-		status = "ok";
+		status = "okay";
 		clocks = <&gcc MCLK0_CLK_SRC>,
 			 <&gcc GCC_CAMSS_MCLK0_CLK>;
 		clock-names = "cam_src_clk", "cam_clk";
@@ -814,7 +814,7 @@
 				"sensor_gpio_reset", "sensor_gpio_standby";
 		qcom,cam-power-seq-cfg-val = <0 0 1 1 1 1 24000000 1 1>;
 		qcom,cam-power-seq-delay = <1 1 0 0 0 0 10 1 1>;
-		status = "ok";
+		status = "okay";
 		clocks = <&gcc MCLK2_CLK_SRC>,
 			 <&gcc GCC_CAMSS_MCLK2_CLK>;
 		clock-names = "cam_src_clk", "cam_clk";
@@ -864,7 +864,7 @@
 			"cam_vdig",	"cam_vio", "cam_vaf", "sensor_cam_mclk", "sensor_gpio_reset", "sensor_gpio_standby";
 		qcom,cam-power-seq-cfg-val = <0 0 1 1 1 1 24000000 1 1>;
 		qcom,cam-power-seq-delay = <1 1 0 0 0 0 10 1 1>;
-		status = "ok";
+		status = "okay";
 		clocks = <&gcc MCLK0_CLK_SRC>,
 			 <&gcc GCC_CAMSS_MCLK0_CLK>;
 		clock-names = "cam_src_clk", "cam_clk";
@@ -909,7 +909,7 @@
 				"sensor_gpio_reset", "sensor_gpio_standby";
 		qcom,cam-power-seq-cfg-val = <0 0 1 1 1 1 24000000 1 1>;
 		qcom,cam-power-seq-delay = <1 1 0 0 0 0 10 1 1>;
-		status = "ok";
+		status = "okay";
 		clocks = <&gcc MCLK2_CLK_SRC>,
 			 <&gcc GCC_CAMSS_MCLK2_CLK>;
 		clock-names = "cam_src_clk", "cam_clk";
@@ -997,7 +997,7 @@
 		qcom,sensor-position = <0>;
 		qcom,sensor-mode = <1>;
 		qcom,cci-master = <1>;
-		status = "ok";
+		status = "okay";
 		clocks = <&gcc MCLK2_CLK_SRC>,
 			<&gcc GCC_CAMSS_MCLK2_CLK>;
 		clock-names = "cam_src_clk", "cam_clk";
