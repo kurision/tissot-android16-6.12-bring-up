@@ -75,7 +75,7 @@ struct wcd_clsh_cdc_info {
 	int interpolator_modes[WCD_CLSH_STATE_MAX];
 };
 
-#if IS_ENABLED(CONFIG_WCD9XXX_CODEC_CORE)
+#if IS_ENABLED(CONFIG_SND_SOC_MSM_WCD_MBHC)
 extern void wcd_cls_h_fsm(struct snd_soc_component *component,
 		struct wcd_clsh_cdc_info *cdc_clsh_d,
 		u8 clsh_event, u8 req_state,
@@ -92,14 +92,14 @@ static inline void wcd_cls_h_fsm(struct snd_soc_component *component,
 {
 }
 
-static inline extern void wcd_cls_h_init(struct wcd_clsh_cdc_info *clsh)
+static inline void wcd_cls_h_init(struct wcd_clsh_cdc_info *clsh)
 {
 }
 
-static inline extern void wcd_clsh_set_hph_mode(struct snd_soc_component *component,
-				  int mode)
+static inline void wcd_clsh_set_hph_mode(struct snd_soc_component *component,
+					 int mode)
 {
 }
-#endif /* CONFIG_SND_SOC_WCD9XXX_V2 */
+#endif /* CONFIG_SND_SOC_MSM_WCD_MBHC */
 
 #endif
