@@ -95,8 +95,22 @@ jobs:
           SNAPSHOT: ${{ runner.temp }}/ack-kernel-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          NOTES="$RUNNER_TEMP/release-notes.md"
+          echo 'Experimental kernel update for an existing ACK Tissot ramdisk. It loads WCNSS calibration from the device through the ueventd firmware fallback; verified on a Mi A1 (tissot) with a CI build from 7289942ca (modem, ADSP and WCNSS running, WiFi associated with DHCP and internet). Other devices and ramdisks are untested.' > "$NOTES"
+          # The checkout is shallow, so list commits through the compare API
+          # against the most recent published release instead of git log.
+          PREV=$(gh release list --exclude-drafts --limit 20 --json tagName --jq '.[].tagName' |
+            grep -vx "$TAG" | head -1 || true)
+          if [ -n "$PREV" ]; then
+            {
+              printf '\n## Changes since %s\n\n' "$PREV"
+              gh api --paginate "repos/$GITHUB_REPOSITORY/compare/$PREV...$TAG" \
+                --jq '.commits[] | "- " + (.commit.message | split("\n")[0]) + " (" + .sha[0:12] + ")"'
+              printf '\n**Full changelog**: https://github.com/%s/compare/%s...%s\n' "$GITHUB_REPOSITORY" "$PREV" "$TAG"
+            } >> "$NOTES"
+          fi
           gh release create "$TAG" --verify-tag \
             --title "$TAG" \
             --prerelease \
-            --notes 'Experimental kernel update for an existing ACK Tissot ramdisk. It loads WCNSS calibration from the device through the ueventd firmware fallback; verified on a Mi A1 (tissot) with a CI build from 7289942ca (modem, ADSP and WCNSS running, WiFi associated with DHCP and internet). Other devices and ramdisks are untested.' \
+            --notes-file "$NOTES" \
             "$SNAPSHOT/ack-tissot-release.zip" "$SNAPSHOT/package-release.json"
