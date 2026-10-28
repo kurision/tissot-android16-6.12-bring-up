@@ -895,6 +895,13 @@ static void dwc3_qcom_remove(struct platform_device *pdev)
 	of_platform_depopulate(&pdev->dev);
 	platform_device_put(qcom->dwc3);
 
+	/*
+	 * The extcon notifiers are devm-managed and stay registered until
+	 * after remove() returns; park them before the clocks go off.
+	 */
+	scoped_guard(mutex, &qcom->vbus_lock)
+		qcom->is_suspended = true;
+
 	for (i = qcom->num_clocks - 1; i >= 0; i--) {
 		clk_disable_unprepare(qcom->clks[i]);
 		clk_put(qcom->clks[i]);
