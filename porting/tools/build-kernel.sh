@@ -192,7 +192,7 @@ HOSTRUSTC=${HOSTRUSTC:-$RUSTC}
 BINDGEN=${BINDGEN:-}
 if [ -z "$BINDGEN" ]; then
 	# On the PATH first: bindgen is not part of a rustup toolchain, so it
-	# is usually installed separately (cargo install bindgen --version
+	# is usually installed separately (cargo install bindgen-cli --version
 	# 0.73.2).
 	BINDGEN=$(command -v bindgen || true)
 fi
@@ -214,7 +214,7 @@ test -n "$CLANG" && test -x "$CLANG" || {
 test -x "$RUSTC" || { echo "error: no rustc at $RUSTC; set RUSTC" >&2; exit 1; }
 test -x "$BINDGEN" || {
 	echo "error: bindgen not found." >&2
-	echo "Install it (cargo install bindgen --version 0.73.2) or set BINDGEN." >&2
+	echo "Install it (cargo install bindgen-cli --version 0.73.2) or set BINDGEN." >&2
 	exit 1; }
 test -r "$RUST_LIB_SRC/core/src/lib.rs" || {
 	echo "error: the Rust standard library source is not at $RUST_LIB_SRC;" >&2

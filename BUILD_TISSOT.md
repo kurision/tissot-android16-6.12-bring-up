@@ -36,18 +36,13 @@ payloads; the script checks this and refuses to overwrite existing outputs.
 
 ## GitHub releases
 
-`.github/workflows/kernel-release.yml` builds on a self-hosted Linux x86-64
-runner. Provision the toolchain and build dependencies described below on that
-runner, stage the WCNSS calibration using `pull-wcnss-firmware.sh`, and set
-the repository variable `ACK_WCNSS_FIRMWARE_DIR` to its absolute directory.
-The runner also needs `gh`, `git`, `rg`, `make`, `bc`, `bison`, `flex`,
-`depmod`, OpenSSL and libelf development files, `dtc`, and Python's `dtschema`
-package for the build and devicetree checks.
-The kernel embeds that device-derived calibration; a published ZIP therefore
-distributes it. Ensure the chosen blob can be shared before publishing.
+`.github/workflows/kernel-release.yml` installs the toolchain and build
+dependencies on a GitHub-hosted Ubuntu runner. It enables the experimental
+device-local WLAN calibration fallback, so no WCNSS calibration is needed
+at build time. The existing ACK ramdisk must still provide early firmware.
 
 Push an existing `v*` tag, or run the workflow manually with an existing tag;
-the workflow builds that tag and creates a GitHub release with the ZIP and
+the workflow builds that tag and creates a GitHub prerelease with the ZIP and
 package report. It needs repository Actions enabled and write access for
 `GITHUB_TOKEN`. The release is an ACK ramdisk update, not a stock installer.
 The workflow and resulting image have not yet been tested on a runner or phone.
@@ -102,7 +97,7 @@ bindgen is not part of a rustup toolchain either; it is installed
 separately:
 
 ```bash
-cargo install bindgen --version 0.73.2
+cargo install bindgen-cli --version 0.73.2
 ```
 
 A plain `rustc` in an interactive shell resolves through `~/.cargo/bin`,
@@ -177,9 +172,8 @@ a known-good image, follow `porting/REFERENCE-boot-testing.md`, and compare
 against a known-good run. In enforcing mode, confirm the embedded config has
 an empty `CONFIG_EXTRA_FIRMWARE` and `CONFIG_FW_LOADER_USER_HELPER_FALLBACK=y`,
 then capture the firmware uevent and Wi-Fi association logs and any AVCs.
-Only after the device-local load is verified should release builds stop
-embedding calibration. The release workflow intentionally uses the current
-verified configuration until then.
+The release workflow uses this experimental mode and marks its releases as
+prereleases until device-local loading is verified.
 
 The configuration is not the defconfig and not whatever the last build
 left behind. `arch/arm64/configs/defconfig` is dead code here: the
