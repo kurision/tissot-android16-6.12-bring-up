@@ -1113,16 +1113,18 @@
 	cpu-idle-states = <&tissot_cpu_sleep_1>;
 };
 
-/* earlycon: stdout-path lets bare `earlycon` auto-match the UART (see
- * porting/REFERENCE-boot-testing.md — early console is the only channel
- * that catches a panic before level 2). */
+/*
+ * stdout-path lets a bare `earlycon` match the UART. The early console is
+ * the only channel that catches a panic before initcall level 2.
+ */
 &{/chosen} {
 	stdout-path = "/soc@0/serial@78af000:115200n8";
 };
 
-/* WCN3680 (stock live DT iris compatible); supplies from the live DT:
- * vddxo=l7, vddrfa=l19, vddpa=l9, vdddig=l5. Blobs from the
- * modem-partition harvest (adsp.*+wcnss.*) plus vendor wlan/prima/. */
+/*
+ * WCN3680, the iris compatible of the stock DT, with the stock supplies:
+ * vddxo = l7, vddrfa = l19, vddpa = l9, vdddig = l5.
+ */
 &wcnss {
 	status = "okay";
 };
@@ -1137,19 +1139,22 @@
 	status = "okay";
 };
 
-/* The stock aboot DTB has no local-mac-address, and this port boots with
- * aboot rather than lk2nd (which synthesizes one from the serial).  Ask the
- * driver for the same 02:00:<serial[0:7]> address lk2nd would provide. */
+/*
+ * The stock aboot DTB has no local-mac-address, and this port boots with
+ * aboot rather than lk2nd, which synthesizes one from the serial. Ask the
+ * driver for the same 02:00:<serial[0:7]> address lk2nd would provide.
+ */
 &wcnss_wifi {
 	qcom,mac-address-from-serial;
 };
 
-/* The modem is present in the SoC DTSI but disabled: nothing in the port
- * had brought MPSS up.  It has no separate vdd_mss regulator here because
- * the driver uses the MSM8953_VDDMD power domain.  Its only regulator is
- * the 1.8 V PLL rail, pm8953_l7, the same supply the stock 4.19 DTS names
- * vdd_pll.  rproc->auto_boot is false in the driver, so enabling the node
- * only creates the remoteproc; userspace still starts it explicitly. */
+/*
+ * The SoC DTSI disables the modem. It has no separate vdd_mss regulator
+ * here because the driver uses the MSM8953_VDDMD power domain; its only
+ * regulator is the 1.8 V PLL rail, pm8953_l7, which the stock 4.19 DTS
+ * names vdd_pll. rproc->auto_boot is false in the driver, so enabling the
+ * node only creates the remoteproc; userspace starts it.
+ */
 &mpss {
 	status = "okay";
 	pll-supply = <&pm8953_l7>;

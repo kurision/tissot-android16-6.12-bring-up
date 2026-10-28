@@ -2078,7 +2078,7 @@
 				};
 			};
 		};
-		/* First qcom,qseecom node on ACK (booted DTB tissot includes this dtsi): DT present, so no module_init fallback. */
+		/* With this node present, qseecom probes from DT, not module_init. */
 		qcom_seecom: qseecom@84a00000 {
 			compatible = "qcom,qseecom";
 			reg = <0x84a00000 0x1900000>;
