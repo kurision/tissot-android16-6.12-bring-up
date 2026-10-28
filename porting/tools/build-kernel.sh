@@ -13,8 +13,7 @@
 #                       regenerates, so a reconstructed base packages
 #                       cleanly, boots, and then stalls in userspace
 #                       several stages later than it should. If it is not
-#                       given, look for it next to the repository (see
-#                       BASE_IMAGE_HINT below).
+#                       given, create an update for an existing ACK ramdisk.
 #
 # What this does, in order:
 #
@@ -32,10 +31,9 @@
 #      source tree is this repository, so a clone builds.
 #   4. Rebuilds the ramdisk's /init from scripts/initramfs-diag/init.c, so
 #      an image never carries a stale init binary.
-#   5. Packages a flashable AnyKernel ZIP and a diagnostic boot image using
-#      the base image's ramdisk and command line, this kernel, this init,
-#      and the port's SELinux genfs fragment (porting/policy/port-genfs-kgsl.cil),
-#      which the base ramdisk's CIL is compiled with at boot.
+#   5. Without a base, packages an update for an installed ACK ramdisk.
+#      With a base, packages a complete AnyKernel ZIP and diagnostic boot
+#      image using that ramdisk and its command line.
 #
 # The output directory is out/ in this repository and it is reused. A
 # clean rebuild means emptying it, not making a new one:
@@ -48,6 +46,7 @@
 #
 #   ACK_TISSOT_BASE_IMAGE  the base boot image (also the second argument)
 #   ACK_SNAPSHOT_DIR       where the per-run evidence goes
+#   ACK_EXPERIMENTAL_WCNSS_FALLBACK=1  use ueventd instead of embedding NV
 #   ACK_WCNSS_FIRMWARE_DIR the staged wcnss.* + WCNSS_qcom_wlan_nv.bin
 #                          tree (default: porting/artifacts/firmware-wcnss;
 #                          populate it with pull-wcnss-firmware.sh)
@@ -88,12 +87,20 @@ NV_FIRMWARE="$FW_DIR/wlan/prima/WCNSS_qcom_wlan_nv.bin"
 # by the Venus driver at probe time, before the vendor partition is mounted,
 # so it is packaged into the ramdisk the same way the WCNSS blobs are.
 VENUS_FW_DIR=${ACK_VENUS_FIRMWARE_DIR:-$REPO/porting/artifacts/firmware-venus}
+WCNSS_FALLBACK=${ACK_EXPERIMENTAL_WCNSS_FALLBACK:-0}
+case "$WCNSS_FALLBACK" in 0|1) ;; *) echo "error: ACK_EXPERIMENTAL_WCNSS_FALLBACK must be 0 or 1" >&2; exit 1;; esac
+
+BASE_IMAGE=${2:-${ACK_TISSOT_BASE_IMAGE:-}}
+if [ -n "$BASE_IMAGE" ] && [ ! -f "$BASE_IMAGE" ]; then
+	echo "error: base boot image not found: $BASE_IMAGE" >&2
+	exit 1
+fi
 
 # Firmware is gitignored and does not follow a branch into a new worktree.
 # Refuse an incomplete staging tree before changing out/.config or building.
+if [ -n "$BASE_IMAGE" ]; then
 for file in wcnss.mdt wcnss.b00 wcnss.b01 wcnss.b02 wcnss.b04 \
-	    wcnss.b06 wcnss.b09 wcnss.b10 wcnss.b11 wcnss.b12 \
-	    wlan/prima/WCNSS_qcom_wlan_nv.bin; do
+	    wcnss.b06 wcnss.b09 wcnss.b10 wcnss.b11 wcnss.b12; do
 	if [ ! -s "$FW_DIR/$file" ]; then
 		echo "error: missing or empty WCNSS firmware: $FW_DIR/$file" >&2
 		echo "Stage it with pull-wcnss-firmware.sh or set ACK_WCNSS_FIRMWARE_DIR." >&2
@@ -107,34 +114,15 @@ for file in venus.mdt venus.b00 venus.b01 venus.b02 venus.b03 venus.b04; do
 		exit 1
 	fi
 done
+fi
+if [ "$WCNSS_FALLBACK" = 0 ] && [ ! -s "$NV_FIRMWARE" ]; then
+	echo "error: missing or empty WCNSS calibration: $NV_FIRMWARE" >&2
+	exit 1
+fi
 
 # --- the base image ---------------------------------------------------------
 # A real, SHA-verified image. Not redistributable, so it is not in the
 # repository: the builder supplies it, or keeps it next to the checkout.
-BASE_IMAGE_HINT=${ACK_TISSOT_BASE_IMAGE:-}
-if [ $# -ge 2 ]; then
-	BASE_IMAGE=$2
-elif [ -n "$BASE_IMAGE_HINT" ] && [ -f "$BASE_IMAGE_HINT" ]; then
-	BASE_IMAGE=$BASE_IMAGE_HINT
-else
-	for candidate in "$REPO/../ack-kgsl-artifacts/base.img" \
-			  "$REPO/../ack-kgsl-artifacts/boot-run258.img" \
-			  "$REPO/porting/artifacts/base/boot-run258.img" \
-			  "$REPO/porting/artifacts/snapshot60/boot-run258.img"; do
-		if [ -f "$candidate" ]; then
-			BASE_IMAGE=$candidate
-			break
-		fi
-	done
-fi
-if [ -z "${BASE_IMAGE:-}" ] || [ ! -f "$BASE_IMAGE" ]; then
-	echo "error: no base boot image." >&2
-	echo "Give one as the second argument, or set ACK_TISSOT_BASE_IMAGE." >&2
-	echo "It must be a real image: the diag ramdisk carries a patched" >&2
-	echo "SELinux policy and a force_debuggable trigger that nothing in" >&2
-	echo "this tree regenerates." >&2
-	exit 1
-fi
 
 # The current init installs overlays whose staging labels must survive restorecon.
 check_ramdisk_contexts() {
@@ -184,7 +172,9 @@ except (OSError, ValueError, EOFError, KeyError, zipfile.BadZipFile, struct.erro
 print(f'Ramdisk staging and partition labels verified: {sys.argv[1]}')
 PY
 }
+if [ -n "$BASE_IMAGE" ]; then
 check_ramdisk_contexts "$BASE_IMAGE"
+fi
 
 # --- the toolchain ----------------------------------------------------------
 # The tools are found, not hardcoded, so a fresh clone builds on any host
@@ -255,7 +245,7 @@ echo "  $REPO"
 echo "=== the output directory ==="
 echo "  $OUT_DIR"
 echo "=== the base image ==="
-echo "  $BASE_IMAGE"
+echo "  ${BASE_IMAGE:-existing ACK ramdisk on device}"
 
 # --- the run's outputs ------------------------------------------------------
 mkdir -p "$SNAP" "$OUT_DIR"
@@ -343,9 +333,14 @@ done
 # switch_root timing and the SELinux path from the WLAN bring-up. Only the
 # NV blob is embedded: wcnss.mdt is still needed before the vendor
 # partition is mounted, and it is packaged into the ramdisk below.
-scripts/config --file "$OUT_DIR/.config" \
-	--set-str EXTRA_FIRMWARE "wlan/prima/WCNSS_qcom_wlan_nv.bin" \
-	--set-str EXTRA_FIRMWARE_DIR "$(realpath "$FW_DIR")"
+if [ "$WCNSS_FALLBACK" = 1 ]; then
+	scripts/config --file "$OUT_DIR/.config" \
+		--set-str EXTRA_FIRMWARE "" --enable FW_LOADER_USER_HELPER_FALLBACK
+else
+	scripts/config --file "$OUT_DIR/.config" \
+		--set-str EXTRA_FIRMWARE "wlan/prima/WCNSS_qcom_wlan_nv.bin" \
+		--set-str EXTRA_FIRMWARE_DIR "$(realpath "$FW_DIR")"
+fi
 "${make_args[@]}" olddefconfig
 scripts/diffconfig "$SNAP/$RUN-prebuild.config" "$OUT_DIR/.config" | tee "$SNAP/$RUN-config.diff"
 # The fingerprint pair is asserted as well: both sensor nodes are in the
@@ -357,7 +352,12 @@ for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SLIMBUS ZRAM MSM_SMD_PKT FING
 done
 grep -qx '# CONFIG_BT_QCOMSMD is not set' "$OUT_DIR/.config" || {
  echo "CONFIG_BT_QCOMSMD is still enabled" >&2; exit 1; }
-if [ -f "$NV_FIRMWARE" ]; then
+if [ "$WCNSS_FALLBACK" = 1 ]; then
+ grep -qx 'CONFIG_EXTRA_FIRMWARE=""' "$OUT_DIR/.config" || {
+  echo "CONFIG_EXTRA_FIRMWARE is not empty" >&2; exit 1; }
+ grep -qx 'CONFIG_FW_LOADER_USER_HELPER_FALLBACK=y' "$OUT_DIR/.config" || {
+  echo "CONFIG_FW_LOADER_USER_HELPER_FALLBACK is not set" >&2; exit 1; }
+else
  grep -qx 'CONFIG_EXTRA_FIRMWARE="wlan/prima/WCNSS_qcom_wlan_nv.bin"' "$OUT_DIR/.config" || {
   echo "CONFIG_EXTRA_FIRMWARE was not accepted" >&2; exit 1; }
  grep -qx "CONFIG_EXTRA_FIRMWARE_DIR=\"$(realpath "$FW_DIR")\"" "$OUT_DIR/.config" || {
@@ -481,6 +481,29 @@ cat "$BOOT/Image.gz" "$BOOT/dts/qcom/msm8953-xiaomi-tissot.dtb" > "$BOOT/Image.g
 "$CROSS_CC" -Os -static -DANDROID_CAPTURE \
 	-DBOOT_DEADLINE_SECONDS=0 scripts/initramfs-diag/init.c \
 	-o "$SNAP/init-$RUN"
+
+if [ -z "$BASE_IMAGE" ]; then
+	python3 -B porting/logging/package-kernel-update.py \
+		--stage-kernel "$BOOT" --kernel-dir "$SNAP/kdir-$RUN" \
+		--init "$SNAP/init-$RUN" --modules-dir "$MOD_DIR" \
+		--out "$SNAP/ack-tissot-$RUN.zip" --report "$SNAP/package-$RUN.json"
+	scripts/extract-ikconfig "$SNAP/kdir-$RUN/Image.gz" > "$SNAP/$RUN-embedded.config"
+	for key in RUST_IS_AVAILABLE RUST ASHMEM CPUFREQ_DT QCOM_CLK_APCC_MSM8953 \
+		QCOM_RPMPD PSTORE_RAM KSU ZRAM; do
+		grep -qx "CONFIG_${key}=y" "$SNAP/$RUN-embedded.config" || {
+			echo "error: CONFIG_$key missing from embedded config" >&2; exit 1; }
+	done
+	python3 - "$SNAP/ack-tissot-$RUN.zip" <<'PY'
+import hashlib, sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    assert archive.testzip() is None, 'corrupt AnyKernel archive'
+    for line in archive.read('payload.sha256').decode().splitlines():
+        digest, name = line.split()
+        assert hashlib.sha256(archive.read(name)).hexdigest() == digest, name
+PY
+	echo "Flashable ACK kernel-update ZIP: $SNAP/ack-tissot-$RUN.zip"
+	exit 0
+fi
 
 # --- the packaging ----------------------------------------------------------
 # WCNSS firmware is requested by the remoteproc before the vendor partition

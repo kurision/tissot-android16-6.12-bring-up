@@ -1,0 +1,54 @@
+name: Build Tissot kernel release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ format('refs/tags/{0}', inputs.tag || github.ref_name) }}
+          fetch-depth: 0
+          clean: false
+      - name: Verify release tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          git check-ref-format "refs/tags/$TAG"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$TAG^{commit}")"
+      - name: Build flashable update
+        env:
+          ACK_WCNSS_FIRMWARE_DIR: ${{ vars.ACK_WCNSS_FIRMWARE_DIR }}
+          ACK_TISSOT_BASE_IMAGE: ''
+          ACK_EXPERIMENTAL_WCNSS_FALLBACK: '0'
+          ACK_SNAPSHOT_DIR: ${{ runner.temp }}/ack-kernel-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test -n "$ACK_WCNSS_FIRMWARE_DIR" || { echo 'Set repository variable ACK_WCNSS_FIRMWARE_DIR to the runner firmware directory.' >&2; exit 1; }
+          bash porting/tools/build-kernel.sh release
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          SNAPSHOT: ${{ runner.temp }}/ack-kernel-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --verify-tag \
+            --title "$TAG" \
+            --notes 'Kernel update for an existing ACK Tissot ramdisk. This build embeds the runner-provided WCNSS calibration data. Device compatibility has not been verified by CI.' \
+            "$SNAPSHOT/ack-tissot-release.zip" "$SNAPSHOT/package-release.json"

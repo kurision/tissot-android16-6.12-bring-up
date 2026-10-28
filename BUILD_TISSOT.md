@@ -4,20 +4,22 @@ This is the entry point for building this port on a Linux host. Read
 `porting/REFERENCE-boot-testing.md` before a boot. Do not build or boot
 without the user's authorization.
 
-The normal release artifact is a **flashable AnyKernel3 ZIP**. It installs
-to the active boot slot (a or b), including when replacing stock/Lucifer.
-Installation replaces the kernel, DTB, entire ramdisk and command line;
-existing Magisk ramdisk changes are replaced. KernelSU is built into the
-port kernel. Compatibility with a particular ROM still needs a hardware
-boot test. Each build also produces a diagnostic boot image for RAM booting.
+The release artifact is a **flashable AnyKernel3 ZIP** for the active boot
+slot. Without a base image it updates an existing ACK ramdisk, retaining its
+policy, firmware and command line while replacing the kernel, init and matching
+modules. It refuses a stock ramdisk. With a base image the ZIP carries the
+complete ACK ramdisk and can replace stock/Lucifer; that mode also produces a
+diagnostic boot image. Neither mode has been hardware-tested for every ROM.
 
 **The whole flow is scripted**: `porting/tools/build-kernel.sh` resolves the
 toolchain, writes the configuration, builds the kernel out of the
 repository, checks the device tree, rebuilds the ramdisk's `/init`,
-packages the ZIP and boot image and verifies both. Read this document to
+packages and verifies the outputs. Read this document to
 know what it does and why; run it rather than the individual steps.
 
 ```bash
+bash porting/tools/build-kernel.sh run413
+# Or supply a real base for a complete ZIP and diagnostic boot image:
 bash porting/tools/build-kernel.sh run413 porting/artifacts/snapshot60/boot-run380-camera.img
 ```
 
@@ -27,10 +29,28 @@ base available in your checkout; the example uses run380. Outputs are written
 to `porting/artifacts/snapshot60/` (or `ACK_SNAPSHOT_DIR`):
 
 - `ack-tissot-<run>.zip` and `package-<run>.json` for flashing.
-- `boot-<run>.img` and `package-<run>-boot.json` for diagnostic RAM booting.
+- With a base: `boot-<run>.img` and `package-<run>-boot.json` for diagnostic RAM booting.
 
-Both carry identical kernel, ramdisk and command-line payloads. The script
-checks this before reporting success and refuses to overwrite either output.
+With a base, both outputs carry identical kernel, ramdisk and command-line
+payloads; the script checks this and refuses to overwrite existing outputs.
+
+## GitHub releases
+
+`.github/workflows/kernel-release.yml` builds on a self-hosted Linux x86-64
+runner. Provision the toolchain and build dependencies described below on that
+runner, stage the WCNSS calibration using `pull-wcnss-firmware.sh`, and set
+the repository variable `ACK_WCNSS_FIRMWARE_DIR` to its absolute directory.
+The runner also needs `gh`, `git`, `rg`, `make`, `bc`, `bison`, `flex`,
+`depmod`, OpenSSL and libelf development files, `dtc`, and Python's `dtschema`
+package for the build and devicetree checks.
+The kernel embeds that device-derived calibration; a published ZIP therefore
+distributes it. Ensure the chosen blob can be shared before publishing.
+
+Push an existing `v*` tag, or run the workflow manually with an existing tag;
+the workflow builds that tag and creates a GitHub release with the ZIP and
+package report. It needs repository Actions enabled and write access for
+`GITHUB_TOKEN`. The release is an ACK ramdisk update, not a stock installer.
+The workflow and resulting image have not yet been tested on a runner or phone.
 
 ## Layout: what is where
 
@@ -120,8 +140,8 @@ and still fails.
 
 ## The base image
 
-The ZIP packaging step still takes a **real known-good ACK-port boot image**
-as its base: its ramdisk and command line are what the ZIP carries. It does
+The optional full-image packaging step takes a **real known-good ACK-port boot
+image** as its base: its ramdisk and command line are what the ZIP carries. It does
 not reconstruct a ramdisk from the stock/Lucifer installation or assemble
 an intermediate host boot image. The base is not
 redistributable, so it is not in the repository. Supply it as the second
@@ -140,6 +160,26 @@ exactly like a kernel bug and is not one. If a base image is needed,
 extract a real one from git history and change only what is being tested.
 
 ## The configuration
+
+### Experimental device-local WLAN calibration
+
+To test loading each device's own WLAN NV file instead of embedding the
+builder's copy, use `ACK_EXPERIMENTAL_WCNSS_FALLBACK=1` with the build command.
+This clears `CONFIG_EXTRA_FIRMWARE` and enables the kernel's existing sysfs
+firmware fallback. After a failed direct lookup, Android ueventd can try the
+existing `/vendor/firmware/wlan/prima/WCNSS_qcom_wlan_nv.bin` symlink into
+persist under its own SELinux domain. The captured policy grants ueventd
+access to `mnt_vendor_file`; the kernel domain does not have that access.
+
+This is unverified on the device. Fallback is global for eligible firmware
+requests, so other missing firmware may wait for userspace or time out. Keep
+a known-good image, follow `porting/REFERENCE-boot-testing.md`, and compare
+against a known-good run. In enforcing mode, confirm the embedded config has
+an empty `CONFIG_EXTRA_FIRMWARE` and `CONFIG_FW_LOADER_USER_HELPER_FALLBACK=y`,
+then capture the firmware uevent and Wi-Fi association logs and any AVCs.
+Only after the device-local load is verified should release builds stop
+embedding calibration. The release workflow intentionally uses the current
+verified configuration until then.
 
 The configuration is not the defconfig and not whatever the last build
 left behind. `arch/arm64/configs/defconfig` is dead code here: the
@@ -237,7 +277,13 @@ before the header exists.
 
 ## Packaging and verification
 
-The base image's ramdisk and command line, this kernel and this init are
+Without a base, `package-kernel-update.py` creates a ZIP containing the kernel,
+rebuilt init and matching modules. At installation it checks the existing ACK
+ramdisk markers, updates init and `/ack-modules`, and preserves the remaining
+ramdisk and boot command line. WCNSS and Venus firmware must already be present
+in the installed ramdisk; the WCNSS calibration is still needed at build time.
+
+With a base, the base image's ramdisk and command line, this kernel and this init are
 combined by `porting/logging/package-diag-boot.py`. The build wrapper invokes
 it for both the ZIP and boot image with the same base, firmware, policy,
 matching modules and command-line adjustments. Each output has its own JSON
