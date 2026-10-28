@@ -20,7 +20,13 @@ config MQ_IOSCHED_ADIOS
 	tristate "Adaptive Deadline I/O scheduler"
 	help
 	  The Adaptive Deadline I/O Scheduler (ADIOS) is a multi-queue I/O
-	  scheduler with learning-based adaptive latency control.
+	  scheduler with learning-based adaptive latency control. It measures
+	  request completion times per operation type and size, models the
+	  device's latency from them, and dispatches requests against
+	  per-type latency targets. Its tunables are documented in
+	  Documentation/ABI/testing/sysfs-block-adios.
+
+	  If unsure, say N.
 
 config IOSCHED_BFQ
 	tristate "BFQ I/O scheduler"
