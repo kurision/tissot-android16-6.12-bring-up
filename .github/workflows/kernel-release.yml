@@ -98,5 +98,5 @@ jobs:
           gh release create "$TAG" --verify-tag \
             --title "$TAG" \
             --prerelease \
-            --notes 'Experimental kernel update for an existing ACK Tissot ramdisk. It attempts to load WCNSS calibration from the device; firmware fallback and device compatibility have not been verified.' \
+            --notes 'Experimental kernel update for an existing ACK Tissot ramdisk. It loads WCNSS calibration from the device through the ueventd firmware fallback; verified on a Mi A1 (tissot) with a CI build from 7289942ca (modem, ADSP and WCNSS running, WiFi associated with DHCP and internet). Other devices and ramdisks are untested.' \
             "$SNAPSHOT/ack-tissot-release.zip" "$SNAPSHOT/package-release.json"
