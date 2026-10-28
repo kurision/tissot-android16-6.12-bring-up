@@ -96,7 +96,7 @@ jobs:
         run: |
           set -euo pipefail
           NOTES="$RUNNER_TEMP/release-notes.md"
-          echo 'Experimental kernel update for an existing ACK Tissot ramdisk. It loads WCNSS calibration from the device through the ueventd firmware fallback; verified on a Mi A1 (tissot) with a CI build from 7289942ca (modem, ADSP and WCNSS running, WiFi associated with DHCP and internet). Other devices and ramdisks are untested.' > "$NOTES"
+          echo 'Experimental kernel update for an existing ACK Tissot ramdisk.' > "$NOTES"
           # The checkout is shallow, so list commits through the compare API
           # against the most recent published release instead of git log.
           PREV=$(gh release list --exclude-drafts --limit 20 --json tagName --jq '.[].tagName' |
