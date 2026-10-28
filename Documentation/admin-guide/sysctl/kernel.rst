@@ -1215,6 +1215,39 @@ ROM/Flash boot loader. Maybe to tell it what to do after
 rebooting. ???
 
 
+sched_bore
+==========
+
+Enable BORE burst-based scheduling when set to 1 (the default). Set to 0
+to disable its burst-based task weighting. Available with CONFIG_SCHED_BORE.
+
+sched_burst_cache_lifetime
+==========================
+
+Time in nanoseconds for which inherited burst penalties are cached. The
+default is 75000000.
+
+sched_burst_inherit_type
+========================
+
+Select burst penalty inheritance: 0 disables it, 1 uses the parent, and 2
+uses the ancestor hierarchy. The default is 2.
+
+sched_burst_penalty_offset
+==========================
+
+Offset used in the burst penalty calculation, from 0 to 63. The default is 24.
+
+sched_burst_penalty_scale
+=========================
+
+Scale applied to burst penalties, from 0 to 4095. The default is 1536.
+
+sched_burst_smoothness
+======================
+
+Controls smoothing of burst penalties, from 0 to 3. The default is 1.
+
 sched_energy_aware
 ==================
 
