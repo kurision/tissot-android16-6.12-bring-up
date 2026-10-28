@@ -1,23 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
 
-config WCD9XXX_CORE_HELPER
-	tristate
-
-config WCD9XXX_CODEC_CORE
-	tristate "WCD9xxx codec core (v2 interface)"
-	depends on SND_SOC
-	select WCD9XXX_CORE_HELPER
-	help
-	  Core of the Qualcomm WCD9xxx codec family, second generation
-	  interface. Ported from CAF techpack/audio.
-
-config SND_SOC_MSM_WCD9335
-	tristate "WCD9335 codec"
-	depends on SND_SOC && SLIMBUS
-	select WCD9XXX_CODEC_CORE
-	help
-	  The WCD9335 codec, which is the one fitted to tissot.
-
 config MSM_CDC_PINCTRL
 	tristate "CAF audio pin control"
 	depends on SND_SOC && PINCTRL
@@ -30,7 +12,6 @@ config SND_SOC_MSM_WCD_MBHC
 	tristate "WCD microphone bias and headset control"
 	depends on SND_SOC
 	select MSM_CDC_PINCTRL
-	select WCD9XXX_CODEC_CORE
 	select SND_SOC_WCD_MBHC_ADC
 	select SND_SOC_WCD_MBHC_LEGACY
 	help
@@ -43,13 +24,12 @@ config SND_SOC_WCD_MBHC_ADC
 	tristate "WCD microphone bias ADC variant"
 	depends on SND_SOC
 	help
-	  Bias-voltage based headset detection, the variant the WCD9335 on
-	  this board uses.
+	  Bias-voltage (ADC) based headset detection, one of the two
+	  detection paths the MBHC helper selects between at runtime.
 
 config WCD_DSP_GLINK
 	tristate "WCD DSP glink manager"
 	depends on SND_SOC
-	select WCD9XXX_CORE_HELPER
 	help
 	  Manager for the glink channel the WCD codecs use to reach the DSP.
 
@@ -75,12 +55,11 @@ config SND_SOC_MSM8952
 	tristate "MSM8952 (SDM450) soundcard"
 	depends on SND_SOC && COMMON_CLK
 	select MSM_CDC_PINCTRL
-	select SND_SOC_MSM_WCD9335
 	select SND_SOC_SDM660_CDC
-	select WCD9XXX_CODEC_CORE
 	help
 	  Soundcard for this SoC, which CAF calls SDM450. It wires the
-	  WCD9335 codec, the SDM660 CDC, the AFE and the mi2s links.
+	  SDM660 CDC (the PMIC analog codec and the digital codec), the AFE
+	  and the mi2s links.
 
 #
 # CAF's headers choose between the real implementation and a stub with
