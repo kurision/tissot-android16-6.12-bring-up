@@ -194,10 +194,6 @@ void driver_deferred_probe_trigger(void)
 	 */
 	queue_work(system_unbound_wq, &deferred_probe_work);
 }
-/* DEBUG tissot display: let the MDP driver kick a late re-probe once
- * power suppliers have settled (the early probe hangs on unpowered
- * MDP registers instead of deferring). */
-EXPORT_SYMBOL_GPL(driver_deferred_probe_trigger);
 
 /**
  * device_block_probing() - Block/defer device's probes
