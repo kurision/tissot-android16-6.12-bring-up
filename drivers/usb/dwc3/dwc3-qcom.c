@@ -20,6 +20,7 @@
 #include <linux/usb/of.h>
 #include <linux/reset.h>
 #include <linux/iopoll.h>
+#include <linux/mutex.h>
 #include <linux/usb/hcd.h>
 #include <linux/usb.h>
 #include "core.h"
@@ -85,6 +86,15 @@ struct dwc3_qcom {
 	struct notifier_block	vbus_nb;
 	struct notifier_block	host_nb;
 
+	/*
+	 * Serialises the extcon notifiers' QSCRATCH writes against the glue
+	 * clocks going off in suspend; protects is_suspended and the
+	 * deferred override below.
+	 */
+	struct mutex		vbus_lock;
+	bool			vbus_override;
+	bool			vbus_override_pending;
+
 	enum usb_dr_mode	mode;
 	bool			is_suspended;
 	bool			pm_suspended;
@@ -131,13 +141,35 @@ static void dwc3_qcom_vbus_override_enable(struct dwc3_qcom *qcom, bool enable)
 	}
 }
 
+/*
+ * The extcon provider calls the notifiers from its own context, which may
+ * run while the glue is suspended: between the glue's suspend callback and
+ * the noirq phase, or on a wake interrupt before the glue has resumed. Its
+ * clocks are off then, and a QSCRATCH access hangs the bus. Defer the write
+ * to resume in that case.
+ */
+static void dwc3_qcom_set_vbus_override(struct dwc3_qcom *qcom, bool enable)
+{
+	guard(mutex)(&qcom->vbus_lock);
+
+	if (qcom->is_suspended) {
+		qcom->vbus_override = enable;
+		qcom->vbus_override_pending = true;
+		dev_info(qcom->dev, "deferring VBUS override %d to resume\n",
+			 enable);
+		return;
+	}
+
+	dwc3_qcom_vbus_override_enable(qcom, enable);
+}
+
 static int dwc3_qcom_vbus_notifier(struct notifier_block *nb,
 				   unsigned long event, void *ptr)
 {
 	struct dwc3_qcom *qcom = container_of(nb, struct dwc3_qcom, vbus_nb);
 
 	/* enable vbus override for device mode */
-	dwc3_qcom_vbus_override_enable(qcom, event);
+	dwc3_qcom_set_vbus_override(qcom, event);
 	qcom->mode = event ? USB_DR_MODE_PERIPHERAL : USB_DR_MODE_HOST;
 
 	return NOTIFY_DONE;
@@ -149,7 +181,7 @@ static int dwc3_qcom_host_notifier(struct notifier_block *nb,
 	struct dwc3_qcom *qcom = container_of(nb, struct dwc3_qcom, host_nb);
 
 	/* disable vbus override in host mode */
-	dwc3_qcom_vbus_override_enable(qcom, !event);
+	dwc3_qcom_set_vbus_override(qcom, !event);
 	qcom->mode = event ? USB_DR_MODE_HOST : USB_DR_MODE_PERIPHERAL;
 
 	return NOTIFY_DONE;
@@ -428,6 +460,8 @@ static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
 	u32 val;
 	int i, ret;
 
+	guard(mutex)(&qcom->vbus_lock);
+
 	if (qcom->is_suspended)
 		return 0;
 
@@ -464,6 +498,8 @@ static int dwc3_qcom_resume(struct dwc3_qcom *qcom, bool wakeup)
 	int ret;
 	int i;
 
+	guard(mutex)(&qcom->vbus_lock);
+
 	if (!qcom->is_suspended)
 		return 0;
 
@@ -488,6 +524,13 @@ static int dwc3_qcom_resume(struct dwc3_qcom *qcom, bool wakeup)
 		dwc3_qcom_setbits(qcom->qscratch_base,
 				  pwr_evnt_irq_stat_reg[i],
 				  PWR_EVNT_LPM_IN_L2_MASK | PWR_EVNT_LPM_OUT_L2_MASK);
+	}
+
+	if (qcom->vbus_override_pending) {
+		dev_info(qcom->dev, "applying deferred VBUS override %d\n",
+			 qcom->vbus_override);
+		dwc3_qcom_vbus_override_enable(qcom, qcom->vbus_override);
+		qcom->vbus_override_pending = false;
 	}
 
 	qcom->is_suspended = false;
@@ -804,6 +847,10 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 		goto depopulate;
 
 	qcom->mode = usb_get_dr_mode(&qcom->dwc3->dev);
+
+	ret = devm_mutex_init(dev, &qcom->vbus_lock);
+	if (ret)
+		goto interconnect_exit;
 
 	/* enable vbus override for device mode */
 	if (qcom->mode != USB_DR_MODE_HOST)
