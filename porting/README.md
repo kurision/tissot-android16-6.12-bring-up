@@ -1,5 +1,12 @@
 # Xiaomi Mi A1 / tissot — Linux 6.12 port
 
+This directory holds what the kernel build needs (`tools/`, the two
+packaging scripts in `logging/`, `anykernel/`, `policy/port-genfs-kgsl.cil`)
+and the port's summary documents. Session findings, trackers, plans,
+handoffs, tests and captured evidence live in the separate
+`tissot-port-notes` repository under the same paths, so a reference such as
+`porting/findings/<file>.md` in these documents resolves there.
+
 ## Status — 2026-10-27
 
 The port boots Android with working display, touch, vendor GLES, tested media
