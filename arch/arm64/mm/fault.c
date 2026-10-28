@@ -27,7 +27,6 @@
 #include <linux/preempt.h>
 #include <linux/hugetlb.h>
 #include <linux/gfp_types.h>
-#include <linux/vmalloc.h>
 
 #include <asm/acpi.h>
 #include <asm/bug.h>
@@ -42,7 +41,6 @@
 #include <asm/mte.h>
 #include <asm/processor.h>
 #include <asm/sysreg.h>
-#include <asm/stacktrace.h>
 #include <asm/system_misc.h>
 #include <asm/tlbflush.h>
 #include <asm/traps.h>
@@ -804,52 +802,6 @@ static int do_bad(unsigned long far, unsigned long esr, struct pt_regs *regs)
 	return 1; /* "fault" */
 }
 
-/*
- * DEBUG run119 (tissot): name what FAR is, in the lines that survive a
- * reset. Run118's SEA was a store at sp+8 in mid-function (PC == LR,
- * likely a corrupted return), so FAR may be a real stack page in DDR
- * or a device mapping; earlier SEAs (run82/89/93) were readl()s.
- * SEA2 is lock-free (stack ranges, linear/vmalloc page-table walk).
- * SEA3 takes the vmap lock via find_vm_area() and so prints last; it
- * names the mapping's physical base and the code that created it.
- */
-static void sea_diag_far(unsigned long far, struct pt_regs *regs)
-{
-	const char *in = "other";
-	struct vm_struct *vm;
-	struct page *page;
-	phys_addr_t pa = 0;
-
-	if (on_task_stack(current, far, 1))
-		in = "task_stack";
-	else if (on_irq_stack(far, 1))
-		in = "irq_stack";
-	else if (virt_addr_valid((void *)far))
-		in = "linear";
-	else if (is_vmalloc_addr((void *)far))
-		in = "vmalloc";
-
-	if (virt_addr_valid((void *)far)) {
-		pa = __pa(far);
-	} else if (is_vmalloc_addr((void *)far)) {
-		page = vmalloc_to_page((void *)far);
-		if (page)
-			pa = page_to_phys(page) + offset_in_page(far);
-	}
-	pr_emerg("SEA2: pc=%pS lr=%pS sp=%016llx far_in=%s far_pa=%pa\n",
-		 (void *)regs->pc, (void *)regs->regs[30], regs->sp, in, &pa);
-
-	if (!is_vmalloc_addr((void *)far))
-		return;
-	vm = find_vm_area((void *)far);
-	if (vm)
-		pr_emerg("SEA3: area=%px+%#lx phys=%pa flags=%#lx caller=%pS\n",
-			 vm->addr, vm->size, &vm->phys_addr, vm->flags,
-			 vm->caller);
-	else
-		pr_emerg("SEA3: no vm area for FAR\n");
-}
-
 static int do_sea(unsigned long far, unsigned long esr, struct pt_regs *regs)
 {
 	const struct fault_info *inf;
@@ -882,18 +834,6 @@ static int do_sea(unsigned long far, unsigned long esr, struct pt_regs *regs)
 	}
 	trace_android_rvh_do_sea(siaddr, esr, regs);
 	add_taint(TAINT_MACHINE_CHECK, LOCKDEP_STILL_OK);
-	/*
-	 * Preserve the fault site before the verbose oops dump: a subsequent
-	 * reset can truncate it before show_regs() prints PC and LR.
-	 */
-	if (!user_mode(regs)) {
-		pr_emerg("SEA: ESR=%016lx FAR=%016lx FnV=%d PC=%016llx LR=%016llx PID=%d PPID=%d COMM=%s\n",
-			 esr, far, !!(esr & ESR_ELx_FnV), regs->pc,
-			 regs->regs[30], task_pid_nr(current),
-			 task_ppid_nr(current), current->comm);
-		sea_diag_far(untagged_addr(far), regs);
-		dump_backtrace(regs, current, KERN_EMERG);
-	}
 	arm64_notify_die(inf->name, regs, inf->sig, inf->code, siaddr, esr);
 
 	return 0;
