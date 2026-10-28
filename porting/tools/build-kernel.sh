@@ -348,7 +348,11 @@ scripts/config --file "$OUT_DIR/.config" \
 	--set-str EXTRA_FIRMWARE_DIR "$(realpath "$FW_DIR")"
 "${make_args[@]}" olddefconfig
 scripts/diffconfig "$SNAP/$RUN-prebuild.config" "$OUT_DIR/.config" | tee "$SNAP/$RUN-config.diff"
-for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SLIMBUS ZRAM MSM_SMD_PKT; do
+# The fingerprint pair is asserted as well: both sensor nodes are in the
+# board file, and with the driver interface missing the vendor HAL
+# null-derefs at enrollment (run417 shipped without them because the =y
+# lived only in scripts/tissot-ack.config; kernel.config carries it now).
+for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SLIMBUS ZRAM MSM_SMD_PKT FINGERPRINT_FPC1020 FINGERPRINT_GOODIX_GF3208; do
  grep -qx "CONFIG_$sym=y" "$OUT_DIR/.config" || { echo "CONFIG_$sym is not set" >&2; exit 1; }
 done
 grep -qx '# CONFIG_BT_QCOMSMD is not set' "$OUT_DIR/.config" || {
