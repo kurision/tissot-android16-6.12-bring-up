@@ -1,11 +1,9 @@
 # Xiaomi Mi A1 / tissot — Linux 6.12 port
 
-This directory holds what the kernel build needs (`tools/`, the two
-packaging scripts in `logging/`, `anykernel/`, `policy/port-genfs-kgsl.cil`)
-and the port's summary documents. Session findings, trackers, plans,
-handoffs, tests and captured evidence live in the separate
-`tissot-port-notes` repository under the same paths, so a reference such as
-`porting/findings/<file>.md` in these documents resolves there.
+This directory holds what the kernel build needs and the port's summary
+documents. Findings, trackers, plans and evidence live in the separate
+`tissot-port-notes` repository under the same paths. The workspace layout and
+the coding and commit standards are in [AGENTS.md](../AGENTS.md).
 
 ## Status — 2026-10-27
 
@@ -21,8 +19,8 @@ screen is off. Both have source fixes — the 16-byte completion layout is
 accepted, and `sched_scan_*` now drives the HAL's offloaded PNO — but neither
 is built or booted, and the firmware's acceptance of the PNO request is
 unverified
-([live state](findings/2026-10-27-fresh-state-106.md),
-[Wi-Fi diagnosis](findings/2026-10-27-wifi-tx-ack-and-pno.md)).
+(live state (`porting/findings/2026-10-27-fresh-state-106.md` in tissot-port-notes),
+Wi-Fi diagnosis (`porting/findings/2026-10-27-wifi-tx-ack-and-pno.md` in tissot-port-notes)).
 
 **Daily-driver readiness is not established.** The call setting is temporary;
 suspend/USB/charging reliability, battery efficiency, service compatibility and
@@ -111,12 +109,12 @@ historical. Explicit panic/reset capture and its validation limits remain.
 - [Call-audio report](REPORT-call-audio-2026-10-25.md): experiments, kernel fixes,
   final HAL blocker and two successful ACK calls. The subsequent 4.19 result is
   recorded in [current state](CURRENT-STATE.md).
-- [Camera handoff](HANDOFF-camera-2026-10-24.md) and
-  [software AVC comparison](findings/2026-10-24-software-avc-encoder-matches-stock.md):
+- Camera handoff (local only, not tracked) and
+  software AVC comparison (`porting/findings/2026-10-24-software-avc-encoder-matches-stock.md` in tissot-port-notes):
   retained historical camera evidence and codec-selection limits.
-- [Failure inventory](findings/2026-10-24-live-failure-inventory.md): dated raw
+- Failure inventory (`porting/findings/2026-10-24-live-failure-inventory.md` in tissot-port-notes): dated raw
   evidence references and repair trials; not every old failure was retested.
-- [Performance comparison](findings/2026-10-24-stock-baseline-perf-comparison.md):
+- Performance comparison (`porting/findings/2026-10-24-stock-baseline-perf-comparison.md` in tissot-port-notes):
   donor/port sampling and run403 follow-up, with workload/measurement limits.
 - [Build and packaging](../BUILD_TISSOT.md),
   [boot evidence reference](REFERENCE-boot-testing.md) and
@@ -128,3 +126,4 @@ ignore rules preserve them on disk but do not make them recoverable from Git.
 No new build, boot, flash, call or phone change was performed to refresh these
 three documents. Dated reports describe their own runs; these live documents
 provide the current overview and work queue.
+
