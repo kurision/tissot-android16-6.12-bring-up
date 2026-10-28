@@ -47,7 +47,7 @@ jobs:
           echo 'deb [signed-by=/usr/share/keyrings/llvm-snapshot.gpg] https://apt.llvm.org/resolute/ llvm-toolchain-resolute-23 main' | sudo tee /etc/apt/sources.list.d/llvm-23.list
           sudo apt-get update
           sudo apt-get install -y clang-23 lld-23 llvm-23 libclang-23-dev gcc-aarch64-linux-gnu bc bison flex kmod libssl-dev libelf-dev libdw-dev device-tree-compiler python3-pip python3-venv ripgrep ccache pahole
-          rustup toolchain install 1.99.0 --profile minimal --component rust-src
+          rustup toolchain install 1.99.0 --profile minimal --component rust-src,rustfmt
           rustup default 1.99.0
           "$HOME/.cargo/bin/bindgen" --version 2>/dev/null | grep -qx 'bindgen 0.73.2' ||
             cargo install --locked --force bindgen-cli --version 0.73.2
