@@ -1153,9 +1153,8 @@ static int ramoops_snap_thread(void *unused)
 		 * existing bounded retry budget.
 		 */
 		if (!RAMOOPS_PERIODIC_SNAPSHOTS && !s->failures) {
-			ret = wait_for_completion_interruptible_timeout(
-				&s->wake, MAX_SCHEDULE_TIMEOUT);
-			if (ret <= 0 || kthread_should_stop())
+			ret = wait_for_completion_interruptible(&s->wake);
+			if (ret || kthread_should_stop())
 				continue;
 		}
 
