@@ -361,3 +361,8 @@ porting/artifacts/**/package-control.json
 /data-recent.txt
 /tombstones-and-today.txt
 /tissot-snapshot15.config
+
+# Session handoff notes: local only
+/porting/HANDOFF*.md
+/docs/handoff-*.md
+/porting/artifacts/*handoff*
