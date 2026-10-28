@@ -18,14 +18,14 @@
 #include "msm_vidc_resources.h"
 
 /*
- * venus_boot.c is CAF's non-secure PIL: the kernel loads the firmware
- * through the Venus SMMU and starts the core itself, for a tree that sets
+ * CAF's non-secure PIL (venus_boot.c) loaded the firmware through the
+ * Venus SMMU and started the core itself, for a tree that sets
  * "qcom,use-non-secure-pil" and has a "qcom,fw-context-bank" child.
  * msm8953 boots Venus through TrustZone instead (PAS, see
  * msm_subsystem_get_with_fwname()), and the donor's msm8953-vidc.dtsi
- * has neither property, so the file is not built: it depends on the
- * ARM DMA-IOMMU mapping API (<asm/dma-iommu.h>), which arm64 does not
- * have on 6.12. A tree that asks for the non-secure PIL fails here.
+ * has neither property. The non-secure PIL depends on the ARM DMA-IOMMU
+ * mapping API (<asm/dma-iommu.h>), which arm64 does not have on 6.12, so
+ * it is not ported. A tree that asks for it fails here.
  */
 static inline int venus_boot_init(struct msm_vidc_platform_resources *res,
 		struct context_bank_info *cb)
