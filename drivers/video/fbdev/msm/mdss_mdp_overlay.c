@@ -1506,10 +1506,6 @@ int mdss_mdp_overlay_start(struct msm_fb_data_type *mfd)
 			pr_err("iommu attach failed rc=%d\n", rc);
 			goto end;
 		}
-		/* DEBUG run118: the fb device was just runtime-resumed above
-		 * (and with it its MDP parent), so a runtime-PM gate here
-		 * can never fire; log real GDSC/clock state instead.
-		 */
 		mdss_hw_init(mdss_res);
 		/*
 		 * As splash is not enabled, disable EARLY_MAP setting which was
