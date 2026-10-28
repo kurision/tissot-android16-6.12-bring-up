@@ -489,7 +489,7 @@ if [ -z "$BASE_IMAGE" ]; then
 		--out "$SNAP/ack-tissot-$RUN.zip" --report "$SNAP/package-$RUN.json"
 	scripts/extract-ikconfig "$SNAP/kdir-$RUN/Image.gz" > "$SNAP/$RUN-embedded.config"
 	for key in RUST_IS_AVAILABLE RUST ASHMEM CPUFREQ_DT QCOM_CLK_APCC_MSM8953 \
-		QCOM_RPMPD PSTORE_RAM KSU ZRAM; do
+		QCOM_RPMPD PSTORE_RAM KSU ZRAM SCHED_BORE; do
 		grep -qx "CONFIG_${key}=y" "$SNAP/$RUN-embedded.config" || {
 			echo "error: CONFIG_$key missing from embedded config" >&2; exit 1; }
 	done
