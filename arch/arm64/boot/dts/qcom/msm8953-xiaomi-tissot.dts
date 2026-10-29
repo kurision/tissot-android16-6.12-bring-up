@@ -346,6 +346,7 @@
 		pm8953_l7: l7 {
 			regulator-min-microvolt = <1800000>;
 			regulator-max-microvolt = <1900000>;
+			regulator-allow-set-load;
 		};
 
 		pm8953_l8: l8 {
@@ -376,6 +377,7 @@
 		pm8953_l13: l13 {
 			regulator-min-microvolt = <3125000>;
 			regulator-max-microvolt = <3125000>;
+			regulator-allow-set-load;
 		};
 
 		pm8953_l16: l16 {
