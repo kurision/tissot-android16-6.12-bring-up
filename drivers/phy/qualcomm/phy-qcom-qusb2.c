@@ -369,11 +369,13 @@ static const struct qusb2_phy_cfg sm6115_phy_cfg = {
 	.autoresume_en	 = BIT(3),
 };
 
-static const char * const qusb2_phy_vreg_names[] = {
-	"vdd", "vdda-pll", "vdda-phy-dpdm",
+static const struct regulator_bulk_data qusb2_phy_vregs[] = {
+	{ .supply = "vdd" },
+	{ .supply = "vdda-pll", .init_load_uA = 30000 },
+	{ .supply = "vdda-phy-dpdm", .init_load_uA = 30000 },
 };
 
-#define QUSB2_NUM_VREGS		ARRAY_SIZE(qusb2_phy_vreg_names)
+#define QUSB2_NUM_VREGS		ARRAY_SIZE(qusb2_phy_vregs)
 
 /* struct override_param - structure holding qusb2 v2 phy overriding param
  * set override true if the  device tree property exists and read and assign
@@ -996,7 +998,7 @@ static int qusb2_phy_probe(struct platform_device *pdev)
 
 	num = ARRAY_SIZE(qphy->vregs);
 	for (i = 0; i < num; i++)
-		qphy->vregs[i].supply = qusb2_phy_vreg_names[i];
+		qphy->vregs[i] = qusb2_phy_vregs[i];
 
 	ret = devm_regulator_bulk_get(dev, num, qphy->vregs);
 	if (ret)
