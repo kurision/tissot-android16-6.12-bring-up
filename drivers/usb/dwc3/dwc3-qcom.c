@@ -94,6 +94,7 @@ struct dwc3_qcom {
 	struct mutex		vbus_lock;
 	bool			vbus_override;
 	bool			vbus_override_pending;
+	bool			vbus_resume_pending;
 
 	enum usb_dr_mode	mode;
 	bool			is_suspended;
@@ -133,7 +134,12 @@ static void dwc3_qcom_vbus_override_enable(struct dwc3_qcom *qcom, bool enable)
 				  LANE0_PWR_PRESENT);
 		dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_HS_PHY_CTRL,
 				  UTMI_OTG_VBUS_VALID | SW_SESSVLD_SEL);
+		/* VBUS alone cannot wake a runtime-suspended peripheral core. */
+		if (usb_get_dr_mode(&qcom->dwc3->dev) == USB_DR_MODE_PERIPHERAL)
+			qcom->vbus_resume_pending =
+				pm_request_resume(&qcom->dwc3->dev) == -EACCES;
 	} else {
+		qcom->vbus_resume_pending = false;
 		dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_SS_PHY_CTRL,
 				  LANE0_PWR_PRESENT);
 		dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_HS_PHY_CTRL,
@@ -892,15 +898,15 @@ static void dwc3_qcom_remove(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	int i;
 
-	of_platform_depopulate(&pdev->dev);
-	platform_device_put(qcom->dwc3);
-
 	/*
 	 * The extcon notifiers are devm-managed and stay registered until
-	 * after remove() returns; park them before the clocks go off.
+	 * after remove() returns; park them before removing the core.
 	 */
 	scoped_guard(mutex, &qcom->vbus_lock)
 		qcom->is_suspended = true;
+
+	of_platform_depopulate(&pdev->dev);
+	platform_device_put(qcom->dwc3);
 
 	for (i = qcom->num_clocks - 1; i >= 0; i--) {
 		clk_disable_unprepare(qcom->clks[i]);
@@ -957,8 +963,23 @@ static int __maybe_unused dwc3_qcom_runtime_resume(struct device *dev)
 	return dwc3_qcom_resume(qcom, true);
 }
 
+static void dwc3_qcom_complete(struct device *dev)
+{
+	struct dwc3_qcom *qcom = dev_get_drvdata(dev);
+
+	guard(mutex)(&qcom->vbus_lock);
+
+	if (!qcom->vbus_resume_pending || qcom->is_suspended)
+		return;
+
+	/* Direct-complete children have runtime PM disabled until resume ends. */
+	qcom->vbus_resume_pending = false;
+	pm_request_resume(&qcom->dwc3->dev);
+}
+
 static const struct dev_pm_ops dwc3_qcom_dev_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(dwc3_qcom_pm_suspend, dwc3_qcom_pm_resume)
+	.complete = dwc3_qcom_complete,
 	SET_RUNTIME_PM_OPS(dwc3_qcom_runtime_suspend, dwc3_qcom_runtime_resume,
 			   NULL)
 };

@@ -77,6 +77,11 @@ properties:
   iommus:
     maxItems: 1
 
+  usb-psy-name:
+    $ref: /schemas/types.yaml#/definitions/string
+    description:
+      Name of the USB power supply accepting the VBUS current allowance.
+
   usb-phy:
     minItems: 1
     items:
