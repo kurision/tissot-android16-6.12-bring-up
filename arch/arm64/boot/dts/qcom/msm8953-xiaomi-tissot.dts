@@ -715,6 +715,7 @@
 &usb3_dwc3 {
 	/delete-property/ usb-role-switch;
 	dr_mode = "peripheral";
+	usb-psy-name = "usb";
 	snps,dis_u2_susphy_quirk;
 	snps,dis_enblslpm_quirk;
 };
