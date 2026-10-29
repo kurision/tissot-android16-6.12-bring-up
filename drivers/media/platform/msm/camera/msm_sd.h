@@ -29,6 +29,9 @@
  */
 extern bool camera_legacy_enable;
 
+struct work_struct;
+void camera_queue_late_init(struct work_struct *work);
+
 /*
  * The donor's camera stack flag: the donor carried two stacks for the
  * same silicon and chose between them per board.  This tree has only

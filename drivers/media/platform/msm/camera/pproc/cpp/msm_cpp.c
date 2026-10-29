@@ -4527,23 +4527,35 @@ static struct platform_driver cpp_driver = {
 };
 
 
-static int __init msm_cpp_init_module(void)
+static void msm_cpp_register_driver(struct work_struct *work)
 {
 	int rc;
 
-	if (!camera_legacy_enable)
-		return -ENODEV;
 	rc = ramoops_wait_snapshot_ready(10000);
 	if (rc < 0) {
 		pr_err("no flushed logdump snapshot (%d); skipping registration\n", rc);
-		return rc;
+		return;
 	}
 	pr_info("DIAG: logdump snapshot ready; starting CPP registration\n");
-	return platform_driver_register(&cpp_driver);
+	rc = platform_driver_register(&cpp_driver);
+	if (rc)
+		pr_err("CPP driver registration failed %d\n", rc);
+}
+
+/* Queued after the EEPROM registration, which keeps CPP's entity ID. */
+static DECLARE_WORK(msm_cpp_register_work, msm_cpp_register_driver);
+
+static int __init msm_cpp_init_module(void)
+{
+	if (!camera_legacy_enable)
+		return -ENODEV;
+	camera_queue_late_init(&msm_cpp_register_work);
+	return 0;
 }
 
 static void __exit msm_cpp_exit_module(void)
 {
+	flush_work(&msm_cpp_register_work);
 	platform_driver_unregister(&cpp_driver);
 }
 

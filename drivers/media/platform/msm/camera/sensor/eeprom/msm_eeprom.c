@@ -2047,16 +2047,14 @@ static struct spi_driver msm_eeprom_spi_driver = {
 };
 
 
-static int __init msm_eeprom_init_module(void)
+static void msm_eeprom_register_drivers(struct work_struct *work)
 {
 	int rc = 0;
-	if (!camera_legacy_enable)
-		return -ENODEV;
 	rc = ramoops_wait_snapshot_ready(10000);
 	if (rc < 0) {
 		pr_err("%s: no flushed logdump snapshot (%d); skipping registration\n",
 		       __func__, rc);
-		return rc;
+		return;
 	}
 	pr_info("DIAG: logdump snapshot ready; starting EEPROM registration\n");
 	CDBG("%s E\n", __func__);
@@ -2064,11 +2062,24 @@ static int __init msm_eeprom_init_module(void)
 	CDBG("%s:%d platform rc %d\n", __func__, __LINE__, rc);
 	rc = spi_register_driver(&msm_eeprom_spi_driver);
 	CDBG("%s:%d spi rc %d\n", __func__, __LINE__, rc);
-	return i2c_add_driver(&msm_eeprom_i2c_driver);
+	rc = i2c_add_driver(&msm_eeprom_i2c_driver);
+	if (rc)
+		pr_err("%s: i2c driver registration failed %d\n", __func__, rc);
+}
+
+static DECLARE_WORK(msm_eeprom_register_work, msm_eeprom_register_drivers);
+
+static int __init msm_eeprom_init_module(void)
+{
+	if (!camera_legacy_enable)
+		return -ENODEV;
+	camera_queue_late_init(&msm_eeprom_register_work);
+	return 0;
 }
 
 static void __exit msm_eeprom_exit_module(void)
 {
+	flush_work(&msm_eeprom_register_work);
 	platform_driver_unregister(&msm_eeprom_platform_driver);
 	spi_unregister_driver(&msm_eeprom_spi_driver);
 	i2c_del_driver(&msm_eeprom_i2c_driver);
