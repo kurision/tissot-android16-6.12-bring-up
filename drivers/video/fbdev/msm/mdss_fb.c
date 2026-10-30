@@ -1590,7 +1590,9 @@ static int mdss_fb_suspend_sub(struct msm_fb_data_type *mfd)
 			}
 		}
 		mfd->op_enable = false;
+		console_lock();
 		fb_set_suspend(mfd->fbi, FBINFO_STATE_SUSPENDED);
+		console_unlock();
 	}
 exit:
 	return ret;
@@ -1636,10 +1638,13 @@ static int mdss_fb_resume_sub(struct msm_fb_data_type *mfd)
 			BLANK_FLAG_LP;
 
 		ret = mdss_fb_blank_sub(unblank_flag, mfd->fbi, mfd->op_enable);
-		if (ret)
+		if (ret) {
 			pr_warn("can't turn on display!\n");
-		else
+		} else {
+			console_lock();
 			fb_set_suspend(mfd->fbi, FBINFO_STATE_RUNNING);
+			console_unlock();
+		}
 	}
 	mfd->is_power_setting = false;
 	complete_all(&mfd->power_set_comp);
