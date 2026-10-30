@@ -268,6 +268,7 @@ struct fastrpc_invoke_ctx {
 	u32 *crc;
 	u64 ctxid;
 	u64 msg_sz;
+	bool interrupted;
 	struct kref refcount;
 	struct list_head node; /* list of ctxs */
 	struct completion work;
@@ -306,7 +307,6 @@ struct fastrpc_channel_ctx {
 	struct fastrpc_device *secure_fdevice;
 	struct fastrpc_device *fdevice;
 	struct fastrpc_buf *remote_heap;
-	struct list_head invoke_interrupted_mmaps;
 	bool secure;
 	bool unsigned_support;
 	u64 dma_mask;
@@ -511,22 +511,14 @@ static void fastrpc_channel_ctx_put(struct fastrpc_channel_ctx *cctx)
 	kref_put(&cctx->refcount, fastrpc_channel_ctx_free);
 }
 
-static void fastrpc_context_put(struct fastrpc_invoke_ctx *ctx);
-
 static void fastrpc_user_free(struct kref *ref)
 {
 	struct fastrpc_user *fl = container_of(ref, struct fastrpc_user, refcount);
-	struct fastrpc_invoke_ctx *ctx, *n;
 	struct fastrpc_map *map, *m;
 	struct fastrpc_buf *buf, *b;
 
 	if (fl->init_mem)
 		fastrpc_buf_free(fl->init_mem);
-
-	list_for_each_entry_safe(ctx, n, &fl->pending, node) {
-		list_del(&ctx->node);
-		fastrpc_context_put(ctx);
-	}
 
 	list_for_each_entry_safe(map, m, &fl->maps, node)
 		fastrpc_map_put(map);
@@ -575,6 +567,7 @@ static void fastrpc_context_free(struct kref *ref)
 
 	kfree(ctx->maps);
 	kfree(ctx->olaps);
+	kfree(ctx->args);
 	kfree(ctx);
 
 	/* Release the reference taken in fastrpc_context_alloc() */
@@ -682,7 +675,14 @@ static struct fastrpc_invoke_ctx *fastrpc_context_alloc(
 			kfree(ctx);
 			return ERR_PTR(-ENOMEM);
 		}
-		ctx->args = args;
+		ctx->args = kmemdup(args, array_size(ctx->nscalars, sizeof(*args)),
+				    GFP_KERNEL);
+		if (!ctx->args) {
+			kfree(ctx->olaps);
+			kfree(ctx->maps);
+			kfree(ctx);
+			return ERR_PTR(-ENOMEM);
+		}
 		fastrpc_get_buff_overlaps(ctx);
 	}
 
@@ -724,6 +724,7 @@ err_idr:
 	fastrpc_channel_ctx_put(cctx);
 	kfree(ctx->maps);
 	kfree(ctx->olaps);
+	kfree(ctx->args);
 	kfree(ctx);
 
 	return ERR_PTR(ret);
@@ -1241,13 +1242,49 @@ static int fastrpc_invoke_send(struct fastrpc_session_ctx *sctx,
 
 }
 
+static struct fastrpc_invoke_ctx *
+fastrpc_context_restore(struct fastrpc_user *fl, u32 handle, u32 sc,
+			struct fastrpc_invoke_args *args)
+{
+	struct fastrpc_invoke_ctx *ctx, *found = NULL;
+	int i;
+
+	spin_lock(&fl->lock);
+	list_for_each_entry(ctx, &fl->pending, node) {
+		if (!ctx->interrupted || ctx->pid != current->pid ||
+		    ctx->msg.handle != handle || ctx->sc != sc)
+			continue;
+
+		/* A retry cannot change buffer sizes or existing DMA mappings. */
+		for (i = 0; i < ctx->nscalars; i++) {
+			if (ctx->args[i].length != args[i].length ||
+			    ctx->args[i].fd != args[i].fd ||
+			    ctx->args[i].attr != args[i].attr ||
+			    (ctx->maps[i] && ctx->args[i].ptr != args[i].ptr)) {
+				found = ERR_PTR(-EINVAL);
+				goto out;
+			}
+		}
+		if (ctx->nscalars)
+			memcpy(ctx->args, args,
+			       array_size(ctx->nscalars, sizeof(*args)));
+
+		ctx->interrupted = false;
+		found = ctx;
+		break;
+	}
+out:
+	spin_unlock(&fl->lock);
+
+	return found;
+}
+
 static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
 				   u32 handle, u32 sc,
 				   struct fastrpc_invoke_args *args)
 {
 	struct fastrpc_invoke_ctx *ctx = NULL;
-	struct fastrpc_buf *buf, *b;
-
+	bool interrupted = false;
 	int err = 0;
 
 	if (!fl->sctx)
@@ -1260,6 +1297,13 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
 		dev_warn_ratelimited(fl->sctx->dev, "user app trying to send a kernel RPC message (%d)\n",  handle);
 		return -EPERM;
 	}
+
+	if (!kernel)
+		ctx = fastrpc_context_restore(fl, handle, sc, args);
+	if (IS_ERR(ctx))
+		return PTR_ERR(ctx);
+	if (ctx)
+		goto wait;
 
 	ctx = fastrpc_context_alloc(fl, kernel, sc, args);
 	if (IS_ERR(ctx))
@@ -1276,11 +1320,13 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
 	if (err)
 		goto bail;
 
+wait:
 	if (kernel) {
 		if (!wait_for_completion_timeout(&ctx->work, 10 * HZ))
 			err = -ETIMEDOUT;
 	} else {
 		err = wait_for_completion_interruptible(&ctx->work);
+		interrupted = err == -ERESTARTSYS;
 	}
 
 	if (err)
@@ -1299,19 +1345,16 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
 		goto bail;
 
 bail:
-	if (err != -ERESTARTSYS && err != -ETIMEDOUT) {
+	if (interrupted) {
+		spin_lock(&fl->lock);
+		ctx->interrupted = true;
+		spin_unlock(&fl->lock);
+	} else {
 		/* We are done with this compute context */
 		spin_lock(&fl->lock);
 		list_del(&ctx->node);
 		spin_unlock(&fl->lock);
 		fastrpc_context_put(ctx);
-	}
-
-	if (err == -ERESTARTSYS) {
-		list_for_each_entry_safe(buf, b, &fl->mmaps, node) {
-			list_del(&buf->node);
-			list_add_tail(&buf->node, &fl->cctx->invoke_interrupted_mmaps);
-		}
 	}
 
 	if (err)
@@ -1612,6 +1655,7 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
 {
 	struct fastrpc_user *fl = (struct fastrpc_user *)file->private_data;
 	struct fastrpc_channel_ctx *cctx = fl->cctx;
+	struct fastrpc_invoke_ctx *ctx;
 	unsigned long flags;
 
 	fastrpc_release_current_dsp_process(fl);
@@ -1619,6 +1663,18 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
 	spin_lock_irqsave(&cctx->lock, flags);
 	list_del(&fl->user);
 	spin_unlock_irqrestore(&cctx->lock, flags);
+
+	/* Pending contexts hold user references, so drain them before the put. */
+	spin_lock(&fl->lock);
+	while (!list_empty(&fl->pending)) {
+		ctx = list_first_entry(&fl->pending, struct fastrpc_invoke_ctx,
+				       node);
+		list_del(&ctx->node);
+		spin_unlock(&fl->lock);
+		fastrpc_context_put(ctx);
+		spin_lock(&fl->lock);
+	}
+	spin_unlock(&fl->lock);
 
 	fastrpc_session_free(cctx, fl->sctx);
 	file->private_data = NULL;
@@ -1661,7 +1717,7 @@ static int fastrpc_device_open(struct inode *inode, struct file *filp)
 		dev_err(&cctx->rpdev->dev, "No session available\n");
 		mutex_destroy(&fl->mutex);
 		kfree(fl);
-
+		fastrpc_channel_ctx_put(cctx);
 		return -EBUSY;
 	}
 
@@ -3118,7 +3174,6 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
 	rdev->dma_mask = &data->dma_mask;
 	dma_set_mask_and_coherent(rdev, DMA_BIT_MASK(32));
 	INIT_LIST_HEAD(&data->users);
-	INIT_LIST_HEAD(&data->invoke_interrupted_mmaps);
 	spin_lock_init(&data->lock);
 	idr_init(&data->ctx_idr);
 	data->domain_id = domain_id;
@@ -3157,7 +3212,6 @@ static void fastrpc_notify_users(struct fastrpc_user *user)
 static void fastrpc_rpmsg_remove(struct rpmsg_device *rpdev)
 {
 	struct fastrpc_channel_ctx *cctx = dev_get_drvdata(&rpdev->dev);
-	struct fastrpc_buf *buf, *b;
 	struct fastrpc_user *user;
 	unsigned long flags;
 
@@ -3173,9 +3227,6 @@ static void fastrpc_rpmsg_remove(struct rpmsg_device *rpdev)
 
 	if (cctx->secure_fdevice)
 		misc_deregister(&cctx->secure_fdevice->miscdev);
-
-	list_for_each_entry_safe(buf, b, &cctx->invoke_interrupted_mmaps, node)
-		list_del(&buf->node);
 
 	if (cctx->remote_heap)
 		fastrpc_buf_free(cctx->remote_heap);
