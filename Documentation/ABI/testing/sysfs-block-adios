@@ -1,0 +1,41 @@
+What:		/sys/block/<disk>/queue/iosched/adios_version
+What:		/sys/block/<disk>/queue/iosched/batch_actual_max
+Date:		October 2026
+Description:	ADIOS version and maximum observed batch sizes, respectively.
+
+What:		/sys/block/<disk>/queue/iosched/global_latency_window
+What:		/sys/block/<disk>/queue/iosched/lat_model_latency_limit
+What:		/sys/block/<disk>/queue/iosched/lat_target_{read,write,discard}
+Date:		October 2026
+Description:	Latency window, maximum model sample and per-operation targets,
+		respectively, in nanoseconds.
+
+What:		/sys/block/<disk>/queue/iosched/batch_limit_{read,write,discard}
+What:		/sys/block/<disk>/queue/iosched/bq_refill_below_ratio
+What:		/sys/block/<disk>/queue/iosched/batch_order
+What:		/sys/block/<disk>/queue/iosched/read_priority
+Date:		October 2026
+Description:	Per-operation batch limits, refill percentage, batch order,
+		and read priority. Batch order 0 groups by operation; order 1
+		uses sector ordering on rotational devices.
+
+What:		/sys/block/<disk>/queue/iosched/lat_model_{read,write,discard}
+Date:		October 2026
+Description:	Latency model base in nanoseconds and slope in nanoseconds per
+		KiB. Write two space-separated integers to set the model.
+
+What:		/sys/block/<disk>/queue/iosched/shrink_at_kreqs
+What:		/sys/block/<disk>/queue/iosched/shrink_at_gbytes
+What:		/sys/block/<disk>/queue/iosched/shrink_resist
+What:		/sys/block/<disk>/queue/iosched/compliance_flags
+Date:		October 2026
+Description:	Latency-model shrink thresholds and resistance, and compliance
+		flags. Bit 0 of compliance_flags disables predicted-latency
+		deadline reordering.
+
+What:		/sys/block/<disk>/queue/iosched/reset_bq_stats
+What:		/sys/block/<disk>/queue/iosched/reset_lat_model
+Date:		October 2026
+Description:	Write 1 to reset batch statistics or latency models. The latter
+		also accepts six space-separated base and slope values for the
+		read, write, and discard models.

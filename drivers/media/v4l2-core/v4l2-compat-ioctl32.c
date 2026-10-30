@@ -361,6 +361,14 @@ static int get_v4l2_plane32(struct v4l2_plane *p64,
 		.m		= m,
 		.data_offset	= plane32.data_offset,
 	};
+	/*
+	 * Carry the reserved words through, as the native path does (it
+	 * copies the plane array whole). The CAF video codec's 32-bit OMX
+	 * components pass each buffer's ION fd and offset in reserved[0]
+	 * and reserved[1]; the CAF kernels copied them here too.
+	 */
+	BUILD_BUG_ON(sizeof(p64->reserved) != sizeof(plane32.reserved));
+	memcpy(p64->reserved, plane32.reserved, sizeof(p64->reserved));
 
 	return 0;
 }
@@ -377,6 +385,8 @@ static int put_v4l2_plane32(struct v4l2_plane *p64,
 		.length		= p64->length,
 		.data_offset	= p64->data_offset,
 	};
+	/* The reserved words go back as well; see get_v4l2_plane32(). */
+	memcpy(plane32.reserved, p64->reserved, sizeof(plane32.reserved));
 
 	switch (memory) {
 	case V4L2_MEMORY_MMAP:

@@ -12,6 +12,7 @@
 #include <linux/export.h>
 #include <linux/idr.h>
 #include <linux/ioctl.h>
+#include <linux/limits.h>
 #include <linux/media.h>
 #include <linux/slab.h>
 #include <linux/types.h>
@@ -78,21 +79,40 @@ static long media_device_get_info(struct media_device *dev, void *arg)
 	return 0;
 }
 
+static void media_device_legacy_entity_info(struct media_entity *entity,
+					    u32 *id, u32 *group_id, u32 *revision)
+{
+	struct media_device *mdev = entity->graph_obj.mdev;
+
+	*id = media_entity_id(entity);
+	*group_id = 0;
+	if (revision)
+		*revision = 0;
+	if (mdev->ops && mdev->ops->legacy_entity_info)
+		mdev->ops->legacy_entity_info(entity, id, group_id, revision);
+}
+
 static struct media_entity *find_entity(struct media_device *mdev, u32 id)
 {
-	struct media_entity *entity;
+	struct media_entity *entity, *found = NULL;
+	u32 found_id = U32_MAX;
 	int next = id & MEDIA_ENT_ID_FLAG_NEXT;
 
 	id &= ~MEDIA_ENT_ID_FLAG_NEXT;
 
 	media_device_for_each_entity(entity, mdev) {
-		if (((media_entity_id(entity) == id) && !next) ||
-		    ((media_entity_id(entity) > id) && next)) {
+		u32 entity_id, group_id;
+
+		media_device_legacy_entity_info(entity, &entity_id, &group_id, NULL);
+		if (!next && entity_id == id)
 			return entity;
+		if (next && entity_id > id && entity_id < found_id) {
+			found = entity;
+			found_id = entity_id;
 		}
 	}
 
-	return NULL;
+	return found;
 }
 
 static long media_device_enum_entities(struct media_device *mdev, void *arg)
@@ -106,13 +126,12 @@ static long media_device_enum_entities(struct media_device *mdev, void *arg)
 
 	memset(entd, 0, sizeof(*entd));
 
-	entd->id = media_entity_id(ent);
+	media_device_legacy_entity_info(ent, &entd->id, &entd->group_id,
+					&entd->revision);
 	if (ent->name)
 		strscpy(entd->name, ent->name, sizeof(entd->name));
 	entd->type = ent->function;
-	entd->revision = 0;		/* Unused */
 	entd->flags = ent->flags;
-	entd->group_id = 0;		/* Unused */
 	entd->pads = ent->num_pads;
 	entd->links = ent->num_links - ent->num_backlinks;
 
@@ -143,7 +162,9 @@ static long media_device_enum_entities(struct media_device *mdev, void *arg)
 static void media_device_kpad_to_upad(const struct media_pad *kpad,
 				      struct media_pad_desc *upad)
 {
-	upad->entity = media_entity_id(kpad->entity);
+	u32 group_id;
+
+	media_device_legacy_entity_info(kpad->entity, &upad->entity, &group_id, NULL);
 	upad->index = kpad->index;
 	upad->flags = kpad->flags;
 }

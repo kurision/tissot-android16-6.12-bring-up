@@ -62,6 +62,11 @@ properties:
   iommus:
     maxItems: 1
 
+  usb-psy-name:
+    $ref: /schemas/types.yaml#/definitions/string
+    description:
+      Name of the USB power supply accepting the VBUS current allowance.
+
   power-domains:
     description:
       The DWC3 has 2 power-domains. The power management unit (PMU) and

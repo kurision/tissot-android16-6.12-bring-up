@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/regulator/qcom,mem-acc-regulator.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm memory-ACC regulator
+
+maintainers:
+  - Andy Gross <agross@kernel.org>
+
+description: >
+  A memory-ACC regulator is a two-value corner selector: it does not produce a
+  voltage, it switches one or two hardware register bits that select which
+  memory array setting a corner uses. The values it exports are corner numbers,
+  not microvolts, and the register bits it drives are named in the node.
+
+allOf:
+  - $ref: regulator.yaml#
+
+properties:
+  compatible:
+    const: qcom,mem-acc-regulator
+
+  reg:
+    items:
+      - description: Selector register for memory array level 1
+      - description: Selector register for memory array level 2
+    minItems: 2
+    maxItems: 2
+
+  reg-names:
+    items:
+      - const: acc-sel-l1
+      - const: acc-sel-l2
+
+  qcom,corner-acc-map:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    description:
+      Selector values for the two corners, in corner order. Exactly two
+      entries.
+
+  qcom,acc-sel-l1-bit-pos:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Bit position of the level 1 selector within its register.
+
+  qcom,acc-sel-l2-bit-pos:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Bit position of the level 2 selector within its register.
+
+  qcom,acc-sel-l1-bit-size:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Bit width of the level 1 selector.
+
+  qcom,acc-sel-l2-bit-size:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Bit width of the level 2 selector.
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - qcom,corner-acc-map
+  - qcom,acc-sel-l1-bit-pos
+  - qcom,acc-sel-l2-bit-pos
+  - qcom,acc-sel-l1-bit-size
+  - qcom,acc-sel-l2-bit-size
+
+examples:
+  - |
+    apc_mem_acc_vreg: regulator@19461d4 {
+        compatible = "qcom,mem-acc-regulator";
+        reg = <0x019461d4 0x4>, <0x019461d8 0x4>;
+        reg-names = "acc-sel-l1", "acc-sel-l2";
+        regulator-name = "apc_mem_acc_corner";
+        regulator-min-microvolt = <1>;
+        regulator-max-microvolt = <2>;
+
+        qcom,corner-acc-map = <0x1 0x0>;
+        qcom,acc-sel-l1-bit-pos = <0>;
+        qcom,acc-sel-l1-bit-size = <1>;
+        qcom,acc-sel-l2-bit-pos = <0>;
+        qcom,acc-sel-l2-bit-size = <1>;
+    };
+...

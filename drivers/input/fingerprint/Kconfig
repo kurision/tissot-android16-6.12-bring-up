@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Fingerprint sensor device configuration
+#
+
+config FINGERPRINT_FPC1020
+	tristate "FingerPrint Cards fingerprint driver support"
+	help
+	  Say Y here to enable support for the FPC1020 fingerprint
+	  sensor platform driver. It exports the sysfs interface
+	  (/sys/devices/soc/soc:fpc1020) the vendor fingerprint HAL
+	  uses alongside the fpctzapp trustlet.
+
+config FINGERPRINT_GOODIX_GF3208
+	tristate "Goodix GF3208 fingerprint driver support"
+	help
+	  Say Y here to enable support for the Goodix GF3208
+	  fingerprint sensor driver. It exposes /dev/goodix_fp with
+	  ioctls and a netlink channel for the vendor GF HAL, which
+	  runs the matching algorithm in the goodixfp trustlet.

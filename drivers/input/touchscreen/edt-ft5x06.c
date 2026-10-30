@@ -16,6 +16,7 @@
 
 #include <linux/debugfs.h>
 #include <linux/delay.h>
+#include <linux/fb.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
@@ -25,12 +26,15 @@
 #include <linux/irq.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/pm_wakeup.h>
 #include <linux/property.h>
 #include <linux/ratelimit.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
+#include <linux/sysctl.h>
 #include <linux/uaccess.h>
+#include <linux/workqueue.h>
 
 #include <linux/unaligned.h>
 
@@ -76,6 +80,13 @@
 
 #define EDT_DEFAULT_NUM_X		1024
 #define EDT_DEFAULT_NUM_Y		1024
+#define EDT_MAX_KEYS			4
+#define EDT_KEY_WINDOW			50	/* sensor cells around a key */
+
+#define EDT_GESTURE_ENABLE		0xd0
+#define EDT_GESTURE_OUTPUT		0xd3
+#define EDT_GESTURE_DOUBLE_TAP		0x24
+
 
 #define M06_REG_CMD(factory) ((factory) ? 0xf3 : 0xfc)
 #define M06_REG_ADDR(factory, addr) ((factory) ? (addr) & 0x7f : (addr) & 0x3f)
@@ -143,6 +154,31 @@ struct edt_ft5x06_ts_data {
 	char fw_version[EDT_NAME_LEN];
 
 	struct edt_reg_addr reg_addr;
+	/*
+	 * Some panels carry capacitive keys on a sensor row below the visible
+	 * area. The controller reports them as ordinary touch coordinates, so
+	 * they are matched here and reported as key events, not as touches.
+	 */
+	int key_x[EDT_MAX_KEYS];
+	int key_y[EDT_MAX_KEYS];
+	u32 key_code[EDT_MAX_KEYS];
+	u8 num_keys;
+	u8 key_state;
+
+	bool gesture_wakeup;
+	bool gesture_active;
+	bool irq_wake_enabled;
+	/* state_lock protects notifier intent, not I2C transactions. */
+	spinlock_t state_lock;
+	bool display_off;
+	bool gesture_requested;
+	bool pm_blocked;
+	struct work_struct display_work;
+	struct notifier_block fb_notif;
+	int dt2w_enable;
+	struct ctl_table dt2w_table[1];
+	struct ctl_table_header *sysctl_header;
+
 	enum edt_ver version;
 	unsigned int crc_errors;
 	unsigned int header_errors;
@@ -295,6 +331,36 @@ static const struct regmap_config edt_M06_i2c_regmap_config = {
 	.write = edt_M06_i2c_write,
 };
 
+/*
+ * Reports a touch inside one of the configured key windows as a key event
+ * and consumes it, so it never reaches the touch input device.
+ *
+ * Keys live outside the reported ABS range, so this has to run on the raw
+ * controller coordinates: clamping to touchscreen-size-y happens later.
+ */
+static bool edt_ft5x06_report_key(struct edt_ft5x06_ts_data *tsdata,
+				  int x, int y, int type)
+{
+	int i;
+
+	for (i = 0; i < tsdata->num_keys; i++) {
+		if (abs(x - tsdata->key_x[i]) > EDT_KEY_WINDOW ||
+		    abs(y - tsdata->key_y[i]) > EDT_KEY_WINDOW)
+			continue;
+
+		if (type == TOUCH_EVENT_DOWN && !(tsdata->key_state & (1u << i))) {
+			input_report_key(tsdata->input, tsdata->key_code[i], 1);
+			tsdata->key_state |= 1u << i;
+		} else if (type == TOUCH_EVENT_UP && (tsdata->key_state & (1u << i))) {
+			input_report_key(tsdata->input, tsdata->key_code[i], 0);
+			tsdata->key_state &= ~(1u << i);
+		}
+		return true;
+	}
+
+	return false;
+}
+
 static irqreturn_t edt_ft5x06_ts_isr(int irq, void *dev_id)
 {
 	struct edt_ft5x06_ts_data *tsdata = dev_id;
@@ -302,6 +368,27 @@ static irqreturn_t edt_ft5x06_ts_isr(int irq, void *dev_id)
 	u8 rdbuf[63];
 	int i, type, x, y, id;
 	int error;
+
+	/* Transitions disable and drain this IRQ before changing controller mode. */
+	if (READ_ONCE(tsdata->gesture_active)) {
+		unsigned int gesture;
+
+		error = regmap_read(tsdata->regmap, EDT_GESTURE_OUTPUT, &gesture);
+		if (error) {
+			dev_err_ratelimited(dev, "Unable to read gesture: %d\n", error);
+		} else if (gesture == EDT_GESTURE_DOUBLE_TAP) {
+			dev_dbg_ratelimited(dev, "double tap gesture\n");
+			pm_wakeup_event(dev, 500);
+			input_report_key(tsdata->input, KEY_WAKEUP, 1);
+			input_sync(tsdata->input);
+			input_report_key(tsdata->input, KEY_WAKEUP, 0);
+			input_sync(tsdata->input);
+		} else {
+			dev_dbg_ratelimited(dev, "gesture %#04x ignored\n",
+					    gesture);
+		}
+		return IRQ_HANDLED;
+	}
 
 	memset(rdbuf, 0, sizeof(rdbuf));
 	error = regmap_bulk_read(tsdata->regmap, tsdata->tdata_cmd, rdbuf,
@@ -329,6 +416,10 @@ static irqreturn_t edt_ft5x06_ts_isr(int irq, void *dev_id)
 		/* The FT5x26 send the y coordinate first */
 		if (tsdata->version == EV_FT)
 			swap(x, y);
+
+		if (tsdata->num_keys &&
+		    edt_ft5x06_report_key(tsdata, x, y, type))
+			continue;
 
 		id = (buf[2] >> 4) & 0x0f;
 
@@ -597,6 +688,238 @@ static void edt_ft5x06_restore_reg_parameters(struct edt_ft5x06_ts_data *tsdata)
 	if (reg_addr->reg_report_rate != NO_REGISTER)
 		regmap_write(regmap, reg_addr->reg_report_rate,
 			     tsdata->report_rate);
+}
+
+/* IRQ drained and mutex held by the caller throughout each transition. */
+static void edt_ft5x06_release_input(struct edt_ft5x06_ts_data *tsdata)
+{
+	int i;
+
+	for (i = 0; i < tsdata->num_keys; i++)
+		input_report_key(tsdata->input, tsdata->key_code[i], 0);
+	tsdata->key_state = 0;
+	for (i = 0; i < tsdata->max_support_points; i++) {
+		input_mt_slot(tsdata->input, i);
+		input_mt_report_slot_state(tsdata->input, MT_TOOL_FINGER, false);
+	}
+	input_mt_report_pointer_emulation(tsdata->input, false);
+	input_sync(tsdata->input);
+}
+
+static void edt_ft5x06_gesture_reset(struct edt_ft5x06_ts_data *tsdata)
+{
+	gpiod_set_value_cansleep(tsdata->reset_gpio, 1);
+	usleep_range(5000, 6000);
+	gpiod_set_value_cansleep(tsdata->reset_gpio, 0);
+	msleep(500);
+	edt_ft5x06_restore_reg_parameters(tsdata);
+}
+
+static int edt_ft5x06_gesture_enter(struct edt_ft5x06_ts_data *tsdata)
+{
+	static const u8 masks[] = { 0xd1, 0xd2, 0xd5, 0xd6, 0xd7, 0xd8 };
+	struct device *dev = &tsdata->client->dev;
+	unsigned int state = 0;
+	int attempt, i, ret;
+
+	if (tsdata->factory_mode)
+		return -EBUSY;
+
+	edt_ft5x06_release_input(tsdata);
+	for (attempt = 0; attempt < 10; attempt++) {
+		for (i = 0; i < ARRAY_SIZE(masks); i++) {
+			ret = regmap_write(tsdata->regmap, masks[i], 0xff);
+			if (ret)
+				goto reset;
+		}
+		ret = regmap_write(tsdata->regmap, EDT_GESTURE_ENABLE, 1);
+		if (ret)
+			goto reset;
+		usleep_range(10000, 11000);
+		ret = regmap_read(tsdata->regmap, EDT_GESTURE_ENABLE, &state);
+		if (ret)
+			goto reset;
+		if (state == 1)
+			break;
+	}
+	if (state != 1) {
+		ret = -ETIMEDOUT;
+		goto reset;
+	}
+
+	ret = device_wakeup_enable(dev);
+	if (ret)
+		goto reset;
+	ret = enable_irq_wake(tsdata->client->irq);
+	if (ret) {
+		device_wakeup_disable(dev);
+		goto reset;
+	}
+	tsdata->irq_wake_enabled = true;
+	WRITE_ONCE(tsdata->gesture_active, true);
+	dev_dbg(dev, "gesture mode enabled, D0=%u\n", state);
+	return 0;
+
+reset:
+	dev_warn(dev, "gesture entry failed: %d (D0=%u)\n", ret, state);
+	edt_ft5x06_gesture_reset(tsdata);
+	return ret;
+}
+
+static int edt_ft5x06_gesture_leave(struct edt_ft5x06_ts_data *tsdata)
+{
+	int ret;
+
+	if (tsdata->irq_wake_enabled) {
+		ret = disable_irq_wake(tsdata->client->irq);
+		if (ret)
+			dev_warn(&tsdata->client->dev,
+				 "failed to disable IRQ wake: %d\n", ret);
+		else
+			tsdata->irq_wake_enabled = false;
+	}
+	edt_ft5x06_gesture_reset(tsdata);
+	WRITE_ONCE(tsdata->gesture_active, false);
+	device_wakeup_disable(&tsdata->client->dev);
+	return 0;
+}
+
+/* Only the single worker, or PM/teardown after draining it, may call this. */
+static void edt_ft5x06_display_update(struct edt_ft5x06_ts_data *tsdata)
+{
+	bool requested;
+	int ret = 0;
+
+	spin_lock_irq(&tsdata->state_lock);
+	requested = tsdata->display_off && tsdata->gesture_requested;
+	spin_unlock_irq(&tsdata->state_lock);
+	if (requested == tsdata->gesture_active)
+		return;
+
+	/* The ISR takes no mutex; existing factory-mode paths drain it too. */
+	disable_irq(tsdata->client->irq);
+	mutex_lock(&tsdata->mutex);
+	if (requested)
+		ret = edt_ft5x06_gesture_enter(tsdata);
+	else
+		ret = edt_ft5x06_gesture_leave(tsdata);
+	mutex_unlock(&tsdata->mutex);
+	enable_irq(tsdata->client->irq);
+	if (ret)
+		dev_warn(&tsdata->client->dev, "display transition failed: %d\n", ret);
+}
+
+static void edt_ft5x06_display_work(struct work_struct *work)
+{
+	struct edt_ft5x06_ts_data *tsdata =
+		container_of(work, struct edt_ft5x06_ts_data, display_work);
+	bool blocked;
+
+	spin_lock_irq(&tsdata->state_lock);
+	blocked = tsdata->pm_blocked;
+	spin_unlock_irq(&tsdata->state_lock);
+	if (!blocked)
+		edt_ft5x06_display_update(tsdata);
+}
+
+static int edt_ft5x06_fb_event(struct notifier_block *nb,
+			       unsigned long event, void *data)
+{
+	struct edt_ft5x06_ts_data *tsdata =
+		container_of(nb, struct edt_ft5x06_ts_data, fb_notif);
+	struct fb_event *ev = data;
+	bool off;
+	int blank;
+
+	if (event != FB_EVENT_BLANK || !ev || !ev->info ||
+	    ev->info->node != 0 || !ev->data)
+		return NOTIFY_DONE;
+	blank = *(int *)ev->data;
+	if (blank != FB_BLANK_POWERDOWN && blank != FB_BLANK_UNBLANK)
+		return NOTIFY_DONE;
+	off = blank == FB_BLANK_POWERDOWN;
+	spin_lock_irq(&tsdata->state_lock);
+	if (off && !tsdata->display_off)
+		tsdata->gesture_requested = READ_ONCE(tsdata->dt2w_enable);
+	tsdata->display_off = off;
+	/* Queue under the gate: PM cannot miss a late notifier enqueue. */
+	if (!tsdata->pm_blocked)
+		schedule_work(&tsdata->display_work);
+	spin_unlock_irq(&tsdata->state_lock);
+	dev_dbg(&tsdata->client->dev, "primary display %s\n", off ? "off" : "on");
+	return NOTIFY_OK;
+}
+
+static int edt_ft5x06_dt2w_sysctl(const struct ctl_table *table, int write,
+				  void *buffer, size_t *lenp, loff_t *ppos)
+{
+	struct ctl_table tmp = *table;
+	int value = READ_ONCE(*(int *)table->data);
+	int ret;
+
+	tmp.data = &value;
+	ret = proc_dointvec_minmax(&tmp, write, buffer, lenp, ppos);
+	if (!ret && write)
+		WRITE_ONCE(*(int *)table->data, value);
+	return ret;
+}
+
+static void edt_ft5x06_gesture_cleanup(void *arg)
+{
+	struct edt_ft5x06_ts_data *tsdata = arg;
+
+	unregister_sysctl_table(tsdata->sysctl_header);
+	fb_unregister_client(&tsdata->fb_notif);
+	cancel_work_sync(&tsdata->display_work);
+	disable_irq(tsdata->client->irq);
+	mutex_lock(&tsdata->mutex);
+	if (tsdata->gesture_active && edt_ft5x06_gesture_leave(tsdata))
+		dev_warn(&tsdata->client->dev, "failed to disarm gesture IRQ wake\n");
+	mutex_unlock(&tsdata->mutex);
+	device_wakeup_disable(&tsdata->client->dev);
+	device_set_wakeup_capable(&tsdata->client->dev, false);
+	/* Leave IRQ disabled until devres frees it, before cutting supplies. */
+}
+
+static int edt_ft5x06_gesture_init(struct edt_ft5x06_ts_data *tsdata)
+{
+	struct device *dev = &tsdata->client->dev;
+	int ret;
+
+	if (!tsdata->gesture_wakeup)
+		return 0;
+
+	spin_lock_init(&tsdata->state_lock);
+	INIT_WORK(&tsdata->display_work, edt_ft5x06_display_work);
+	tsdata->fb_notif.notifier_call = edt_ft5x06_fb_event;
+	device_set_wakeup_capable(dev, true);
+	ret = fb_register_client(&tsdata->fb_notif);
+	if (ret)
+		goto clear_capable;
+
+	/* ROM ABI: one gesture-capable touchscreen per phone, default off. */
+	tsdata->dt2w_table[0] = (struct ctl_table) {
+		.procname = "enable_dt2w",
+		.data = &tsdata->dt2w_enable,
+		.maxlen = sizeof(tsdata->dt2w_enable),
+		.mode = 0644,
+		.proc_handler = edt_ft5x06_dt2w_sysctl,
+		.extra1 = SYSCTL_ZERO,
+		.extra2 = SYSCTL_ONE,
+	};
+	tsdata->sysctl_header = register_sysctl("dev/xiaomi_msm8953_touchscreen",
+						tsdata->dt2w_table);
+	if (!tsdata->sysctl_header) {
+		ret = -ENOMEM;
+		fb_unregister_client(&tsdata->fb_notif);
+		cancel_work_sync(&tsdata->display_work);
+		goto clear_capable;
+	}
+	return devm_add_action_or_reset(dev, edt_ft5x06_gesture_cleanup, tsdata);
+
+clear_capable:
+	device_set_wakeup_capable(dev, false);
+	return ret;
 }
 
 #ifdef CONFIG_DEBUG_FS
@@ -1144,8 +1467,10 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	unsigned int val;
 	struct input_dev *input;
 	unsigned long irq_flags;
-	int error;
+	int error, attempt;
 	u32 report_rate;
+	u32 keys[EDT_MAX_KEYS * 3] = { };
+	int num_keys, i;
 
 	dev_dbg(&client->dev, "probing for EDT FT5x06 I2C\n");
 
@@ -1257,7 +1582,7 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	if (tsdata->reset_gpio) {
 		usleep_range(5000, 6000);
 		gpiod_set_value_cansleep(tsdata->reset_gpio, 0);
-		msleep(300);
+		msleep(500);
 	}
 
 	input = devm_input_allocate_device(&client->dev);
@@ -1272,11 +1597,32 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	tsdata->factory_mode = false;
 	i2c_set_clientdata(client, tsdata);
 
-	error = edt_ft5x06_ts_identify(client, tsdata);
-	if (error) {
-		dev_err(&client->dev, "touchscreen probe failed\n");
-		return error;
+	/* The (tissot) panel answers identify only after a second reset
+	 * cycle: 500ms alone still fails with -110. Retry twice with a
+	 * re-toggle; a truly absent chip fails out in ~1.7s.
+	 */
+	for (attempt = 0; ; attempt++) {
+		error = edt_ft5x06_ts_identify(client, tsdata);
+		if (!error)
+			break;
+		if (attempt >= 2 || !tsdata->reset_gpio) {
+			dev_err(&client->dev, "touchscreen probe failed\n");
+			return error;
+		}
+		gpiod_set_value_cansleep(tsdata->reset_gpio, 1);
+		msleep(100);
+		gpiod_set_value_cansleep(tsdata->reset_gpio, 0);
+		msleep(500);
 	}
+
+	tsdata->gesture_wakeup = device_property_read_bool(&client->dev,
+							   "edt,gesture-wakeup");
+	if (tsdata->gesture_wakeup &&
+	    (!IS_ENABLED(CONFIG_FB_NOTIFY) || !IS_ENABLED(CONFIG_PROC_SYSCTL) ||
+	     !IS_ENABLED(CONFIG_PM_SLEEP) || !tsdata->reset_gpio ||
+	     tsdata->version != GENERIC_FT || device_may_wakeup(&client->dev)))
+		return dev_err_probe(&client->dev, -EINVAL,
+			"gesture wake needs generic FT, reset, FB_NOTIFY, PROC_SYSCTL, PM_SLEEP and no wakeup-source\n");
 
 	/*
 	 * Dummy read access. EP0700MLP1 returns bogus data on the first
@@ -1316,6 +1662,8 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	input->name = tsdata->name;
 	input->id.bustype = BUS_I2C;
 	input->dev.parent = &client->dev;
+	if (tsdata->gesture_wakeup)
+		input_set_capability(input, EV_KEY, KEY_WAKEUP);
 
 	input_set_abs_params(input, ABS_MT_POSITION_X,
 			     0, tsdata->num_x * 64 - 1, 0, 0);
@@ -1323,6 +1671,53 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 			     0, tsdata->num_y * 64 - 1, 0, 0);
 
 	touchscreen_parse_properties(input, true, &tsdata->prop);
+	/*
+	 * Capacitive keys sit on a sensor row below the panel, so they are
+	 * matched on the raw controller coordinates, before they get clamped
+	 * to the panel size. The property is a list of <x y code> triplets in
+	 * controller coordinates; without it no key is reported.
+	 */
+	/*
+	 * The property is a list of <x y code> triplets whose length is
+	 * not known in advance, so the count is asked for first: the array
+	 * read needs the element count to match the property's length
+	 * exactly, and the buffer here is larger than the list.
+	 */
+	num_keys = device_property_count_u32(&client->dev, "edt,keys");
+	if (num_keys > 0 && num_keys <= (int)ARRAY_SIZE(keys)) {
+		if (device_property_read_u32_array(&client->dev, "edt,keys",
+						   keys, num_keys) < 0)
+			num_keys = 0;
+	} else {
+		num_keys = 0;
+	}
+	if (num_keys < 0) {
+		num_keys = 0;
+	} else if (num_keys % 3) {
+		dev_warn(&client->dev, "ignoring trailing edt,keys value\n");
+		num_keys -= num_keys % 3;
+	}
+
+	tsdata->num_keys = min_t(int, num_keys / 3, EDT_MAX_KEYS);
+	if (num_keys / 3 > EDT_MAX_KEYS)
+		dev_warn(&client->dev,
+			 "edt,keys lists %d keys, only the first %d are used\n",
+			 num_keys / 3, EDT_MAX_KEYS);
+
+	for (i = 0; i < tsdata->num_keys; i++) {
+		tsdata->key_x[i] = keys[i * 3];
+		tsdata->key_y[i] = keys[i * 3 + 1];
+		tsdata->key_code[i] = keys[i * 3 + 2];
+		/*
+		 * The input core drops an event for a code the device has
+		 * not declared, so the capacitive keys have to be declared
+		 * as capabilities, not only reported.
+		 */
+		input_set_capability(input, EV_KEY, tsdata->key_code[i]);
+	}
+	if (tsdata->num_keys)
+		dev_info(&client->dev, "%d capacitive key(s) configured\n",
+			 tsdata->num_keys);
 
 	error = input_mt_init_slots(input, tsdata->max_support_points,
 				    INPUT_MT_DIRECT);
@@ -1345,6 +1740,10 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	}
 
 	error = input_register_device(input);
+	if (error)
+		return error;
+
+	error = edt_ft5x06_gesture_init(tsdata);
 	if (error)
 		return error;
 
@@ -1373,7 +1772,21 @@ static int edt_ft5x06_ts_suspend(struct device *dev)
 	struct gpio_desc *reset_gpio = tsdata->reset_gpio;
 	int ret;
 
-	if (device_may_wakeup(dev))
+	if (tsdata->gesture_wakeup) {
+		spin_lock_irq(&tsdata->state_lock);
+		tsdata->pm_blocked = true;
+		spin_unlock_irq(&tsdata->state_lock);
+		cancel_work_sync(&tsdata->display_work);
+		/* Finish the transition before the parent I2C adapter suspends. */
+		edt_ft5x06_display_update(tsdata);
+		if (tsdata->gesture_active)
+			return 0;
+	}
+
+	/* A key held across suspend never reports its release. */
+	tsdata->key_state = 0;
+
+	if (!tsdata->gesture_wakeup && device_may_wakeup(dev))
 		return 0;
 
 	if (tsdata->suspend_mode == EDT_PMODE_NOT_SUPPORTED)
@@ -1415,11 +1828,14 @@ static int edt_ft5x06_ts_resume(struct device *dev)
 	struct edt_ft5x06_ts_data *tsdata = i2c_get_clientdata(client);
 	int ret = 0;
 
-	if (device_may_wakeup(dev))
-		return 0;
+	if (tsdata->gesture_wakeup && tsdata->gesture_active)
+		goto unblock;
+
+	if (!tsdata->gesture_wakeup && device_may_wakeup(dev))
+		goto unblock;
 
 	if (tsdata->suspend_mode == EDT_PMODE_NOT_SUPPORTED)
-		return 0;
+		goto unblock;
 
 	if (tsdata->suspend_mode == EDT_PMODE_POWEROFF) {
 		struct gpio_desc *reset_gpio = tsdata->reset_gpio;
@@ -1438,7 +1854,7 @@ static int edt_ft5x06_ts_resume(struct device *dev)
 		ret = regulator_enable(tsdata->iovcc);
 		if (ret) {
 			dev_err(dev, "Failed to enable iovcc\n");
-			return ret;
+			goto unblock;
 		}
 
 		/* Delay enabling VCC for > 10us (T_ivd) after IOVCC */
@@ -1448,7 +1864,7 @@ static int edt_ft5x06_ts_resume(struct device *dev)
 		if (ret) {
 			dev_err(dev, "Failed to enable vcc\n");
 			regulator_disable(tsdata->iovcc);
-			return ret;
+			goto unblock;
 		}
 
 		usleep_range(1000, 2000);
@@ -1468,6 +1884,13 @@ static int edt_ft5x06_ts_resume(struct device *dev)
 		gpiod_set_value_cansleep(wake_gpio, 1);
 	}
 
+unblock:
+	if (tsdata->gesture_wakeup) {
+		spin_lock_irq(&tsdata->state_lock);
+		tsdata->pm_blocked = false;
+		schedule_work(&tsdata->display_work);
+		spin_unlock_irq(&tsdata->state_lock);
+	}
 	return ret;
 }
 

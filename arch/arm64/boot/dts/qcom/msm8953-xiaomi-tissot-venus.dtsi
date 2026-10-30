@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Venus video codec for tissot (msm8953).
+ *
+ * The hardware is the 89xx class Venus core at 0x1d00000 with a 7 MiB
+ * firmware region, two power domains (VENUS_GDSC for the core, and
+ * VENUS_CORE0_GDSC for the vcodec0 core that the decoder and encoder
+ * children run on) and an SMMU context bank of its own (the "VENUS_NS"
+ * bank, iommu-ctx@16000, inside apps_iommu).
+ *
+ * The clock and power-domain plumbing already exists in the port's
+ * GCC driver (drivers/clk/qcom/gcc-msm8953.c: the Venus gates, the
+ * settable vcodec0_clk_src RCG and both GDSCs), so this file only
+ * describes the device.
+ *
+ * The "operating-points-v2" table is required: the driver sets the core
+ * rate through dev_pm_opp_set_rate() on this node and names the "core"
+ * clock for the OPP framework. The rates are the vcodec0_clk_src table's
+ * (540/465/360/310/228.57/114.29 MHz).
+ *
+ * No "interconnects" property: this tree has no ICC providers for the
+ * Venus paths, and of_icc_get() returns NULL for a missing property,
+ * which the driver treats as "no bandwidth constraints".
+ */
+
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+
+&soc {
+	venus: video-codec@1d00000 {
+		compatible = "qcom,msm8953-venus";
+		reg = <0x1d00000 0xff000>;
+		clocks = <&gcc GCC_VENUS0_VCODEC0_CLK>,
+			 <&gcc GCC_VENUS0_AHB_CLK>,
+			 <&gcc GCC_VENUS0_AXI_CLK>;
+		clock-names = "core", "iface", "bus";
+		interrupts = <GIC_SPI 44 IRQ_TYPE_LEVEL_HIGH>;
+		iommus = <&apps_iommu 0x16>;
+		memory-region = <&venus_mem>;
+		power-domains = <&gcc VENUS_GDSC>;
+
+		video-decoder {
+			compatible = "venus-decoder";
+			clocks = <&gcc GCC_VENUS0_CORE0_VCODEC0_CLK>;
+			clock-names = "vcodec0_core";
+			power-domains = <&gcc VENUS_CORE0_GDSC>;
+		};
+
+		video-encoder {
+			compatible = "venus-encoder";
+			clocks = <&gcc GCC_VENUS0_CORE0_VCODEC0_CLK>;
+			clock-names = "vcodec0_core";
+			power-domains = <&gcc VENUS_CORE0_GDSC>;
+		};
+
+		opp-table {
+			compatible = "operating-points-v2";
+
+			opp-114290000 {
+				opp-hz = /bits/ 64 <114290000>;
+			};
+
+			opp-228570000 {
+				opp-hz = /bits/ 64 <228570000>;
+			};
+
+			opp-310000000 {
+				opp-hz = /bits/ 64 <310000000>;
+			};
+
+			opp-360000000 {
+				opp-hz = /bits/ 64 <360000000>;
+			};
+
+			opp-400000000 {
+				opp-hz = /bits/ 64 <400000000>;
+			};
+
+			opp-465000000 {
+				opp-hz = /bits/ 64 <465000000>;
+			};
+
+			opp-540000000 {
+				opp-hz = /bits/ 64 <540000000>;
+			};
+		};
+	};
+};

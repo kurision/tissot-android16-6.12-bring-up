@@ -1,0 +1,787 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * The audio machine for tissot: CAF's SDM450 soundcard (msm8952), the
+ * SDM660 analog CDC, the WCD9xxx codec, the MAX98927 speaker amplifier
+ * and the PCM platforms and DAIs the machine driver binds to.
+ *
+ * The machine driver names the components it wants; ASoC derives a
+ * component's name from its device node, which carries the parent bus
+ * prefix, so the driver resolves those names to device nodes through the
+ * asoc-platform/asoc-cpu lists below. The PCM platforms keep the vendor
+ * "<driver>.<id>" names as the keys of those lists.
+ *
+ * The topology is the donor's (oc-test/arch/arm64/boot/dts/vendor/qcom/
+ * mi8953/tissot/audio.dtsi and msm8953-audio.dtsi), with the property
+ * names this kernel's drivers read.
+ */
+
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+
+/*
+ * The ADSP's buffer stream (SID 0x2401) is the adsp_io context bank at
+ * 0x1e2f000 (downstream msm-arm-smmu-8953.dtsi), which is bank 0xf of this
+ * IOMMU: the existing VFE, MDP_0 and VENUS_NS banks at 0x14, 0x15 and 0x16
+ * are that file's 0x1e34000, 0x1e35000 and 0x1e36000. Non-secure.
+ */
+&apps_iommu {
+	/* ADSP_IO */
+	iommu-ctx@f000 {
+		compatible = "qcom,msm-iommu-v1-ns";
+		reg = <0xf000 0x1000>;
+		interrupts = <GIC_SPI 104 IRQ_TYPE_LEVEL_HIGH>;
+	};
+};
+
+&soc {
+	/*
+	 * APR, the transport to the ADSP, and its two children: the DSP
+	 * library's core service and the memory the DSP's buffers come
+	 * from. The donor's node is msm-audio-lpass.dtsi's, with
+	 * msm8953-audio.dtsi's q6core child and IOMMU. Its iommus cell was
+	 * the stream ID; here it is the context bank, and the stream ID the
+	 * ADSP sees is qcom,smmu-sid, masked to 1 exactly as the donor's
+	 * 0x2401 & 0xf.
+	 */
+	audio_apr: qcom,msm-audio-apr {
+		compatible = "qcom,msm-audio-apr";
+		qcom,subsys-name = "apr_adsp";
+
+		msm_audio_ion: qcom,msm-audio-ion {
+			compatible = "qcom,msm-audio-ion";
+			qcom,smmu-version = <2>;
+			qcom,smmu-enabled;
+			iommus = <&apps_iommu 0xf>;
+			qcom,smmu-sid = /bits/ 64 <0x2401>;
+			qcom,smmu-sid-mask = /bits/ 64 <0xf>;
+			qcom,iommu-dma-addr-pool = <0x10000000 0x10000000>;
+		};
+
+		/* Unlabelled: msm8953.dtsi's upstream APR already has q6core. */
+		q6core {
+			compatible = "qcom,q6core-audio";
+		};
+	};
+
+	/* The audio timer, as the donor's msm8953-audio.dtsi. */
+	qcom,avtimer@c0a300c {
+		compatible = "qcom,avtimer";
+		reg = <0x0c0a300c 0x4>,
+		      <0x0c0a3010 0x4>;
+		reg-names = "avtimer_lsb_addr", "avtimer_msb_addr";
+		qcom,clk-div = <27>;
+	};
+
+	/*
+	 * The sound card. The four registers are the CSR GPIO muxes the
+	 * driver maps, not a device.
+	 */
+	int_codec: sound {
+		status = "okay";
+		compatible = "qcom,msm8952-audio-codec";
+		qcom,model = "msm8953-snd-card-mtp";
+		/*
+		 * The donor's tissot audio.dtsi: the ROM's mixer paths route
+		 * calls through the legacy voice front ends (CS-VOICE, Voice2,
+		 * VoLTE, VoWLAN).
+		 */
+		qcom,use-legacy-voice-cpu-dais;
+		reg = <0xc051000 0x4>,
+			<0xc051004 0x4>,
+			<0xc055000 0x4>,
+			<0xc052000 0x4>;
+		reg-names = "csr_gp_io_mux_mic_ctl",
+			"csr_gp_io_mux_spkr_ctl",
+			"csr_gp_io_lpaif_pri_pcm_pri_mode_muxsel",
+			"csr_gp_io_mux_quin_ctl";
+
+		qcom,msm-ext-pa = "primary";
+		qcom,msm-mclk-freq = <9600000>;
+		qcom,msm-hs-micbias-type = "internal";
+		qcom,msm-mbhc-hphl-swh = <1>;
+		qcom,msm-mbhc-gnd-swh = <1>;
+
+		/* The speaker amplifier's enable, and its pinctrl states. */
+		qcom,msm-spk-ext-pa = <&tlmm 141 0>;
+		qcom,cdc-ext-pa-gpios = <&cdc_ext_pa_gpios>;
+
+		/*
+		 * The CDC's pins. The machine driver muxes them itself, so
+		 * they have to be named here; the states themselves are in
+		 * the pinctrl nodes below.
+		 */
+		qcom,cdc-us-euro-gpios = <&tlmm 63 0>;
+		qcom,cdc-us-eu-gpios = <&cdc_us_euro_sw>;
+		qcom,cdc-comp-gpios = <&cdc_comp_gpios>;
+		qcom,pri-mi2s-gpios = <&cdc_pri_mi2s_gpios>;
+		qcom,quin-mi2s-gpios = <&cdc_quin_mi2s_gpios>;
+
+		/* The headset microphone bias is on an external capacitor. */
+		qcom,msm-micbias1-ext-cap;
+
+		/*
+		 * The codecs of the primary MI2S links. The machine driver
+		 * looks the names up in this list and takes the phandle at
+		 * that index, and this kernel's ASoC matches a link's codec
+		 * by its device node.
+		 *
+		 * The speaker is not on the CDC: it is the MAX98927 on the
+		 * quinary MI2S, which the ROM's speaker paths route to
+		 * (QUIN_MI2S_RX Audio Mixer). The donor's machine driver put
+		 * it on that link by board id; here it is named.
+		 */
+		asoc-codec-names = "msm-dig-codec", "analog-codec",
+				   "quin-spk-amp";
+		asoc-codec = <&msm_digital_codec>, <&pmic_analog_codec>,
+			     <&max98927_codec>;
+
+		/*
+		 * The platform and CPU DAI names the machine driver uses. This
+		 * kernel's ASoC names a component after its device node, which
+		 * carries the parent bus prefix, so the names in the links do
+		 * not match it. The machine driver resolves them to these
+		 * nodes instead.
+		 */
+		asoc-platform = <&msm_pcm_dsp_0>, <&msm_pcm_dsp_1>,
+				<&msm_pcm_dsp_2>, <&msm_pcm_voice>,
+				<&msm_pcm_loopback>, <&msm_pcm_hostless>,
+				<&msm_pcm_afe>, <&msm_pcm_routing>,
+				<&msm_pcm_dsp_noirq>;
+		asoc-platform-names = "msm-pcm-dsp.0", "msm-pcm-dsp.1",
+				"msm-pcm-dsp.2", "msm-pcm-voice",
+				"msm-pcm-loopback", "msm-pcm-hostless",
+				"msm-pcm-afe", "msm-pcm-routing",
+				"msm-pcm-dsp-noirq";
+
+		asoc-cpu = <&msm_dai_mi2s_0>, <&msm_dai_mi2s_1>,
+				<&msm_dai_mi2s_2>, <&msm_dai_mi2s_3>,
+				<&msm_dai_mi2s_4>, <&msm_dai_mi2s_5>,
+				<&msm_dai_auxpcm>,
+				<&msm_dai_bt_sco_rx>, <&msm_dai_bt_sco_tx>,
+				<&msm_dai_bt_sco_rx_2>, <&msm_dai_bt_sco_tx_2>,
+				<&msm_dai_int_fm_rx>, <&msm_dai_int_fm_tx>,
+				<&msm_dai_afe_pcm_rx>, <&msm_dai_afe_pcm_tx>,
+				<&msm_dai_incall_record_rx>,
+				<&msm_dai_incall_record_tx>,
+				<&msm_dai_incall_music_rx>,
+				<&msm_dai_incall_music_tx>,
+				<&msm_dai_proxy_rx>, <&msm_dai_proxy_tx>;
+		asoc-cpu-names = "msm-dai-q6-mi2s.0", "msm-dai-q6-mi2s.1",
+				"msm-dai-q6-mi2s.2", "msm-dai-q6-mi2s.3",
+				"msm-dai-q6-mi2s.4", "msm-dai-q6-mi2s.6",
+				"msm-dai-q6-auxpcm.1",
+				"msm-dai-q6-dev.12288", "msm-dai-q6-dev.12289",
+				"msm-dai-q6-dev.12292", "msm-dai-q6-dev.12293",
+				"msm-dai-q6-dev.224", "msm-dai-q6-dev.225",
+				"msm-dai-q6-dev.240", "msm-dai-q6-dev.241",
+				"msm-dai-q6-dev.32770", "msm-dai-q6-dev.32771",
+				"msm-dai-q6-dev.32772", "msm-dai-q6-dev.32773",
+				"msm-dai-q6-dev.8194", "msm-dai-q6-dev.8195";
+
+		qcom,audio-routing =
+			"RX_BIAS", "MCLK",
+			"SPK_RX_BIAS", "MCLK",
+			"INT_LDO_H", "MCLK",
+			"MIC BIAS External", "Handset Mic",
+			"MIC BIAS Internal2", "Headset Mic",
+			"MIC BIAS External", "Secondary Mic",
+			"AMIC1", "MIC BIAS External",
+			"AMIC2", "MIC BIAS Internal2",
+			"AMIC3", "MIC BIAS External";
+	};
+
+	/* The CDC's pinctrl states, one node per group of pins. */
+	cdc_ext_pa_gpios: cdc_ext_pa_pinctrl {
+		compatible = "qcom,msm-cdc-pinctrl";
+		pinctrl-names = "aud_active", "aud_sleep";
+		pinctrl-0 = <&ext_pa_power_on>;
+		pinctrl-1 = <&ext_pa_power_off>;
+	};
+
+	cdc_us_euro_sw: msm_cdc_pinctrl_us_euro_sw {
+		compatible = "qcom,msm-cdc-pinctrl";
+		pinctrl-names = "aud_active", "aud_sleep";
+		pinctrl-0 = <&cross_conn_det_act>;
+		pinctrl-1 = <&cross_conn_det_sus>;
+	};
+
+	cdc_comp_gpios: msm_cdc_pinctrl_comp_gpios {
+		compatible = "qcom,msm-cdc-pinctrl";
+		pinctrl-names = "aud_active", "aud_sleep";
+		pinctrl-0 = <&cdc_pdm_comp_lines_act>;
+		pinctrl-1 = <&cdc_pdm_comp_lines_sus>;
+	};
+
+	/*
+	 * The primary MI2S is the internal codec's, on the CDC PDM lines.
+	 * The quinary MI2S is the speaker amplifier's, and LPASS routes it
+	 * to the TLMM's primary MI2S pins (csr_gp_io_mux_quin_ctl), so the
+	 * pin groups are not the ones the names suggest. As the donor's
+	 * msm8953-audio.dtsi has them.
+	 */
+	cdc_pri_mi2s_gpios: msm_cdc_pinctrl_pri_mi2s_gpios {
+		compatible = "qcom,msm-cdc-pinctrl";
+		pinctrl-names = "aud_active", "aud_sleep";
+		pinctrl-0 = <&cdc_pdm_lines_act &cdc_pdm_lines_2_act>;
+		pinctrl-1 = <&cdc_pdm_lines_sus &cdc_pdm_lines_2_sus>;
+	};
+
+	cdc_quin_mi2s_gpios: msm_cdc_pinctrl_quin_mi2s_gpios {
+		compatible = "qcom,msm-cdc-pinctrl";
+		pinctrl-names = "aud_active", "aud_sleep";
+		pinctrl-0 = <&pri_tlmm_lines_act &pri_tlmm_ws_act>;
+		pinctrl-1 = <&pri_tlmm_lines_sus &pri_tlmm_ws_sus>;
+	};
+
+	/*
+	 * The PCM platforms. The machine driver names them, so the node
+	 * names have to be the ones it asks for.
+	 */
+	msm_pcm_dsp_0: msm-pcm-dsp.0 {
+		compatible = "qcom,msm-pcm-dsp";
+		qcom,msm-pcm-dsp-id = <0>;
+	};
+
+	msm_pcm_dsp_1: msm-pcm-dsp.1 {
+		compatible = "qcom,msm-pcm-dsp";
+		qcom,msm-pcm-dsp-id = <1>;
+	};
+
+	msm_pcm_dsp_2: msm-pcm-dsp.2 {
+		compatible = "qcom,msm-pcm-dsp";
+		qcom,msm-pcm-dsp-id = <2>;
+	};
+
+	msm_pcm_dsp_noirq: msm-pcm-dsp-noirq {
+		compatible = "qcom,msm-pcm-dsp-noirq";
+	};
+
+	msm_pcm_hostless: msm-pcm-hostless {
+		compatible = "qcom,msm-pcm-hostless";
+	};
+
+	msm_pcm_voice: msm-pcm-voice {
+		compatible = "qcom,msm-pcm-voice";
+	};
+
+	msm_pcm_loopback: msm-pcm-loopback {
+		compatible = "qcom,msm-pcm-loopback";
+	};
+
+	msm_pcm_routing: msm-pcm-routing {
+		compatible = "qcom,msm-pcm-routing";
+	};
+
+	msm_pcm_afe: msm-pcm-afe {
+		compatible = "qcom,msm-pcm-afe";
+	};
+
+	/*
+	 * The DAIs. The frontend DAIs all come from one node; the
+	 * backend ones are one node per AFE port, and the driver names
+	 * them after the port id it reads.
+	 */
+	msm_dai_fe: qcom,msm-dai-fe {
+		compatible = "qcom,msm-dai-fe";
+	};
+
+	msm_dai_mi2s_0: qcom,msm-dai-q6-mi2s-prim {
+		compatible = "qcom,msm-dai-q6-mi2s";
+		qcom,msm-dai-q6-mi2s-dev-id = <0>;
+		qcom,msm-mi2s-rx-lines = <3>;
+		qcom,msm-mi2s-tx-lines = <0>;
+	};
+
+	msm_dai_mi2s_1: qcom,msm-dai-q6-mi2s-sec {
+		compatible = "qcom,msm-dai-q6-mi2s";
+		qcom,msm-dai-q6-mi2s-dev-id = <1>;
+		qcom,msm-mi2s-rx-lines = <1>;
+		qcom,msm-mi2s-tx-lines = <0>;
+	};
+
+	msm_dai_mi2s_2: qcom,msm-dai-q6-mi2s-tert {
+		compatible = "qcom,msm-dai-q6-mi2s";
+		qcom,msm-dai-q6-mi2s-dev-id = <2>;
+		qcom,msm-mi2s-rx-lines = <0>;
+		qcom,msm-mi2s-tx-lines = <3>;
+	};
+
+	msm_dai_mi2s_3: qcom,msm-dai-q6-mi2s-quat {
+		compatible = "qcom,msm-dai-q6-mi2s";
+		qcom,msm-dai-q6-mi2s-dev-id = <3>;
+		qcom,msm-mi2s-rx-lines = <1>;
+		qcom,msm-mi2s-tx-lines = <2>;
+	};
+
+	msm_dai_mi2s_4: qcom,msm-dai-q6-mi2s-quin {
+		compatible = "qcom,msm-dai-q6-mi2s";
+		qcom,msm-dai-q6-mi2s-dev-id = <4>;
+		qcom,msm-mi2s-rx-lines = <1>;
+		qcom,msm-mi2s-tx-lines = <2>;
+	};
+
+	msm_dai_mi2s_5: qcom,msm-dai-q6-mi2s-senary {
+		compatible = "qcom,msm-dai-q6-mi2s";
+		qcom,msm-dai-q6-mi2s-dev-id = <5>;
+		qcom,msm-mi2s-rx-lines = <0>;
+		qcom,msm-mi2s-tx-lines = <3>;
+	};
+
+	/* The slimbus ports, the bluetooth ones, the voice and the int FM. */
+	msm_dai_sb_0_rx: qcom,msm-dai-q6-sb-0-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16384>;
+	};
+
+	msm_dai_sb_0_tx: qcom,msm-dai-q6-sb-0-tx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16385>;
+	};
+
+	msm_dai_sb_1_rx: qcom,msm-dai-q6-sb-1-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16386>;
+	};
+
+	msm_dai_sb_1_tx: qcom,msm-dai-q6-sb-1-tx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16387>;
+	};
+
+	msm_dai_sb_2_rx: qcom,msm-dai-q6-sb-2-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16388>;
+	};
+
+	msm_dai_sb_2_tx: qcom,msm-dai-q6-sb-2-tx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16389>;
+	};
+
+	msm_dai_sb_3_rx: qcom,msm-dai-q6-sb-3-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16390>;
+	};
+
+	msm_dai_sb_3_tx: qcom,msm-dai-q6-sb-3-tx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16391>;
+	};
+
+	msm_dai_sb_4_rx: qcom,msm-dai-q6-sb-4-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16392>;
+	};
+
+	msm_dai_sb_4_tx: qcom,msm-dai-q6-sb-4-tx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16393>;
+	};
+
+	msm_dai_sb_5_rx: qcom,msm-dai-q6-sb-5-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16394>;
+	};
+
+	msm_dai_sb_5_tx: qcom,msm-dai-q6-sb-5-tx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16395>;
+	};
+
+	msm_dai_sb_6_rx: qcom,msm-dai-q6-sb-6-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <16396>;
+	};
+
+	msm_dai_bt_sco_rx: qcom,msm-dai-q6-bt-sco-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <12288>;
+	};
+
+	msm_dai_bt_sco_tx: qcom,msm-dai-q6-bt-sco-tx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <12289>;
+	};
+
+	msm_dai_bt_sco_rx_2: qcom,msm-dai-q6-bt-sco-rx-2 {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <12292>;
+	};
+
+	msm_dai_bt_sco_tx_2: qcom,msm-dai-q6-bt-sco-tx-2 {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <12293>;
+	};
+
+	msm_dai_int_fm_rx: qcom,msm-dai-q6-int-fm-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <224>;
+	};
+
+	msm_dai_int_fm_tx: qcom,msm-dai-q6-int-fm-tx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <225>;
+	};
+
+	msm_dai_afe_pcm_rx: qcom,msm-dai-q6-afe-pcm-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <240>;
+	};
+
+	msm_dai_afe_pcm_tx: qcom,msm-dai-q6-afe-pcm-tx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <241>;
+	};
+
+	msm_dai_proxy_rx: qcom,msm-dai-q6-proxy-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <8194>;
+	};
+
+	msm_dai_proxy_tx: qcom,msm-dai-q6-proxy-tx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <8195>;
+	};
+
+	msm_dai_incall_record_rx: qcom,msm-dai-q6-incall-record-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <32770>;
+	};
+
+	msm_dai_incall_record_tx: qcom,msm-dai-q6-incall-record-tx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <32771>;
+	};
+
+	msm_dai_incall_music_rx: qcom,msm-dai-q6-incall-music-rx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <32772>;
+	};
+
+	msm_dai_incall_music_tx: qcom,msm-dai-q6-incall-music-tx {
+		compatible = "qcom,msm-dai-q6-dev";
+		qcom,msm-dai-q6-dev-id = <32773>;
+	};
+
+	/* The primary and secondary TDM ports. */
+	msm_dai_tdm_rx_0: qcom,msm-dai-q6-tdm-rx-0 {
+		compatible = "qcom,msm-dai-q6-tdm";
+		qcom,msm-cpudai-tdm-dev-id = <36864>;
+	};
+
+	msm_dai_tdm_tx_0: qcom,msm-dai-q6-tdm-tx-0 {
+		compatible = "qcom,msm-dai-q6-tdm";
+		qcom,msm-cpudai-tdm-dev-id = <36865>;
+	};
+
+	msm_dai_tdm_rx_1: qcom,msm-dai-q6-tdm-rx-1 {
+		compatible = "qcom,msm-dai-q6-tdm";
+		qcom,msm-cpudai-tdm-dev-id = <36880>;
+	};
+
+	msm_dai_tdm_tx_1: qcom,msm-dai-q6-tdm-tx-1 {
+		compatible = "qcom,msm-dai-q6-tdm";
+		qcom,msm-cpudai-tdm-dev-id = <36881>;
+	};
+
+	/* The auxiliary PCM. */
+	msm_dai_auxpcm: qcom,msm-auxpcm-dev {
+		compatible = "qcom,msm-auxpcm-dev";
+		qcom,msm-cpudai-auxpcm-mode = <0>, <0>;
+		qcom,msm-cpudai-auxpcm-sync = <1>, <1>;
+		qcom,msm-cpudai-auxpcm-frame = <5>, <4>;
+		qcom,msm-cpudai-auxpcm-quant = <2>, <2>;
+		qcom,msm-cpudai-auxpcm-num-slots = <1>, <1>;
+		qcom,msm-cpudai-auxpcm-slot-mapping = <1>, <1>;
+		qcom,msm-cpudai-auxpcm-data = <0>, <0>;
+		qcom,msm-cpudai-auxpcm-pcm-clk-rate = <2048000>, <2048000>;
+		qcom,msm-auxpcm-interface = "primary";
+		qcom,msm-cpudai-afe-clk-ver = <2>;
+	};
+};
+
+&{/soc@0/spmi@200f000/pmic@1} {
+	/*
+	 * The analog CDC is a peripheral of the PM8953's second SPMI slave
+	 * (SID 1), as in the donor's &pm8953_1: its reg is the PMIC address
+	 * and the driver takes the PMIC's regmap from its parent. Under &soc
+	 * it had no regmap and failed to probe with -EINVAL. mainline's
+	 * pmic@1 has no label, so it is reached by path.
+	 *
+	 * The analog CDC: the codec the sound card talks to. It carries
+	 * the microphone bias, the headphone amplifier and the speaker
+	 * path of the machine.
+	 */
+	pmic_analog_codec: anlg-cdc@f000 {
+		status = "okay";
+		compatible = "qcom,pmic-analog-codec";
+		reg = <0xf000>;
+		#address-cells = <2>;
+		#size-cells = <0>;
+		interrupt-parent = <&spmi_bus>;
+		interrupts = <0x1 0xf0 0x0 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf0 0x1 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf0 0x2 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf0 0x3 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf0 0x4 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf0 0x5 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf0 0x6 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf0 0x7 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf1 0x0 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf1 0x1 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf1 0x2 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf1 0x3 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf1 0x4 IRQ_TYPE_LEVEL_HIGH>,
+			<0x1 0xf1 0x5 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "spk_cnp_int",
+				"spk_clip_int",
+				"spk_ocp_int",
+				"ins_rem_det1",
+				"but_rel_det",
+				"but_press_det",
+				"ins_rem_det",
+				"mbhc_int",
+				"ear_ocp_int",
+				"hphr_ocp_int",
+				"hphl_ocp_det",
+				"ear_cnp_int",
+				"hphr_cnp_int",
+				"hphl_cnp_int";
+
+		cdc-vdda-cp-supply = <&pm8953_s4>;
+		qcom,cdc-vdda-cp-voltage = <1900000 2050000>;
+		qcom,cdc-vdda-cp-current = <500000>;
+
+		cdc-vdd-io-supply = <&pm8953_l5>;
+		qcom,cdc-vdd-io-voltage = <1800000 1800000>;
+		qcom,cdc-vdd-io-current = <5000>;
+
+		cdc-vdd-pa-supply = <&pm8953_s4>;
+		qcom,cdc-vdd-pa-voltage = <1900000 2050000>;
+		qcom,cdc-vdd-pa-current = <260000>;
+
+		cdc-vdd-mic-bias-supply = <&pm8953_l13>;
+		qcom,cdc-vdd-mic-bias-voltage = <3125000 3125000>;
+		qcom,cdc-vdd-mic-bias-current = <5000>;
+
+		qcom,cdc-mclk-clk-rate = <9600000>;
+
+		qcom,cdc-static-supplies = "cdc-vdd-io",
+					"cdc-vdd-pa",
+					"cdc-vdda-cp";
+
+		qcom,cdc-on-demand-supplies = "cdc-vdd-mic-bias";
+
+		/*
+		 * The digital CDC. It is the first codec of the primary
+		 * MI2S links, the analog one the second, and the machine
+		 * driver finds both by their phandle here.
+		 */
+		msm_digital_codec: msm-dig-codec {
+			compatible = "qcom,msm-digital-codec";
+			reg = <0xc0f0000 0x0>;
+		};
+	};
+};
+
+&tlmm {
+	/* The speaker amplifier's enable. */
+	cdc_ext_pa_gpio_ctrl {
+		ext_pa_power_off: ext_pa_power_off {
+			mux {
+				pins = "gpio141";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio141";
+				drive-strength = <16>;
+				bias-disable;
+				output-low;
+			};
+		};
+
+		ext_pa_power_on: ext_pa_power_on {
+			mux {
+				pins = "gpio141";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio141";
+				drive-strength = <16>;
+				bias-pull-down;
+				output-high;
+			};
+		};
+	};
+
+	/*
+	 * The TLMM's primary MI2S lines, which carry the quinary MI2S to the
+	 * speaker amplifier: the bit clock and data, and the word select.
+	 */
+	pri_tlmm_lines {
+		pri_tlmm_lines_act: pri_tlmm_lines_act {
+			mux {
+				pins = "gpio91", "gpio93";
+				function = "pri_mi2s";
+			};
+
+			config {
+				pins = "gpio91", "gpio93";
+				drive-strength = <8>;
+			};
+		};
+
+		pri_tlmm_lines_sus: pri_tlmm_lines_sus {
+			mux {
+				pins = "gpio91", "gpio93";
+				function = "pri_mi2s";
+			};
+
+			config {
+				pins = "gpio91", "gpio93";
+				drive-strength = <2>;
+				bias-pull-down;
+			};
+		};
+	};
+
+	pri_tlmm_ws {
+		pri_tlmm_ws_act: pri_tlmm_ws_act {
+			mux {
+				pins = "gpio92";
+				function = "pri_mi2s_ws";
+			};
+
+			config {
+				pins = "gpio92";
+				drive-strength = <8>;
+			};
+		};
+
+		pri_tlmm_ws_sus: pri_tlmm_ws_sus {
+			mux {
+				pins = "gpio92";
+				function = "pri_mi2s_ws";
+			};
+
+			config {
+				pins = "gpio92";
+				drive-strength = <2>;
+				bias-pull-down;
+			};
+		};
+	};
+
+	/* The CDC's PDM lines. */
+	cdc_pdm_lines {
+		cdc_pdm_lines_act: pdm_lines_on {
+			mux {
+				pins = "gpio69", "gpio73", "gpio74";
+				function = "cdc_pdm0";
+			};
+
+			config {
+				pins = "gpio69", "gpio73", "gpio74";
+				drive-strength = <8>;
+			};
+		};
+
+		cdc_pdm_lines_sus: pdm_lines_off {
+			mux {
+				pins = "gpio69", "gpio73", "gpio74";
+				function = "cdc_pdm0";
+			};
+
+			config {
+				pins = "gpio69", "gpio73", "gpio74";
+				drive-strength = <2>;
+				bias-disable;
+			};
+		};
+	};
+
+	cdc_pdm_lines_2 {
+		cdc_pdm_lines_2_act: pdm_lines_2_on {
+			mux {
+				pins = "gpio70", "gpio71", "gpio72";
+				function = "cdc_pdm0";
+			};
+
+			config {
+				pins = "gpio70", "gpio71", "gpio72";
+				drive-strength = <8>;
+			};
+		};
+
+		cdc_pdm_lines_2_sus: pdm_lines_2_off {
+			mux {
+				pins = "gpio70", "gpio71", "gpio72";
+				function = "cdc_pdm0";
+			};
+
+			config {
+				pins = "gpio70", "gpio71", "gpio72";
+				drive-strength = <2>;
+				bias-disable;
+			};
+		};
+	};
+
+	cdc_pdm_comp_lines {
+		cdc_pdm_comp_lines_act: pdm_comp_lines_on {
+			mux {
+				pins = "gpio67", "gpio68";
+				function = "cdc_pdm0";
+			};
+
+			config {
+				pins = "gpio67", "gpio68";
+				drive-strength = <8>;
+			};
+		};
+
+		cdc_pdm_comp_lines_sus: pdm_comp_lines_off {
+			mux {
+				pins = "gpio67", "gpio68";
+				function = "cdc_pdm0";
+			};
+
+			config {
+				pins = "gpio67", "gpio68";
+				drive-strength = <2>;
+				bias-disable;
+			};
+		};
+	};
+
+	/* The cross connection detect line. */
+	cross_conn_det {
+		cross_conn_det_act: lines_on {
+			mux {
+				pins = "gpio63";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio63";
+				drive-strength = <8>;
+				output-low;
+				bias-pull-down;
+			};
+		};
+
+		cross_conn_det_sus: lines_off {
+			mux {
+				pins = "gpio63";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio63";
+				drive-strength = <2>;
+				bias-pull-down;
+			};
+		};
+	};
+};

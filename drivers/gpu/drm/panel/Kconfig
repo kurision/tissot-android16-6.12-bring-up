@@ -451,6 +451,17 @@ config DRM_PANEL_MANTIX_MLAF057WE51
 	  has a resolution of 720x1440 pixels, a built in backlight and touch
 	  controller.
 
+config DRM_PANEL_OTM1911
+	tristate "Orise OTM1911 1080x1920 MIPI-DSI LCD panel"
+	depends on OF
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	help
+	  Say Y here if you want to enable support for the Orise
+	  OTM1911 MIPI DSI video-mode panel as e.g. used in the
+	  Xiaomi Mi A1 (tissot). It has a resolution of 1080x1920
+	  pixels at 60 Hz.
+
 config DRM_PANEL_NEC_NL8048HL11
 	tristate "NEC NL8048HL11 RGB panel"
 	depends on GPIOLIB && OF && SPI

@@ -1,0 +1,17 @@
+# The kernel modules the diag init loads from the ramdisk, in this order.
+# build-kernel.sh adds whatever modules.dep says each one needs, ahead of
+# it, so a dependency missing here is still loaded first.
+#
+# The CAF 4.19 audio stack, CAF's module split: the APR transport, the DSP
+# library, the WCD DSP glink, the PCM/DAI/routing platform, the audio pin
+# control, the headset helper, the analog and digital CDC, then the soundcard. Built in it does
+# not fit below the DTB (porting/findings/2026-10-21-kernel-overruns-the-dtb.md).
+apr_dlkm.ko
+q6_dlkm.ko
+wglink_dlkm.ko
+platform_dlkm.ko
+cdc_pinctrl_dlkm.ko
+mbhc_dlkm.ko
+analog_cdc_dlkm.ko
+digital_cdc_dlkm.ko
+machine_dlkm.ko

@@ -1097,4 +1097,29 @@ config FUEL_GAUGE_MM8013
 	  the state of charge, temperature, cycle count, actual and design
 	  capacity, etc.
 
+config OF_BATTERYDATA
+	bool
+	depends on OF
+
+config PMIC_VOTER
+	bool
+
+config QPNP_FG
+	bool "Qualcomm PMI8950 fuel gauge (Tissot donor)"
+	depends on MFD_SPMI_PMIC && OF && RTC_CLASS && PM
+	select OF_BATTERYDATA
+	help
+	  Fuel gauge ported from the Xiaomi MSM8953 donor, including Tissot
+	  battery profile selection, capacity learning and temperature limits.
+
+config QPNP_SMBCHARGER
+	bool "Qualcomm PMI8950 SMB charger (Tissot donor)"
+	depends on MFD_SPMI_PMIC && OF && RTC_CLASS && IIO && EXTCON && REGULATOR
+	depends on QPNP_FG && PM
+	select PMIC_VOTER
+	select OF_BATTERYDATA
+	help
+	  SMBCHG-lite charger and battery power-supply interfaces from the
+	  Tissot donor. Retains its current, voltage, thermal and JEITA limits.
+
 endif # POWER_SUPPLY

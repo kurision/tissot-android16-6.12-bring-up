@@ -1,0 +1,178 @@
+;; ---------------
+;; kgsl power attributes on 6.12: label the new path with the type the ROM
+;; already grants.
+;;
+;; The vendor policy labels the GPU attributes with literal CAF 4.19 paths
+;; under
+;;
+;;   /devices/platform/soc/<addr>.qcom,kgsl-3d0/...
+;;
+;; and grants hal_power_default write access to sysfs_kgsl.  This kernel
+;; creates them at
+;;
+;;   /devices/platform/soc@0/1c00000.gpu/kgsl/kgsl-3d0/...
+;;
+;; so no genfscon matches, the attributes land on the generic sysfs type,
+;; and the Power HAL's writes to max_pwrlevel, min_pwrlevel, idle_timer,
+;; force_clk_on and force_rail_on are denied.
+;;
+;; The live labels after the runtime relabel in the initramdisk are
+;; sysfs_kgsl for every regular file in that directory, and the vendor
+;; policy's own (genfscon sysfs "/class/kgsl" ... sysfs_kgsl) shows the
+;; intended type for the family.  This fragment moves that label into the
+;; policy, so it is applied atomically when the ROM compiles and loads the
+;; policy instead of by a worker polling for the policy to appear.
+;;
+;; A literal path is a prefix match here: security/selinux/ss/services.c
+;; compares with strncmp() unless POLICYDB_CAP_GENFS_SECLABEL_WILDCARD is
+;; set, and this policy does not set it
+;; (/sys/fs/selinux/policy_capabilities/genfs_seclabel_wildcard is 0).
+;; Do not add a '*' to the path: with the capability clear the kernel
+;; treats it as a literal character and the rule matches nothing.
+;;
+;; The runtime worker in scripts/initramfs-diag/init.c still checks the
+;; directory's label and relabels the files only if this fragment did not
+;; land, so an image packaged without it keeps working.
+(genfscon sysfs "/devices/platform/soc@0/1c00000.gpu/kgsl/kgsl-3d0" (u object_r sysfs_kgsl ((s0) (s0))))
+
+;; ---------------
+;; The per-device wakeup statistics on 6.12: label them with the type the
+;; ROM's policy already has for them.
+;;
+;; The 4.19 kernel had one set of counters under
+;;
+;;   /sys/devices/virtual/wakeup/wakeupN/
+;;
+;; and the ROM's policy labels that path sysfs_wakeup and lets the
+;; suspend service read it:
+;;
+;;   (allow system_suspend sysfs_wakeup (file (ioctl read getattr lock
+;;                                            map open watch watch_reads)))
+;;
+;; 6.12 has the counters per device, under
+;;
+;;   /sys/devices/platform/soc@0/<device>/wakeup/wakeupN/
+;;
+;; and the ROM's policy has no path for them, so they land on the generic
+;; sysfs type.  The suspend service is then denied, the snapshot fails,
+;; the ROM's checkpoint commit fails, and system_server asks for a
+;; reboot with the reason "Checkpoint commit failed".  That is the
+;; reboot loop the port has been fighting since run302
+;; (porting/CURRENT-STATE.md, "The checkpoint reboot loop"), and it is
+;; what the phone does today: every boot ends with
+;;
+;;   reboot: DIAG: kernel_restart_prepare enter cmd=Checkpoint commit failed
+;;   ramoops: DIAG: orderly reset action=1 pid=1 comm=init command=Checkpoint commit failed
+;;
+;; after 70 to 85 seconds.
+;;
+;; A literal path is a prefix match here: security/selinux/ss/services.c
+;; compares with strncmp() unless POLICYDB_CAP_GENFS_SECLABEL_WILDCARD is
+;; set, and this policy does not set it
+;; (/sys/fs/selinux/policy_capabilities/genfs_seclabel_wildcard is 0).
+;; So the paths are spelled out.  The label of the "wakeup" directory
+;; covers the wakeupN directories and the attributes under them.
+;;
+;; The list is the one the running phone has: the remoteproc's and the
+;; PMICs' wakeup directories under /sys/devices/platform.
+(genfscon sysfs "/devices/platform/soc@0/c200000.remoteproc/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-00/200f000.spmi:pmic@0:pon@800/200f000.spmi:pmic@0:pon@800:pwrkey/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-00/200f000.spmi:pmic@0:pon@800/200f000.spmi:pmic@0:pon@800:resin/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-00/200f000.spmi:pmic@0:rtc@6000/rtc/rtc0/alarmtimer.0.auto/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-00/200f000.spmi:pmic@0:rtc@6000/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-01/200f000.spmi:pmic@1:anlg-cdc@f000/msm_digital_codec/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-01/200f000.spmi:pmic@1:anlg-cdc@f000/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-02/200f000.spmi:pmic@2:qcom,fg/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+(genfscon sysfs "/devices/platform/soc@0/200f000.spmi/spmi-0/0-02/200f000.spmi:pmic@2:qcom,qpnp-smbcharger/wakeup" (u object_r sysfs_wakeup ((s0) (s0))))
+
+;; ---------------
+;; qrtr-ns on 6.12: the userspace QRTR name service binds its fixed
+;; name-service port.  qrtr_port_assign() in net/qrtr/af_qrtr.c requires CAP_NET_ADMIN
+;; for any port below QRTR_MIN_EPH_SOCKET (0x4000), and the qrtr domain is
+;; denied the capability even when the init service is granted it:
+;;
+;;   avc: denied { net_admin } for comm="qrtr-ns" capability=12
+;;        scontext=u:r:qrtr:s0 tcontext=u:r:qrtr:s0 tclass=capability
+;;        permissive=0
+;;
+;; The initramfs overlay adds NET_ADMIN to the vendor.qrtr-ns service
+;; definition (the ROM only grants NET_BIND_SERVICE), so both the init
+;; capability set and this policy allow are required.
+(allow qrtr self (capability (net_admin)))
+
+;; ---------------
+;; QTI Bluetooth HAL on 6.12: the HAL creates a qipcrtr socket while it
+;; initialises.  The vendor policy has no rule for the class, so every
+;; create is denied:
+;;
+;;   avc: denied { create } for comm="android.hardwar"
+;;        scontext=u:r:hal_bluetooth_qti:s0
+;;        tcontext=u:r:hal_bluetooth_qti:s0 tclass=qipcrtr_socket
+;;        permissive=0
+;;
+;; The socket's label is the creating domain (tcontext is self).  Only the
+;; observed permission is granted; if the HAL goes on to connect and send,
+;; the next boot's AVC will name the peer type and the remaining rules.
+(allow hal_bluetooth_qti self (qipcrtr_socket (create)))
+
+;; ---------------
+;; The initramfs diag init still runs in the kernel domain: the Android init
+;; exec (and the transition to init) happens after the modem harvest child is
+;; forked.  That child writes firmware_class.path and the remoteproc
+;; state file to start the MSS. Run336 showed EACCES on firmware_class.path;
+;; run338 confirmed the child is kernel:s0 and its write succeeds here.
+;; Allow the generic sysfs access the early child needs; the Android init
+;; (u:r:init:s0) takes over after the exec.
+(allow kernel sysfs (file (open read write getattr)))
+(allow kernel sysfs (dir (search getattr open read)))
+(allow kernel sysfs (lnk_file (read getattr)))
+
+;; The MSS firmware is /vendor/firmware_mnt/image/{mba.mbn,modem.mdt,...},
+;; labelled firmware_file and 0440 system:system.  The initramfs child writes
+;; the remoteproc state; request_firmware() overrides the caller credentials
+;; with init_task credentials (drivers/base/firmware_loader/main.c).
+;; Allow the firmware type read. This is not sufficient for the mount's
+;; 0440/0550 system-owned modes: run339 also records a DAC denial. Do not
+;; grant kernel DAC bypass capabilities; fix the firmware mount permissions.
+(allow kernel firmware_file (file (open read getattr)))
+
+;; ---------------
+;; The modem's remote storage memory on 6.12: label the UIO device with the
+;; type the ROM already grants rmt_storage.
+;;
+;; The vendor file_contexts label it under the CAF 4.19 path
+;;
+;;   /sys/devices(/platform)?/soc/[a-f0-9]+.qcom,rmtfs_sharedmem/uio/uio[0-9]+(/.*)?
+;;     u:object_r:sysfs_uio_file:s0
+;;
+;; (porting/drafts/vendor_file_contexts.ack:528,536).  This kernel creates
+;; the device under soc@0 (drivers/uio/msm_sharedmem.c, the
+;; qcom,rmtfs_sharedmem@f2d00000 node of msm8953.dtsi), so that regex does
+;; not match and the files the vendor labels for the daemon (the uio
+;; directory and its maps) would land on the generic sysfs type.  A prefix
+;; label covers the uio directory and everything under it.
+(genfscon sysfs "/devices/platform/soc@0/f2d00000.qcom,rmtfs_sharedmem/uio" (u object_r sysfs_uio_file ((s0) (s0))))
+
+;; ---------------
+;; The CAF video codec's device names on 6.12: label them with the type the
+;; ROM already gives them.
+;;
+;; The vendor file_contexts label the names under the CAF 4.19 path
+;;
+;;   /sys/devices(/platform)?/soc/[a-f0-9]+.qcom,vidc/video4linux/video[0-9]+/name(/.*)?
+;;     u:object_r:sysfs_graphics:s0
+;;
+;; (porting/drafts/vendor_file_contexts.ack:531).  This kernel creates the
+;; devices under soc@0 (drivers/media/platform/msm/vidc_3x, the
+;; qcom,vidc@1d00000 node of msm8953-xiaomi-tissot-vidc.dtsi), so the regex
+;; does not match.  A prefix label covers the video4linux directory.
+(genfscon sysfs "/devices/platform/soc@0/1d00000.qcom,vidc/video4linux" (u object_r sysfs_graphics ((s0) (s0))))
+
+;; ---------------
+;; The CAF camera's device names on 6.12: the same type the ROM gives them.
+;;
+;; The camera's devices hang under the CCI (the qcom,cci@1b0c000 node of
+;; msm8953-xiaomi-tissot-camera.dtsi), so the vendor file_contexts, which
+;; expect the CAF 4.19 path, do not match them.  A prefix label covers
+;; the video4linux directory, as the video codec's one does.
+(genfscon sysfs "/devices/platform/soc@0/1b0c000.qcom,cci/video4linux" (u object_r sysfs_graphics ((s0) (s0))))

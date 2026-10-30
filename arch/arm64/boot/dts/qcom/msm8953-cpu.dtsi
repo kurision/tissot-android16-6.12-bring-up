@@ -1,0 +1,784 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * MSM8953 CPU bring-up: clock controller, CPU power rail and CPR.
+ *
+ * Transcribed from the working donor nodes in
+ * oc-test/arch/arm64/boot/dts/vendor/qcom/{msm8953.dtsi,msm8953-pm.dtsi,
+ * msm8953-regulator.dtsi}, retargeted at the 6.12 drivers this port adds:
+ * the CCF APCS clock provider (drivers/clk/qcom/apcc-msm8953.c), the SAW4
+ * provider, the SPM-backed APC rail, the memory-ACC regulator, the array
+ * power mux and the CPR4 regulator.
+ *
+ * Kept in its own file so the board file stays untouched. Two things to know
+ * when reading the numbers:
+ *
+ *  - The APC regulator is corner encoded, not microvolt based. `apc_vreg`
+ *    regulator-min/max-microvolt is the corner selector range and the
+ *    qcom,speedN-bin-v0-{cl,cci} plans on the clock node are rate to corner
+ *    selectors. The clock provider raises the rail itself, so the CPU nodes
+ *    deliberately carry no cpu-supply.
+ *  - The CPR tables are the donor's per speed bin and per CPR revision
+ *    calibration. They are copied unchanged rather than trimmed: the corner
+ *    a frequency can reach is bounded by the clock node's plan and the OPP
+ *    table, not by these ceilings.
+ */
+
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/clock/qcom,gcc-msm8953.h>
+#include <dt-bindings/clock/qcom,apcc-msm8953.h>
+
+&soc {
+
+	saw: qcom,msm8953-saw2-v4.1-cci@b1d2000 {
+		compatible = "qcom,msm8953-saw2-v4.1-cci";
+		reg = <0xb1d2000 0x1000>;
+		reg-names = "saw-base";
+		qcom,cpu-vctl-list = <&cpu0 &cpu1 &cpu2 &cpu3
+				     &cpu4 &cpu5 &cpu6 &cpu7>;
+	};
+
+	apc_apm: apm@b111000 {
+		compatible = "qcom,msm8953-apm";
+		reg = <0xb111000 0x1000>;
+		reg-names = "pm-apcc-glb";
+		qcom,apm-post-halt-delay = <0x2>;
+		qcom,apm-halt-clk-delay = <0x11>;
+		qcom,apm-resume-clk-delay = <0x10>;
+		qcom,apm-sel-switch-delay = <0x01>;
+	};
+
+	apc_mem_acc_vreg: regulator@19461d4 {
+		compatible = "qcom,mem-acc-regulator";
+		reg = <0x019461d4 0x4>, <0x019461d8 0x4>;
+		reg-names = "acc-sel-l1", "acc-sel-l2";
+		regulator-name = "apc_mem_acc_corner";
+		regulator-min-microvolt = <1>;
+		regulator-max-microvolt = <2>;
+
+		qcom,corner-acc-map = <0x1 0x0>;
+		qcom,acc-sel-l1-bit-pos = <0>;
+		qcom,acc-sel-l1-bit-size = <1>;
+		qcom,acc-sel-l2-bit-pos = <0>;
+		qcom,acc-sel-l2-bit-size = <1>;
+	};
+};
+
+/*
+ * PM8953 S5/S6, the VDD_APC supply, on USID 1, as the donor has it.
+ *
+ * This node was briefly moved to USID 0 on the strength of the port log
+ * enumerating only pmic@0 and pmic@2, which was absence of evidence: a PMIC
+ * with no child that logs never appears in that list. The stock donor
+ * kernel, the one that actually runs this rail, has the live tree nodes
+ * qcom,pm8953@0, qcom,pm8953@1, qcom,pmi8950@2 and qcom,pmi8950@3, with
+ * spm-regulator@2000 under qcom,pm8953@1. On USID 0 the port reads type
+ * 00/00 at 0x2000 and refuses the rail, which is what a PM8941 looks like.
+ */
+&spmi_bus {
+	pmic@1 {
+		pm8953_apc_s5: spm-regulator@2000 {
+			compatible = "qcom,spm-regulator";
+			reg = <0x2000>;
+			regulator-name = "pm8953_s5";
+			regulator-min-microvolt = <400000>;
+			regulator-max-microvolt = <1140000>;
+			qcom,saw = <&saw>;
+
+			pm8953_apc_s5_limit: avs-limit-regulator {
+				regulator-name = "pm8953_s5_avs_limit";
+				regulator-min-microvolt = <400000>;
+				regulator-max-microvolt = <1140000>;
+			};
+		};
+	};
+};
+
+&soc {
+
+	apcc: clock-controller@b116000 {
+		compatible = "qcom,apcc-msm8953";
+		reg = <0xb116000 0x50>,
+		      <0xb111050 0x10>,
+		      <0xb011050 0x10>,
+		      <0xb1d1050 0x10>,
+		      <0x00a4124 0x08>;
+		reg-names = "pll", "cpu0-rcg-clk", "cpu4-rcg-clk", "cci-rcg-clk",
+			    "pte-efuse";
+		clocks = <&xo_board>, <&gcc GPLL0_EARLY>, <&gcc GPLL2_EARLY>;
+		clock-names = "xo", "gpll0_early", "gpll2_early";
+		vdd-cl-supply = <&apc_vreg>;
+		power-domains = <&rpmpd MSM8953_VDDMX_AO>;
+		power-domain-names = "mx";
+
+		/*
+		 * Fused rate to corner plans. The provider reads the speed bin
+		 * out of PTE EFUSE bits 8-10 and falls back to bin 0. Values
+		 * are corner selectors, ordered by ascending rate.
+		 */
+		qcom,speed0-bin-v0-cl =
+			<0 0>,
+			<652800000 1>, <1036800000 2>, <1401600000 3>,
+			<1689600000 4>, <1804800000 5>, <1958400000 6>,
+			<2016000000 7>;
+		qcom,speed0-bin-v0-cci =
+			<0 0>,
+			<261120000 1>, <414720000 2>, <560640000 3>,
+			<675840000 4>, <721920000 5>, <783360000 6>,
+			<806400000 7>;
+
+		qcom,speed2-bin-v0-cl =
+			<0 0>,
+			<652800000 1>, <1036800000 2>, <1401600000 3>,
+			<1689600000 4>, <1804800000 5>, <1958400000 6>,
+			<2016000000 7>;
+		qcom,speed2-bin-v0-cci =
+			<0 0>,
+			<261120000 1>, <414720000 2>, <560640000 3>,
+			<675840000 4>, <721920000 5>, <783360000 6>,
+			<806400000 7>;
+
+		qcom,speed6-bin-v0-cl =
+			<0 0>,
+			<652800000 1>, <1036800000 2>, <1401600000 3>,
+			<1689600000 4>, <1804800000 5>, <1958400000 6>,
+			<2016000000 7>;
+		qcom,speed6-bin-v0-cci =
+			<0 0>,
+			<261120000 1>, <414720000 2>, <560640000 3>,
+			<675840000 4>, <721920000 5>, <783360000 6>,
+			<806400000 7>;
+
+		qcom,speed7-bin-v0-cl =
+			<0 0>,
+			<652800000 1>, <1036800000 2>, <1401600000 3>,
+			<1689600000 4>, <1804800000 5>, <1958400000 6>,
+			<2016000000 7>, <2150400000 8>, <2208000000 9>;
+		qcom,speed7-bin-v0-cci =
+			<0 0>,
+			<261120000 1>, <414720000 2>, <560640000 3>,
+			<675840000 4>, <721920000 5>, <783360000 6>,
+			<806400000 7>, <833280000 8>, <860160000 9>;
+
+		#clock-cells = <1>;
+	};
+
+	apc_cpr: cpr4-ctrl@b018000 {
+		compatible = "qcom,cpr4-msm8953-apss-regulator";
+		reg = <0xb018000 0x4000>, <0x00a4000 0x1000>;
+		reg-names = "cpr_ctrl", "fuse_base";
+		interrupts = <GIC_SPI 15 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "cpr";
+
+		qcom,cpr-ctrl-name = "apc";
+
+		qcom,cpr-sensor-time = <1000>;
+		qcom,cpr-loop-time = <5000000>;
+		qcom,cpr-idle-cycles = <15>;
+		qcom,cpr-step-quot-init-min = <12>;
+		qcom,cpr-step-quot-init-max = <14>;
+		qcom,cpr-count-mode = <0>;
+		qcom,cpr-count-repeat = <14>;
+		qcom,cpr-down-error-step-limit = <1>;
+		qcom,cpr-up-error-step-limit = <1>;
+
+		qcom,apm-ctrl = <&apc_apm>;
+		qcom,apm-threshold-voltage = <850000>;
+		qcom,apm-hysteresis-voltage = <5000>;
+
+		vdd-supply = <&pm8953_apc_s5>;
+		qcom,voltage-step = <5000>;
+		vdd-limit-supply = <&pm8953_apc_s5_limit>;
+		mem-acc-supply = <&apc_mem_acc_vreg>;
+
+		qcom,cpr-enable;
+		qcom,cpr-hw-closed-loop;
+
+		qcom,cpr-panic-reg-addr-list =
+			<0xb1d2c18 0xb1d2900 0x0b1112b0 0xb018798>;
+		qcom,cpr-panic-reg-name-list =
+			"CCI_SAW4_PMIC_STS", "CCI_SAW4_VCTL",
+			"APCS_ALIAS0_APM_CTLER_STATUS",
+			"APCS0_CPR_CORE_ADJ_MODE_REG";
+
+		/* Turbo (corner 6) ceiling voltage */
+		qcom,cpr-aging-ref-voltage = <990000>;
+
+		thread {
+			qcom,cpr-thread-id = <0>;
+			qcom,cpr-consecutive-up = <0>;
+			qcom,cpr-consecutive-down = <2>;
+			qcom,cpr-up-threshold = <2>;
+			qcom,cpr-down-threshold = <1>;
+
+			apc_vreg: regulator {
+				regulator-name = "apc_corner";
+				regulator-min-microvolt = <1>;
+				regulator-max-microvolt = <9>;
+
+				qcom,cpr-fuse-corners = <4>;
+				qcom,cpr-fuse-combos = <64>;
+				qcom,cpr-speed-bins = <8>;
+				qcom,cpr-speed-bin-corners =
+					<9 0 7 0 0 0 7 9>;
+				qcom,cpr-corners =
+					/* Speed bin 0 */
+					<9 9 9 9 9 9 9 9>,
+
+					/* Speed bin 1 */
+					<0 0 0 0 0 0 0 0>,
+
+					/* Speed bin 2 */
+					<7 7 7 7 7 7 7 7>,
+
+					/* Speed bin 3..5 */
+					<0 0 0 0 0 0 0 0>,
+					<0 0 0 0 0 0 0 0>,
+					<0 0 0 0 0 0 0 0>,
+
+					/* Speed bin 6 */
+					<7 7 7 7 7 7 7 7>,
+
+					/* Speed bin 7 */
+					<9 9 9 9 9 9 9 9>;
+
+				qcom,cpr-corner-fmax-map =
+					/* Speed bin 0 */
+					<1 2 4 9>,
+
+					/* Speed bin 1 */
+					<0 0 0 0>,
+
+					/* Speed bin 2 */
+					<1 2 4 7>,
+
+					/* Speed bin 3..5 */
+					<0 0 0 0>,
+					<0 0 0 0>,
+					<0 0 0 0>,
+
+					/* Speed bin 6 */
+					<1 2 4 7>,
+
+					/* Speed bin 7 */
+					<1 2 4 9>;
+
+				qcom,cpr-voltage-ceiling =
+					/* Speed bin 0 */
+					<715000  790000 860000 865000 920000
+					 990000 1065000 1065000 1065000>,
+
+					/* Speed bin 2 */
+					<715000  790000 860000 865000 920000
+					 990000 1065000>,
+
+					/* Speed bin 6 */
+					<715000  790000 860000 865000 920000
+					 990000 1065000>,
+
+					/* Speed bin 7 */
+					<715000  790000 860000 865000 920000
+					 990000 1065000 1065000 1065000>;
+
+				qcom,cpr-voltage-floor =
+					/* Speed bin 0 */
+					<500000  500000 500000 500000 500000
+					 500000  500000 500000 500000>,
+
+					/* Speed bin 2 */
+					<500000  500000 500000 500000 500000
+					 500000  500000>,
+
+					/* Speed bin 6 */
+					<500000  500000 500000 500000 500000
+					 500000  500000>,
+
+					/* Speed bin 7 */
+					<500000  500000 500000 500000 500000
+					 500000  500000 500000 500000>;
+
+				qcom,cpr-floor-to-ceiling-max-range =
+					/* Speed bin 0; CPR rev 0..7 */
+					 <    0     0     0     0     0
+					      0     0     0     0>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+
+					/* Speed bin 2; CPR rev 0..7 */
+					 <    0     0     0     0     0
+					      0     0>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+
+					/* Speed bin 6; CPR rev 0..7 */
+					 <    0     0     0     0     0
+					      0     0>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000>,
+
+					/* Speed bin 7; CPR rev 0..7 */
+					 <    0     0     0     0     0
+					      0     0     0     0>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>,
+					 <50000 50000 50000 50000 50000
+					  50000 50000 50000 50000>;
+
+				qcom,cpr-misc-fuse-voltage-adjustment =
+					/* Speed bin 0; misc fuse 0..1 */
+					<    0     0     0     0      0
+					     0     0     0     0>,
+					<    0     0 30000     0      0
+					     0     0     0     0>,
+
+					/* Speed bin 2; misc fuse 0..1 */
+					<    0     0     0     0      0
+					     0     0>,
+					<    0     0 30000     0      0
+					     0     0>,
+
+					/* Speed bin 6; misc fuse 0..1 */
+					<    0     0     0     0      0
+					     0     0>,
+					<    0     0 30000     0      0
+					     0     0>,
+
+					/* Speed bin 7; misc fuse 0..1 */
+					<    0     0     0     0      0
+					     0     0     0     0>,
+					<    0     0 30000     0      0
+					     0     0     0     0>;
+
+				qcom,mem-acc-voltage =
+					/* Speed bin 0 */
+					<1 1 2 2 2 2 2 2 2>,
+
+					/* Speed bin 2 */
+					<1 1 2 2 2 2 2>,
+
+					/* Speed bin 6 */
+					<1 1 2 2 2 2 2>,
+
+					/* Speed bin 7 */
+					<1 1 2 2 2 2 2 2 2>;
+
+				qcom,corner-frequencies =
+					/* Speed bin 0 */
+					<652800000 1036800000 1401600000
+					1689600000 1804800000 1958400000
+					2016000000 2150400000 2208000000>,
+
+					/* Speed bin 2 */
+					<652800000 1036800000 1401600000
+					1689600000 1804800000 1958400000
+					2016000000>,
+
+					/* Speed bin 6 */
+					<652800000 1036800000 1401600000
+					1689600000 1804800000 1958400000
+					2016000000>,
+
+					/* Speed bin 7 */
+					<652800000 1036800000 1401600000
+					1689600000 1804800000 1958400000
+					2016000000 2150400000 2208000000>;
+
+				qcom,cpr-open-loop-voltage-fuse-adjustment =
+					/* Speed bin 0; CPR rev 0..7 */
+					<     0      0      0     0>,
+					< 25000      0   5000 40000>,
+					< 25000      0   5000 40000>,
+					< 25000      0   5000 40000>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+
+					/* Speed bin 1; CPR rev 0..7 */
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+
+					/* Speed bin 2; CPR rev 0..7 */
+					<     0      0      0     0>,
+					< 25000      0   5000 40000>,
+					< 25000      0   5000 40000>,
+					< 25000      0   5000 40000>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+
+					/* Speed bin 3; CPR rev 0..7 */
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+
+					/* Speed bin 4; CPR rev 0..7 */
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+
+					/* Speed bin 5; CPR rev 0..7 */
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+
+					/* Speed bin 6; CPR rev 0..7 */
+					<     0      0      0     0>,
+					< 25000      0   5000 40000>,
+					< 25000      0   5000 40000>,
+					< 25000      0   5000 40000>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+
+					/* Speed bin 7; CPR rev 0..7 */
+					<     0      0      0     0>,
+					< 25000      0   5000 40000>,
+					< 25000      0   5000 40000>,
+					< 25000      0   5000 40000>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>,
+					<     0      0      0     0>;
+
+				qcom,cpr-closed-loop-voltage-fuse-adjustment =
+					/* Speed bin 0; CPR rev 0..7 */
+					<      0        0        0      0>,
+					<  10000 (-15000)        0  25000>,
+					<  10000 (-15000)        0  25000>,
+					<(-5000) (-30000) (-15000)  10000>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+
+					/* Speed bin 1; CPR rev 0..7 */
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+
+					/* Speed bin 2; CPR rev 0..7 */
+					<      0        0        0      0>,
+					<  10000 (-15000)        0  25000>,
+					<  10000 (-15000)        0  25000>,
+					<(-5000) (-30000) (-15000)  10000>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+
+					/* Speed bin 3; CPR rev 0..7 */
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+
+					/* Speed bin 4; CPR rev 0..7 */
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+
+					/* Speed bin 5; CPR rev 0..7 */
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+
+					/* Speed bin 6; CPR rev 0..7 */
+					<      0        0        0      0>,
+					<  10000 (-15000)        0  25000>,
+					<  10000 (-15000)        0  25000>,
+					<(-5000) (-30000) (-15000)  10000>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+
+					/* Speed bin 7; CPR rev 0..7 */
+					<      0        0        0      0>,
+					<  10000 (-15000)        0  25000>,
+					<  10000 (-15000)        0  25000>,
+					<(-5000) (-30000) (-15000)  10000>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>,
+					<      0        0        0      0>;
+
+				qcom,cpr-ro-scaling-factor =
+				      <3610 3790    0 2200 2450 2310 2170 2210
+				       2330 2210 2470 2340  780 2700 2450 2090>,
+				      <3610 3790    0 2200 2450 2310 2170 2210
+				       2330 2210 2470 2340  780 2700 2450 2090>,
+				      <3610 3790    0 2200 2450 2310 2170 2210
+				       2330 2210 2470 2340  780 2700 2450 2090>,
+				      <3610 3790    0 2200 2450 2310 2170 2210
+				       2330 2210 2470 2340  780 2700 2450 2090>;
+
+				qcom,allow-voltage-interpolation;
+				qcom,allow-quotient-interpolation;
+				qcom,cpr-scaled-open-loop-voltage-as-ceiling;
+
+				qcom,cpr-aging-max-voltage-adjustment = <15000>;
+				qcom,cpr-aging-ref-corner = <6>;
+				qcom,cpr-aging-ro-scaling-factor = <2800>;
+				qcom,allow-aging-voltage-adjustment =
+					/* Speed bin 0 */
+					<0 0 0 1 1 1 1 1>,
+
+					/* Speed bin 1 */
+					<0 0 0 0 0 0 0 0>,
+
+					/* Speed bin 2 */
+					<0 0 0 1 1 1 1 1>,
+
+					/* Speed bin 3..5 */
+					<0 0 0 0 0 0 0 0>,
+					<0 0 0 0 0 0 0 0>,
+					<0 0 0 0 0 0 0 0>,
+
+					/* Speed bin 6 */
+					<0 0 0 1 1 1 1 1>,
+
+					/* Speed bin 7 */
+					<0 0 0 1 1 1 1 1>;
+			};
+		};
+	};
+};
+
+/*
+ * CPU cluster clocks. Both IDs resolve to one coupled domain. CPUFreq owns
+ * one shared OPP policy; APCC owns the corner-encoded supply, not OPP.
+ */
+&cpu0 {
+	clocks = <&apcc APCC_CPU0_CLK>;
+	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
+};
+
+&cpu1 {
+	clocks = <&apcc APCC_CPU0_CLK>;
+	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
+};
+
+&cpu2 {
+	clocks = <&apcc APCC_CPU0_CLK>;
+	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
+};
+
+&cpu3 {
+	clocks = <&apcc APCC_CPU0_CLK>;
+	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
+};
+
+&cpu4 {
+	clocks = <&apcc APCC_CPU4_CLK>;
+	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
+};
+
+&cpu5 {
+	clocks = <&apcc APCC_CPU4_CLK>;
+	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
+};
+
+&cpu6 {
+	clocks = <&apcc APCC_CPU4_CLK>;
+	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
+};
+
+&cpu7 {
+	clocks = <&apcc APCC_CPU4_CLK>;
+	clock-names = "cpu";
+	operating-points-v2 = <&msm8953_cpu_opp>;
+	interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+			 &bimc SLV_EBI RPM_ACTIVE_TAG>;
+};
+/*
+ * CPU operating points.
+ *
+ * Stock fused bin 2 only: 652.8 MHz to 2016 MHz, no overclock entries. The
+ * corners those frequencies need live on the clock node as qcom,speed*-bin-v0-cl;
+ * this table deliberately carries no volt and the CPU nodes deliberately carry no
+ * cpu-supply, because the clock provider raises the corner-encoded rail itself
+ * when the rate changes. Adding either would create a second owner of a rail
+ * that is not microvolt based.
+ *
+ * All eight cores share one policy. Either CPU clock ID controls the same
+ * transaction for both cluster muxes and CCI.
+ *
+ * opp-peak-kBps is the DDR bandwidth the CPU asks for at each frequency,
+ * voted on the CPU's interconnect path by the OPP core on every
+ * frequency change. The values are CAF's msm8953 cpubw table
+ * (cpubw-cpufreq cpu-to-dev-map, 652.8 MHz -> 1611 MB/s, 1036.8 -> 3221,
+ * 1401.6 -> 5859, 1689.6 -> 6445, 1804.8 and up -> 7104), looked up the
+ * way CAF did (governor_memlat.c core_to_dev_freq(): the first entry at
+ * or above the CPU frequency, the last one above the table), in kB/s
+ * (MB is 2^20 bytes in CAF's devfreq_devbw.c). The donor
+ * (../oc-test 676e1fda9e3a) replaced this mapping with a "performance"
+ * governor, which holds the DDR at its maximum whenever the CPU is
+ * active; this restores CAF's behaviour.
+ */
+&{/} {
+	/*
+	 * clock-latency-ns on every entry feeds both cpuinfo.transition_latency
+	 * and the schedutil rate limit through cpufreq-dt. Without it the 1 ms
+	 * default yields a 1.5 ms rate limit, which measured at 8.3 percent of
+	 * a core in sugov:0 against the stock msm cpufreq driver's 0.3 percent
+	 * (2026-10-24 perf comparison). 5 ms caps slow-path transitions at
+	 * about 133/s; check /sys/devices/system/cpu/cpufreq/policy0/stats/
+	 * total_trans on the next boot before tuning further. The overlay in
+	 * msm8953-xiaomi-tissot-oc.dtsi carries the same property.
+	 */
+	msm8953_cpu_opp: opp-table {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-652800000 {
+			opp-hz = /bits/ 64 <652800000>;
+			opp-peak-kBps = <1689255>;
+			clock-latency-ns = <5000000>;
+		};
+
+		opp-1036800000 {
+			opp-hz = /bits/ 64 <1036800000>;
+			opp-peak-kBps = <3377463>;
+			clock-latency-ns = <5000000>;
+		};
+
+		opp-1401600000 {
+			opp-hz = /bits/ 64 <1401600000>;
+			opp-peak-kBps = <6143606>;
+			clock-latency-ns = <5000000>;
+		};
+
+		opp-1689600000 {
+			opp-hz = /bits/ 64 <1689600000>;
+			opp-peak-kBps = <6758072>;
+			clock-latency-ns = <5000000>;
+		};
+
+		opp-1804800000 {
+			opp-hz = /bits/ 64 <1804800000>;
+			opp-peak-kBps = <7449083>;
+			clock-latency-ns = <5000000>;
+		};
+
+		opp-1958400000 {
+			opp-hz = /bits/ 64 <1958400000>;
+			opp-peak-kBps = <7449083>;
+			clock-latency-ns = <5000000>;
+		};
+
+		opp-2016000000 {
+			opp-hz = /bits/ 64 <2016000000>;
+			opp-peak-kBps = <7449083>;
+			clock-latency-ns = <5000000>;
+		};
+	};
+};

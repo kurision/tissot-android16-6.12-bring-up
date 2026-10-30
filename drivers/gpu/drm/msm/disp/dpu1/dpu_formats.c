@@ -7,7 +7,7 @@
 #include <uapi/drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
 
-#include "msm_media_info.h"
+#include <media/msm_mdp_media_info.h>
 #include "dpu_kms.h"
 #include "dpu_formats.h"
 

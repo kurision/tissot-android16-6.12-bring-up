@@ -648,7 +648,8 @@ static struct clk_rcg2 byte0_clk_src = {
 		.parent_data = gcc_byte_data,
 		.num_parents = ARRAY_SIZE(gcc_byte_data),
 		.ops = &clk_byte2_ops,
-		.flags = CLK_SET_RATE_PARENT,
+		/* For set_rate and set_parent to succeed, parent(s) must be enabled */
+		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE,
 	}
 };
 
@@ -661,7 +662,8 @@ static struct clk_rcg2 byte1_clk_src = {
 		.parent_data = gcc_byte_data,
 		.num_parents = ARRAY_SIZE(gcc_byte_data),
 		.ops = &clk_byte2_ops,
-		.flags = CLK_SET_RATE_PARENT,
+		/* For set_rate and set_parent to succeed, parent(s) must be enabled */
+		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE,
 	}
 };
 
@@ -1341,7 +1343,8 @@ static struct clk_rcg2 pclk0_clk_src = {
 		.parent_data = gcc_pclk_data,
 		.num_parents = ARRAY_SIZE(gcc_pclk_data),
 		.ops = &clk_pixel_ops,
-		.flags = CLK_SET_RATE_PARENT,
+		/* For set_rate and set_parent to succeed, parent(s) must be enabled */
+		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE,
 	}
 };
 
@@ -1355,7 +1358,8 @@ static struct clk_rcg2 pclk1_clk_src = {
 		.parent_data = gcc_pclk_data,
 		.num_parents = ARRAY_SIZE(gcc_pclk_data),
 		.ops = &clk_pixel_ops,
-		.flags = CLK_SET_RATE_PARENT,
+		/* For set_rate and set_parent to succeed, parent(s) must be enabled */
+		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE,
 	}
 };
 

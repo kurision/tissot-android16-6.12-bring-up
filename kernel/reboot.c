@@ -14,6 +14,7 @@
 #include <linux/kmod.h>
 #include <linux/kmsg_dump.h>
 #include <linux/reboot.h>
+#include <linux/pstore_ram.h>
 #include <linux/suspend.h>
 #include <linux/syscalls.h>
 #include <linux/syscore_ops.h>
@@ -94,6 +95,8 @@ static BLOCKING_NOTIFIER_HEAD(reboot_notifier_list);
  */
 void emergency_restart(void)
 {
+	ramoops_reset_note("emergency_restart");
+	ramoops_reset_mark(RAMOOPS_RESET_EMERGENCY, NULL);
 	kmsg_dump(KMSG_DUMP_EMERG);
 	system_state = SYSTEM_RESTART;
 	machine_emergency_restart();
@@ -102,6 +105,7 @@ EXPORT_SYMBOL_GPL(emergency_restart);
 
 void kernel_restart_prepare(char *cmd)
 {
+	ramoops_reset_note("kernel_restart_prepare");
 	blocking_notifier_call_chain(&reboot_notifier_list, SYS_RESTART, cmd);
 	system_state = SYSTEM_RESTART;
 	usermodehelper_disable();

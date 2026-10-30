@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: GPL-2.0
+
+config MSM_CDC_PINCTRL
+	tristate "CAF audio pin control"
+	depends on SND_SOC && PINCTRL
+	help
+	  Switches the audio pin groups ("qcom,msm-cdc-pinctrl" nodes)
+	  between their active and sleep states for the machine driver and
+	  the headset helper. Without it the MI2S lines are never muxed.
+
+config SND_SOC_MSM_WCD_MBHC
+	tristate "WCD microphone bias and headset control"
+	depends on SND_SOC
+	select MSM_CDC_PINCTRL
+	select SND_SOC_WCD_MBHC_ADC
+	select SND_SOC_WCD_MBHC_LEGACY
+	help
+	  Microphone bias and headset detection helpers for the WCD family.
+
+config SND_SOC_WCD_MBHC_LEGACY
+	tristate
+
+config SND_SOC_WCD_MBHC_ADC
+	tristate "WCD microphone bias ADC variant"
+	depends on SND_SOC
+	help
+	  Bias-voltage (ADC) based headset detection, one of the two
+	  detection paths the MBHC helper selects between at runtime.
+
+config WCD_DSP_GLINK
+	tristate "WCD DSP glink manager"
+	depends on SND_SOC
+	help
+	  Manager for the glink channel the WCD codecs use to reach the DSP.
+
+config SND_SOC_SDM660_CDC
+	tristate "SDM660/SDM450 CDC"
+	depends on SND_SOC
+	select SND_SOC_WCD_MBHC_ADC
+	select SND_SOC_ANALOG_CDC
+	select SND_SOC_DIGITAL_CDC_LEGACY
+	help
+	  The analog and digital CDC that this platform's own configuration
+	  selects. The machine driver includes its headers directly, so it
+	  is always needed alongside the soundcard.
+
+config SND_SOC_ANALOG_CDC
+	tristate
+	select SND_SOC_MSM_WCD_MBHC
+
+config SND_SOC_DIGITAL_CDC_LEGACY
+	tristate
+
+config SND_SOC_MSM8952
+	tristate "MSM8952 (SDM450) soundcard"
+	depends on SND_SOC && COMMON_CLK
+	select MSM_CDC_PINCTRL
+	select SND_SOC_SDM660_CDC
+	help
+	  Soundcard for this SoC, which CAF calls SDM450. It wires the
+	  SDM660 CDC (the PMIC analog codec and the digital codec), the AFE
+	  and the mi2s links.
+
+#
+# CAF's headers choose between the real implementation and a stub with
+# these symbols. The port builds the real ones, so they have to be on:
+# without them the header's stub and the source's definition are both
+# in the same translation unit.
+config DIGITAL_CDC_RSC_MGR
+	bool "CAF digital CDC resource manager"
+
+config DTS_SRS_TM
+	bool "CAF SRS time machine parameter support"
+
+config AFE_HWDEP
+	bool "CAF AFE hardware calibration hwdep"
+
+config SND_SOC_MSM_QDSP6V2_INTF
+	bool "CAF audio event notification interface"
+
+config XT_LOGGING
+	bool "CAF AFE XT logging"
+
+config MSM_MDF
+	bool "CAF audio MDF topology support"

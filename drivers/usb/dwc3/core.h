@@ -1110,6 +1110,7 @@ struct dwc3_glue_ops {
  * @num_hc_interrupters: number of host controller interrupters
  * @hsphy_interface: "utmi" or "ulpi"
  * @connected: true when we're connected to a host, false otherwise
+ * @link_ws: wakeup source held while a host has the device's link up
  * @softconnect: true when gadget connect is called, false when disconnect runs
  * @delayed_status: true when gadget driver asks for delayed status
  * @ep0_bounced: true when we used bounce buffer
@@ -1366,6 +1367,8 @@ struct dwc3 {
 	u16			num_hc_interrupters;
 
 	const char		*hsphy_interface;
+
+	struct wakeup_source	*link_ws;
 
 	unsigned		connected:1;
 	unsigned		softconnect:1;

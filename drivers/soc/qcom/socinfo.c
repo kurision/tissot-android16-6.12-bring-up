@@ -783,6 +783,133 @@ static void socinfo_debugfs_init(struct qcom_socinfo *qcom_socinfo,
 static void socinfo_debugfs_exit(struct qcom_socinfo *qcom_socinfo) {  }
 #endif /* CONFIG_DEBUG_FS */
 
+/*
+ * The CAF 4.19 kernels exposed the board type and subtype as
+ * /sys/devices/soc0/hw_platform and platform_subtype, and Qualcomm's
+ * vendor userspace still reads them: the ACDB loader picks its calibration
+ * directory (/vendor/etc/acdbdata/<hw_platform>/) by that name and falls
+ * back to "MTP" when the file is missing.  Upstream only has the raw
+ * numbers in debugfs, so add the two files with the CAF names.
+ *
+ * The CAF show functions indexed the name tables with the SMEM value
+ * unchecked; an id outside the table (or in one of its holes) is reported
+ * as "Unknown" / "Invalid" here instead.
+ */
+static const char *const socinfo_hw_platform_names[] = {
+	[0] = "Unknown",
+	[1] = "Surf",
+	[2] = "FFA",
+	[3] = "Fluid",
+	[4] = "SVLTE_FFA",
+	[5] = "SLVTE_SURF",
+	[7] = "MDM_MTP_NO_DISPLAY",
+	[8] = "MTP",
+	[9] = "Liquid",
+	[10] = "Dragon",
+	[11] = "QRD",
+	[13] = "HRD",
+	[14] = "DTV",
+	[21] = "RCM",
+	[23] = "STP",
+	[24] = "SBC",
+	[31] = "HDK",
+	[34] = "IDP",
+};
+
+#define SOCINFO_HW_PLATFORM_QRD	11
+
+static const char *const socinfo_qrd_subtype_names[] = {
+	[0] = "QRD",
+	[1] = "SKUAA",
+	[2] = "SKUF",
+	[3] = "SKUAB",
+	[5] = "SKUG",
+};
+
+static const char *const socinfo_subtype_names[] = {
+	[0] = "Unknown",
+	[1] = "charm",
+	[2] = "strange",
+	[3] = "strange_2a",
+};
+
+/* There is one SMEM socinfo item, so one soc0 to describe. */
+static const char *socinfo_hw_platform;
+static const char *socinfo_platform_subtype;
+
+static ssize_t hw_platform_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%s\n", socinfo_hw_platform);
+}
+static DEVICE_ATTR_RO(hw_platform);
+
+static ssize_t platform_subtype_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%s\n", socinfo_platform_subtype);
+}
+static DEVICE_ATTR_RO(platform_subtype);
+
+static umode_t socinfo_attr_is_visible(struct kobject *kobj,
+				       struct attribute *attr, int n)
+{
+	if (attr == &dev_attr_hw_platform.attr && !socinfo_hw_platform)
+		return 0;
+	if (attr == &dev_attr_platform_subtype.attr && !socinfo_platform_subtype)
+		return 0;
+
+	return attr->mode;
+}
+
+static struct attribute *socinfo_attrs[] = {
+	&dev_attr_hw_platform.attr,
+	&dev_attr_platform_subtype.attr,
+	NULL
+};
+
+static const struct attribute_group socinfo_attr_group = {
+	.attrs = socinfo_attrs,
+	.is_visible = socinfo_attr_is_visible,
+};
+
+static const char *socinfo_name(const char *const *names, size_t n, u32 id,
+				const char *fallback)
+{
+	if (id < n && names[id])
+		return names[id];
+
+	return fallback;
+}
+
+static void socinfo_platform_init(const struct socinfo *info, size_t item_size)
+{
+	u32 plat, subtype;
+
+	if (offsetofend(struct socinfo, hw_plat) > item_size)
+		return;
+
+	plat = le32_to_cpu(info->hw_plat);
+	socinfo_hw_platform = socinfo_name(socinfo_hw_platform_names,
+					   ARRAY_SIZE(socinfo_hw_platform_names),
+					   plat, "Unknown");
+
+	if (offsetofend(struct socinfo, hw_plat_subtype) > item_size)
+		return;
+
+	subtype = le32_to_cpu(info->hw_plat_subtype);
+	if (plat == SOCINFO_HW_PLATFORM_QRD)
+		socinfo_platform_subtype =
+			socinfo_name(socinfo_qrd_subtype_names,
+				     ARRAY_SIZE(socinfo_qrd_subtype_names),
+				     subtype, "INVALID");
+	else
+		socinfo_platform_subtype =
+			socinfo_name(socinfo_subtype_names,
+				     ARRAY_SIZE(socinfo_subtype_names),
+				     subtype, "Invalid");
+}
+
 static int qcom_socinfo_probe(struct platform_device *pdev)
 {
 	struct qcom_socinfo *qs;
@@ -818,6 +945,9 @@ static int qcom_socinfo_probe(struct platform_device *pdev)
 		if (!qs->attr.serial_number)
 			return -ENOMEM;
 	}
+
+	socinfo_platform_init(info, item_size);
+	qs->attr.custom_attr_group = &socinfo_attr_group;
 
 	qs->soc_dev = soc_device_register(&qs->attr);
 	if (IS_ERR(qs->soc_dev))

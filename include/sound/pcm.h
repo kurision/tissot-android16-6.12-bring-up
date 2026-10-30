@@ -58,6 +58,8 @@ struct snd_pcm_ops {
 	int (*close)(struct snd_pcm_substream *substream);
 	int (*ioctl)(struct snd_pcm_substream * substream,
 		     unsigned int cmd, void *arg);
+	int (*compat_ioctl)(struct snd_pcm_substream *substream,
+		     unsigned int cmd, void *arg);
 	int (*hw_params)(struct snd_pcm_substream *substream,
 			 struct snd_pcm_hw_params *params);
 	int (*hw_free)(struct snd_pcm_substream *substream);
@@ -538,7 +540,8 @@ struct snd_pcm_str {
 	struct snd_kcontrol *chmap_kctl; /* channel-mapping controls */
 	struct device *dev;
 
-	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_USE(1, struct snd_kcontrol *vol_kctl);
+	ANDROID_KABI_USE(2, struct snd_kcontrol *usr_kctl);
 };
 
 struct snd_pcm {
@@ -1514,6 +1517,49 @@ int snd_pcm_add_chmap_ctls(struct snd_pcm *pcm, int stream,
 			   int max_channels,
 			   unsigned long private_value,
 			   struct snd_pcm_chmap **info_ret);
+
+/* array element of volume */
+struct snd_pcm_volume_elem {
+	int volume;
+};
+
+/* volume information; retrieved via snd_kcontrol_chip() */
+struct snd_pcm_volume {
+	struct snd_pcm *pcm;	/* assigned PCM instance */
+	int stream;		/* PLAYBACK or CAPTURE */
+	struct snd_kcontrol *kctl;
+	const struct snd_pcm_volume_elem *volume;
+	int max_length;
+	void *private_data;	/* optional: private data pointer */
+};
+
+int snd_pcm_add_volume_ctls(struct snd_pcm *pcm, int stream,
+			    const struct snd_pcm_volume_elem *volume,
+			     int max_length,
+			     unsigned long private_value,
+			     struct snd_pcm_volume **info_ret);
+
+/* PCM User control API */
+/* array element of usr elem */
+struct snd_pcm_usr_elem {
+	int val[128];
+};
+
+/* pp information; retrieved via snd_kcontrol_chip() */
+struct snd_pcm_usr {
+	struct snd_pcm *pcm;	/* assigned PCM instance */
+	int stream;		/* PLAYBACK or CAPTURE */
+	struct snd_kcontrol *kctl;
+	const struct snd_pcm_usr_elem *usr;
+	int max_length;
+	void *private_data;	/* optional: private data pointer */
+};
+
+int snd_pcm_add_usr_ctls(struct snd_pcm *pcm, int stream,
+			 const struct snd_pcm_usr_elem *usr,
+			 int max_length, int max_control_str_len,
+			 unsigned long private_value,
+			 struct snd_pcm_usr **info_ret);
 
 /**
  * pcm_format_to_bits - Strong-typed conversion of pcm_format to bitwise

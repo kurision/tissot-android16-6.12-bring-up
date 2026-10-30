@@ -14,6 +14,15 @@
 #include <dt-bindings/sound/qcom,q6asm.h>
 #include <dt-bindings/thermal/thermal.h>
 
+/*
+ * The bandwidth of a bus clock in MB/s, and an operating point of a
+ * bandwidth table. The donor's device tree uses the same two macros for
+ * the operating points of the DDR bandwidth
+ * (../oc-test/arch/arm64/boot/dts/vendor/qcom/msm8953.dtsi:22).
+ */
+#define MHZ_TO_MBPS(mhz, w) ((mhz * 1000000 * w) / (1024 * 1024))
+#define BW_OPP_ENTRY(mhz, w) opp-mhz {opp-hz = /bits/ 64 <MHZ_TO_MBPS(mhz, w)>;}
+
 / {
 	interrupt-parent = <&intc>;
 
@@ -461,6 +470,22 @@
 		ranges = <0 0 0 0xffffffff>;
 		compatible = "simple-bus";
 
+		/*
+		 * The modem's remote storage memory, as the vendor
+		 * rmt_storage daemon finds it: a UIO device named after
+		 * reg-names ("rmtfs"), see drivers/uio/msm_sharedmem.c.
+		 * The region is the rmtfs carve-out reserved above
+		 * (rmtfs@f2d00000). The donor's node is the same with
+		 * address 0, which made the driver allocate it at probe
+		 * (../oc-test/arch/arm64/boot/dts/vendor/qcom/msm8953.dtsi:333).
+		 */
+		qcom,rmtfs_sharedmem@f2d00000 {
+			compatible = "qcom,sharedmem-uio";
+			reg = <0xf2d00000 0x180000>;
+			reg-names = "rmtfs";
+			qcom,client-id = <1>;
+		};
+
 		rpm_msg_ram: sram@60000 {
 			compatible = "qcom,rpm-msg-ram";
 			reg = <0x00060000 0x8000>;
@@ -482,18 +507,31 @@
 			status = "disabled";
 		};
 
-		rng@e3000 {
-			compatible = "qcom,prng";
-			reg = <0x000e3000 0x1000>;
-			clocks = <&gcc GCC_PRNG_AHB_CLK>;
-			clock-names = "core";
-		};
-
+		/*
+		 * The NoC fabrics of the SoC. They are the providers of the
+		 * interconnect framework: every consumer that reads or writes
+		 * memory through one of them votes its bandwidth on the path
+		 * between its master and the memory slave.
+		 *
+		 * The nodes are the ones upstream mainline uses for this
+		 * SoC (arch/arm64/boot/dts/qcom/msm8953.dtsi), with the
+		 * register windows of the vendor device tree
+		 * (porting/artifacts/tissot-live.dts:1141-1180): bimc at
+		 * 0x400000, pcnoc at 0x500000 and snoc at 0x580000, the last
+		 * one with the multimedia NoC as its child.
+		 */
 		bimc: interconnect@400000 {
 			compatible = "qcom,msm8953-bimc";
 			reg = <0x00400000 0x5a000>;
 
 			#interconnect-cells = <2>;
+		};
+
+		rng@e3000 {
+			compatible = "qcom,prng";
+			reg = <0x000e3000 0x1000>;
+			clocks = <&gcc GCC_PRNG_AHB_CLK>;
+			clock-names = "core";
 		};
 
 		tsens0: thermal-sensor@4a9000 {
@@ -1221,10 +1259,16 @@
 				      "alwayson";
 			power-domains = <&gcc OXILI_GX_GDSC>;
 
+			/*
+			 * The path of the graphics master to the memory.
+			 * The msm-bus table of the GPU (the vendor legacy
+			 * one on the board's gpu node) names the graphics
+			 * master and the EBI channel, and the shim maps
+			 * them onto this path.
+			 */
 			interconnects = <&bimc MAS_OXILI RPM_ALWAYS_TAG
-					 &bimc SLV_EBI RPM_ALWAYS_TAG>,
-					<&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
-					 &pcnoc SLV_GPU_CFG RPM_ACTIVE_TAG>;
+					 &bimc SLV_EBI RPM_ALWAYS_TAG>;
+			interconnect-names = "gpu-ddr";
 
 			iommus = <&gpu_iommu 0>;
 			operating-points-v2 = <&gpu_opp_table>;
@@ -1431,6 +1475,32 @@
 				qcom,remote-pid = <1>;
 
 				label = "modem";
+
+				/*
+				 * Modem diag channels consumed by the diag
+				 * char driver (drivers/char/diag), matching
+				 * the donor msm8953.dtsi. DIAG_2/DIAG_2_CMD
+				 * back the DCI clients.
+				 */
+				qcom,diag {
+					qcom,smd-channels = "DIAG";
+				};
+
+				qcom,diag_cntl {
+					qcom,smd-channels = "DIAG_CNTL";
+				};
+
+				qcom,diag_cmd {
+					qcom,smd-channels = "DIAG_CMD";
+				};
+
+				qcom,diag_dci {
+					qcom,smd-channels = "DIAG_2";
+				};
+
+				qcom.diag_dci_cmd {
+					qcom,smd-channels = "DIAG_2_CMD";
+				};
 			};
 		};
 
@@ -1507,7 +1577,7 @@
 			};
 		};
 
-		sdhc_1: mmc@7824900 {
+		sdhc_1: sdhci@7824900 {
 			compatible = "qcom,msm8953-sdhci", "qcom,sdhci-msm-v4";
 
 			reg = <0x07824900 0x500>, <0x07824000 0x800>;
@@ -1584,7 +1654,7 @@
 			};
 		};
 
-		sdhc_2: mmc@7864900 {
+		sdhc_2: sdhci@7864900 {
 			compatible = "qcom,msm8953-sdhci", "qcom,sdhci-msm-v4";
 
 			reg = <0x07864900 0x500>, <0x07864000 0x800>;
@@ -1993,6 +2063,15 @@
 
 				label = "pronto";
 
+				/* WCNSS diag channels for the diag char driver */
+				qcom,diag {
+					qcom,smd-channels = "APPS_RIVA_DATA";
+				};
+
+				qcom,diag_cntl {
+					qcom,smd-channels = "APPS_RIVA_CTRL";
+				};
+
 				wcnss_ctrl: wcnss {
 					compatible = "qcom,wcnss";
 					qcom,smd-channels = "WCNSS_CTRL";
@@ -2201,6 +2280,24 @@
 					};
 				};
 			};
+		};
+		/* With this node present, qseecom probes from DT, not module_init. */
+		qcom_seecom: qseecom@84a00000 {
+			compatible = "qcom,qseecom";
+			reg = <0x84a00000 0x1900000>;
+			reg-names = "secapp-region";
+			qcom,qsee-ce-hw-instance = <0>;
+			qcom,hlos-ce-hw-instance = <0>;
+			qcom,disk-encrypt-pipe-pair = <2>;
+			qcom,ce-opp-freq = <100000000>;
+			qcom,support-fde;
+			qcom,support-bus-scaling;
+			clocks = <&gcc CRYPTO_CLK_SRC>,
+				 <&gcc GCC_CRYPTO_CLK>,
+				 <&gcc GCC_CRYPTO_AHB_CLK>,
+				 <&gcc GCC_CRYPTO_AXI_CLK>;
+			clock-names = "core_clk_src", "core_clk",
+				      "iface_clk", "bus_clk";
 		};
 	};
 
@@ -2424,4 +2521,119 @@
 			     <GIC_PPI 4 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
 			     <GIC_PPI 1 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>;
 	};
+
+	/*
+	 * The stock QTI Bluetooth HAL does not use the mainline HCI
+	 * transport: it opens the two WCNSS SMD channels directly through
+	 * the smd_pkt character devices.  Only the Bluetooth children are
+	 * described here; the modem and ADSP packet channels are not needed
+	 * by the Bluetooth HAL and are left out until the modem data path is
+	 * verified separately.
+	 */
+	qcom,smdpkt {
+		compatible = "qcom,smdpkt";
+
+		qcom,smdpkt-apps-riva-bt-acl {
+			qcom,smdpkt-edge = "wcnss";
+			qcom,smdpkt-ch-name = "APPS_RIVA_BT_ACL";
+			qcom,smdpkt-dev-name = "smd2";
+			qcom,smdpkt-fragmented-read;
+		};
+
+		qcom,smdpkt-apps-riva-bt-cmd {
+			qcom,smdpkt-edge = "wcnss";
+			qcom,smdpkt-ch-name = "APPS_RIVA_BT_CMD";
+			qcom,smdpkt-dev-name = "smd3";
+			qcom,smdpkt-fragmented-read;
+		};
+	};
+
+	/*
+	 * The container of the DDR bandwidth node of the application
+	 * processor.
+	 *
+	 * The name of a device is built from the names of its parents
+	 * (drivers/of/device.c of_device_make_bus_id()), and the power
+	 * HAL of the ROM writes to
+	 *
+	 *   /sys/class/devfreq/soc:qcom,cpu-cpu-ddr-bw/min_freq
+	 *
+	 * so the node has to be a child of a node named "soc", the name
+	 * the donor's device tree gives to the container of the whole SoC
+	 * (../oc-test/arch/arm64/boot/dts/vendor/qcom/msm8953.dtsi:188).
+	 * The device then also sits at the path the vendor policy
+	 * labels,
+	 *
+	 *   /devices/platform/soc/soc:qcom,cpu-cpu-ddr-bw/devfreq
+	 *
+	 * so the power HAL keeps the permissions it has on the donor.
+	 */
+	soc_bw: soc {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges = <0 0 0 0xffffffff>;
+
+		/*
+		 * The bandwidth of the path between the application
+		 * processor and the memory. The values are the donor's
+		 * table (../oc-test/arch/arm64/boot/dts/vendor/qcom/msm8953.dtsi:1094),
+		 * and the unit is the one the power HAL of the ROM uses
+		 * (769, 5126, 7759 and 9887 in /vendor/etc/powerhint.json).
+		 * The donor's comments give 769 ... 7104; the macro, which
+		 * is the donor's too, gives the values below, which are the
+		 * ones the device reports in available_frequencies.
+		 */
+		ddr_bw_opp_table: opp-table-ddr {
+			compatible = "operating-points-v2";
+
+			BW_OPP_ENTRY( 100, 8); /*  762 MB/s */
+			BW_OPP_ENTRY( 211, 8); /* 1609 MB/s */
+			BW_OPP_ENTRY( 278, 8); /* 2120 MB/s */
+			BW_OPP_ENTRY( 384, 8); /* 2929 MB/s */
+			BW_OPP_ENTRY( 428, 8); /* 3265 MB/s */
+			BW_OPP_ENTRY( 556, 8); /* 4241 MB/s */
+			BW_OPP_ENTRY( 671, 8); /* 5119 MB/s */
+			BW_OPP_ENTRY( 748, 8); /* 5706 MB/s */
+			BW_OPP_ENTRY( 806, 8); /* 6149 MB/s */
+			BW_OPP_ENTRY( 846, 8); /* 6454 MB/s */
+			BW_OPP_ENTRY( 930, 8); /* 7095 MB/s */
+		};
+
+		/*
+		 * The devfreq device of the bandwidth. Its "frequency" is
+		 * the bandwidth of the path, the operating points are the
+		 * table above, and the vote goes to the interconnect
+		 * framework, which hands the result to the RPM.
+		 *
+		 * The CPU's own bandwidth follows its frequency
+		 * (opp-peak-kBps in msm8953-cpu.dtsi), so this node only
+		 * carries the power HAL's boosts: "powersave" votes
+		 * min_freq, which the HAL raises for touch and launch
+		 * boosts and lowers again afterwards. The donor's
+		 * "performance" held the DDR at its maximum whenever the
+		 * CPU was active, and its post_boot never switched it (the
+		 * ROM's script targets soc:qcom,cpubw, a node the donor
+		 * renamed in 676e1fda9e3a).
+		 */
+		cpu_cpu_ddr_bw: qcom,cpu-cpu-ddr-bw {
+			compatible = "qcom,devbw";
+			governor = "powersave";
+
+			operating-points-v2 = <&ddr_bw_opp_table>;
+
+			/*
+			 * The path of the application processor to the
+			 * memory. The tag says that the request counts
+			 * while the system is active, which is what the
+			 * donor's "qcom,active-only" says.
+			 */
+			interconnects = <&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+					 &bimc SLV_EBI RPM_ACTIVE_TAG>;
+			interconnect-names = "cpu-ddr";
+		};
+	};
 };
+
+/* MSM8953 CPU bring-up: clock controller, APC rail, CPR. See the file. */
+#include "msm8953-cpu.dtsi"

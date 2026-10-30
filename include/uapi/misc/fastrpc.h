@@ -16,6 +16,7 @@
 #define FASTRPC_IOCTL_INIT_CREATE_STATIC _IOWR('R', 9, struct fastrpc_init_create_static)
 #define FASTRPC_IOCTL_MEM_MAP		_IOWR('R', 10, struct fastrpc_mem_map)
 #define FASTRPC_IOCTL_MEM_UNMAP		_IOWR('R', 11, struct fastrpc_mem_unmap)
+#define FASTRPC_IOCTL_CONTROL		_IOWR('R', 12, struct fastrpc_ioctl_control)
 #define FASTRPC_IOCTL_GET_DSP_INFO	_IOWR('R', 13, struct fastrpc_ioctl_capability)
 
 /**
@@ -134,10 +135,68 @@ struct fastrpc_mem_unmap {
 };
 
 struct fastrpc_ioctl_capability {
-	__u32 unused; /* deprecated, ignored by the kernel */
+	__u32 domain;
 	__u32 attribute_id;
 	__u32 capability;   /* dsp capability */
 	__u32 reserved[4];
+};
+
+/**
+ * enum fastrpc_control_type - fastrpc control requests
+ * @FASTRPC_CONTROL_LATENCY: Ask the kernel to place the calling client on the
+ * low-latency CPU set and to tell the remote DSP the CPU feature map, so the
+ * DSP can use the early wakeup signal.
+ * @FASTRPC_CONTROL_SMMU: Query or set whether the session is protected by the
+ * SMMU. Not implemented by the CAF driver this ABI comes from either.
+ * @FASTRPC_CONTROL_KALLOC: Query whether the kernel can allocate memory on
+ * the remote processor on the client's behalf. Answered in the kernel.
+ * @FASTRPC_CONTROL_WAKELOCK: Allow or deny the client to hold a kernel PM
+ * vote while it has the remote session open.
+ * @FASTRPC_CONTROL_PM: Set the timeout the kernel keeps the system awake for
+ * this client, in ms.
+ * @FASTRPC_CONTROL_DSPPROCESS_CLEAN: Ask the remote processor to drop the
+ * protection domain of the calling process.
+ *
+ * The numbering and the payloads below are the CAF adsprpc ones
+ * (oc-test/drivers/char/adsprpc_shared.h:247-282, and identically in
+ * kernel_xiaomi_tissot and kernel_xiaomi_msm8953). They are fixed by userspace
+ * binaries that are already built and cannot be changed, so they must not be
+ * renumbered or reshaped.
+ */
+enum fastrpc_control_type {
+	FASTRPC_CONTROL_LATENCY		= 1,
+	FASTRPC_CONTROL_SMMU		= 2,
+	FASTRPC_CONTROL_KALLOC		= 3,
+	FASTRPC_CONTROL_WAKELOCK	= 4,
+	FASTRPC_CONTROL_PM		= 5,
+	FASTRPC_CONTROL_DSPPROCESS_CLEAN = 6,
+};
+
+struct fastrpc_ctrl_latency {
+	__u32 enable;	/* latency control enable */
+	__u32 latency;	/* latency request in us */
+};
+
+struct fastrpc_ctrl_kalloc {
+	__u32 kalloc_support;	/* remote memory allocation from kernel */
+};
+
+struct fastrpc_ctrl_wakelock {
+	__u32 enable;	/* wakelock control enable */
+};
+
+struct fastrpc_ctrl_pm {
+	__u32 timeout;	/* timeout(in ms) for PM to keep system awake */
+};
+
+struct fastrpc_ioctl_control {
+	__u32 req;
+	union {
+		struct fastrpc_ctrl_latency lp;
+		struct fastrpc_ctrl_kalloc kalloc;
+		struct fastrpc_ctrl_wakelock wp;
+		struct fastrpc_ctrl_pm pm;
+	};
 };
 
 #endif /* __QCOM_FASTRPC_H__ */

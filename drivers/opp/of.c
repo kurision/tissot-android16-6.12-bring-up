@@ -275,6 +275,14 @@ static int _link_required_opps(struct dev_pm_opp *opp,
 {
 	struct device_node *np __free(device_node);
 
+	/* A published table may still be populating its static OPPs. */
+	mutex_lock(&required_table->lock);
+	if (!required_table->static_opps_ready) {
+		mutex_unlock(&required_table->lock);
+		return -EPROBE_DEFER;
+	}
+	mutex_unlock(&required_table->lock);
+
 	np = of_parse_required_opp(opp->np, index);
 	if (unlikely(!np))
 		return -ENODEV;
@@ -988,6 +996,10 @@ static int _of_add_opp_table_v2(struct device *dev, struct opp_table *opp_table)
 		goto remove_static_opp;
 	}
 
+	mutex_lock(&opp_table->lock);
+	opp_table->static_opps_ready = true;
+	mutex_unlock(&opp_table->lock);
+
 	lazy_link_required_opp_table(opp_table);
 
 	return 0;
@@ -1052,6 +1064,10 @@ static int _of_add_opp_table_v1(struct device *dev, struct opp_table *opp_table)
 		}
 		nr -= 2;
 	}
+
+	mutex_lock(&opp_table->lock);
+	opp_table->static_opps_ready = true;
+	mutex_unlock(&opp_table->lock);
 
 	return 0;
 

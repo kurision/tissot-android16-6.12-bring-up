@@ -144,6 +144,22 @@ config QCOM_CLK_APCC_MSM8996
 	  Say Y if you want to support CPU clock scaling using CPUfreq
 	  drivers for dynamic power management.
 
+config QCOM_CLK_APCC_MSM8953
+	bool "Qualcomm MSM8953 APCS CPU clock controller"
+	depends on ARCH_QCOM && OF && REGULATOR
+	depends on QCOM_RPMPD && PM_GENERIC_DOMAINS_OF
+	help
+	  Support for the APCS CPU clock controller on MSM8953 devices. It owns
+	  the single APCS PLL that feeds the two CPU clusters and the system CCI,
+	  and it drives the shared APC voltage rail from a fused rate to corner
+	  plan because that regulator is corner encoded rather than microvolt
+	  based. The PLL also retains an active-only MX performance vote through
+	  the RPM power-domain provider. SPM, APM, memory-ACC and CPR providers
+	  must be wired up before enabling this controller.
+
+	  Say Y if you want to support CPU frequency scaling on devices such
+	  as MSM8953.
+
 config QCOM_CLK_APCS_SDX55
 	tristate "SDX55 and SDX65 APCS Clock Controller"
 	depends on QCOM_APCS_IPC || COMPILE_TEST
@@ -425,6 +441,16 @@ config MSM_GCC_8953
 	  Support for the global clock controller on msm8953 devices.
 	  Say Y if you want to use devices such as UART, SPI i2c, USB,
 	  SD/eMMC, display, graphics, camera etc.
+
+config MDSS_DSI_PLL_8953
+	tristate "MSM8953 MDSS DSI PLL provider"
+	depends on ARCH_QCOM || COMPILE_TEST
+	select QCOM_GDSC
+	help
+	  CCF provider for the 8996-family DSI PLL on MSM8953, replacing
+	  the downstream private clock framework for the MDSS fbdev port.
+	  Supplies DSI byte/pixel clocks; static panel only, no shadow
+	  dynamic-refresh clocks.
 
 config MSM_GCC_8974
 	tristate "MSM8974 Global Clock Controller"

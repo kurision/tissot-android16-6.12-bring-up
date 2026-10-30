@@ -2707,6 +2707,7 @@ static int dwc3_gadget_soft_disconnect(struct dwc3 *dwc)
 	}
 
 	dwc->connected = false;
+	__pm_relax(dwc->link_ws);
 
 	/*
 	 * Attempt to end pending SETUP status phase, and not wait for the
@@ -4111,6 +4112,7 @@ static void dwc3_gadget_disconnect_interrupt(struct dwc3 *dwc)
 	dwc3_gadget_dctl_write_safe(dwc, reg);
 
 	dwc->connected = false;
+	__pm_relax(dwc->link_ws);
 
 	dwc3_disconnect_gadget(dwc);
 
@@ -4218,6 +4220,17 @@ static void dwc3_gadget_conndone_interrupt(struct dwc3 *dwc)
 
 	if (!dwc->softconnect)
 		return;
+
+	/*
+	 * A host has the link: keep the system awake until it disconnects
+	 * or suspends the bus. The CAF dwc3-msm glue held a wakeup source
+	 * whenever the controller was out of low power mode; without one,
+	 * a screen-off system suspend gated the controller's clocks under
+	 * the live link ("HS-PHY not in L2", "gcc_usb30_master_clk status
+	 * stuck at 'on'") and adb never came back. The glue cannot do it
+	 * here: tissot has no VBUS extcon, so only the gadget sees the host.
+	 */
+	__pm_stay_awake(dwc->link_ws);
 
 	reg = dwc3_readl(dwc, DWC3_DSTS);
 	speed = reg & DWC3_DSTS_CONNECTSPD;
@@ -4357,6 +4370,7 @@ static void dwc3_gadget_conndone_interrupt(struct dwc3 *dwc)
 static void dwc3_gadget_wakeup_interrupt(struct dwc3 *dwc, unsigned int evtinfo)
 {
 	dwc->suspended = false;
+	__pm_stay_awake(dwc->link_ws);
 
 	/*
 	 * TODO take core out of low power mode when that's
@@ -4497,7 +4511,13 @@ static void dwc3_gadget_suspend_interrupt(struct dwc3 *dwc,
 	enum dwc3_link_state next = evtinfo & DWC3_LINK_STATE_MASK;
 
 	if (!dwc->suspended && next == DWC3_LINK_STATE_U3) {
+		/*
+		 * U3, or L2 on a USB 2.0 link: the host suspended the bus, or
+		 * the cable went away (VBUS is not sensed here, so an unplug
+		 * looks like a suspended bus). Let the system sleep.
+		 */
 		dwc->suspended = true;
+		__pm_relax(dwc->link_ws);
 		dwc3_suspend_gadget(dwc);
 	}
 
@@ -4827,6 +4847,10 @@ int dwc3_gadget_init(struct dwc3 *dwc)
 	if (dwc->sys_wakeup)
 		device_wakeup_disable(dwc->sysdev);
 
+	dwc->link_ws = wakeup_source_register(dwc->dev, "dwc3-link");
+	if (!dwc->link_ws)
+		dev_warn(dwc->dev, "no link wakeup source; a connected host will not keep the system awake\n");
+
 	return 0;
 
 err5:
@@ -4860,6 +4884,8 @@ void dwc3_gadget_exit(struct dwc3 *dwc)
 	usb_del_gadget(dwc->gadget);
 	dwc3_gadget_free_endpoints(dwc);
 	usb_put_gadget(dwc->gadget);
+	wakeup_source_unregister(dwc->link_ws);
+	dwc->link_ws = NULL;
 	dma_free_coherent(dwc->sysdev, DWC3_BOUNCE_SIZE, dwc->bounce,
 			  dwc->bounce_addr);
 	kfree(dwc->setup_buf);

@@ -999,7 +999,6 @@ static const struct of_device_id msm_gpu_match[] = {
 	{ .compatible = "qcom,adreno" },
 	{ .compatible = "qcom,adreno-3xx" },
 	{ .compatible = "amd,imageon" },
-	{ .compatible = "qcom,kgsl-3d0" },
 	{ },
 };
 

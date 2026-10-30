@@ -1,0 +1,623 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Tissot MDSS fbdev cutover (Phase 2): replaces the mainline MDP5/DSI
+ * display path with the downstream MDSS fbdev contract the stock vendor
+ * composer needs (fb0/mdp/caps, MSMFB ioctls, rotator).
+ *
+ * Translated from ../kernel_xiaomi_msm8953 (4.19 donor):
+ * arch/arm64/boot/dts/vendor/qcom/msm8953-mdss.dtsi,
+ * msm8953-mdss-panels.dtsi, mi8953/common/display.dtsi,
+ * mi8953/tissot/display.dtsi + panel/dsi-panel-otm1911-fhd-video.dtsi,
+ * msm8953-qrd-sku3.dtsi (supplies, pinctrl).
+ *
+ * Deliberate deltas from the donor, all verified in-tree:
+ * - clock providers clock_gcc/clock_gcc_mdss -> &gcc with the numeric IDs
+ *   from include/dt-bindings/clock/qcom,gcc-msm8953.h (map in
+ *   agent://MdssClockDt).
+ * - vdd-supply = <&gdsc_mdss> -> power-domains = <&gcc MDSS_GDSC>; the
+ *   MDP/DSI/PLL drivers hold it via runtime-PM, not regulators.
+ * - DSI vdda entry uses 1224000 (mainline pm8953_s3 is fixed 1.224 V;
+ *   donor nominal 1225000).
+ * - PLL provider is drivers/clk/qcom/mdss-dsi-pll-8953.c (CCF) with dense
+ *   IDs from dt-bindings/clock/qcom,mdss-dsi-pll-8953.h; no shadow clocks
+ *   (static panel, DFPS-gated init never runs).
+ * - DSI1 kept disabled (single_dsi, like the donor common glue).
+ * - No cont-splash-memory child: the driver never frees the no-map splash
+ *   region. LK's splash (a solid blue fill) keeps scanning out until the
+ *   first kernel commit, so cont_splash_mem carries iommu-addresses for
+ *   smmu_mdp_unsec: an IOMMU_RESV_DIRECT 1:1 mapping from the first attach.
+ *   No secure context banks.
+ * - Only smmu_mdp_unsec uses the MDSS stream (iommus = <&apps_iommu 0x15>,
+ *   single-cell mainline binding, plus the clocks the context probe needs).
+ *   The donor has no rotator context bank; a second client on stream 0x15
+ *   got its own group and default domain, reprogrammed the shared context
+ *   bank's TTBR0 and hid every MDP mapping (run125). Without it the rotator
+ *   falls back to the MDP unsecure domain, as on stock.
+ * - 32-bit compat, writeback panel extras and ESD stay off.
+ */
+
+#include <dt-bindings/clock/qcom,mdss-dsi-pll-8953.h>
+#include <dt-bindings/clock/qcom,gcc-msm8953.h>
+#include <dt-bindings/clock/qcom,rpmcc.h>
+#include <dt-bindings/interconnect/qcom,msm8953.h>
+#include <dt-bindings/interconnect/qcom,rpm-icc.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+
+/* Mainline display nodes are disabled in msm8953-xiaomi-tissot.dts itself
+ * (later overrides win); the GCC RCG parents below point at the new PLL. */
+&gcc {
+	clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>,
+		 <&sleep_clk>,
+		 <&mdss_dsi0_pll MDSS_DSI_PLL_PIXEL_MUX>,
+		 <&mdss_dsi0_pll MDSS_DSI_PLL_BYTE_MUX>,
+		 <&mdss_dsi1_pll MDSS_DSI_PLL_PIXEL_MUX>,
+		 <&mdss_dsi1_pll MDSS_DSI_PLL_BYTE_MUX>;
+	clock-names = "xo",
+		      "sleep",
+		      "dsi0pll",
+		      "dsi0pllbyte",
+		      "dsi1pll",
+		      "dsi1pllbyte";
+};
+
+&cont_splash_mem {
+	iommu-addresses = <&smmu_mdp_unsec 0x90001000 0x13ff000>;
+};
+
+&soc {
+	mdss_mdp: qcom,mdss_mdp@1a00000 {
+		compatible = "qcom,mdss_mdp";
+		reg = <0x01a00000 0x90000>,
+		      <0x01ab0000 0x1040>;
+		reg-names = "mdp_phys", "vbif_phys";
+		interrupts = <GIC_SPI 72 IRQ_TYPE_LEVEL_HIGH>;
+		power-domains = <&gcc MDSS_GDSC>;
+
+		qcom,msm-bus,name = "mdss_mdp";
+		qcom,msm-bus,num-cases = <3>;
+		qcom,msm-bus,num-paths = <1>;
+		qcom,msm-bus,vectors-KBps =
+			<22 512 0 0>,
+			<22 512 0 6400000>,
+			<22 512 0 6400000>;
+
+		/*
+		 * The paths of the display pipeline. The vendor legacy
+		 * tables of this node name the MDP master and the EBI
+		 * channel ("mdp-ddr"), and the application processor and
+		 * the display configuration register ("display-cfg", the
+		 * table with the "qcom,msm-bus,active-only" flag). The
+		 * shim maps them onto these paths.
+		 */
+		interconnects = <&snoc_mm MAS_MDP RPM_ALWAYS_TAG
+				 &bimc SLV_EBI RPM_ALWAYS_TAG>,
+				<&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+				 &pcnoc SLV_DISP_SS_CFG RPM_ACTIVE_TAG>;
+		interconnect-names = "mdp-ddr", "display-cfg";
+
+		qcom,mdss-pref-prim-intf = "dsi";
+		qcom,mdss-ab-factor = <1 1>;
+		qcom,mdss-ib-factor = <1 1>;
+		qcom,mdss-clk-factor = <105 100>;
+
+		qcom,max-mixer-width = <2048>;
+		qcom,max-pipe-width = <2048>;
+
+		qcom,mdss-vbif-qos-rt-setting = <1 2 2 2>;
+		qcom,mdss-vbif-qos-nrt-setting = <1 1 1 1>;
+
+		qcom,mdss-has-panic-ctrl;
+		qcom,mdss-per-pipe-panic-luts = <0x000f>,
+						<0xffff>,
+						<0xfffc>,
+						<0xff00>;
+
+		qcom,mdss-mdp-reg-offset = <0x00001000>;
+		qcom,max-bandwidth-low-kbps = <3400000>;
+		qcom,max-bandwidth-high-kbps = <3400000>;
+		qcom,max-bandwidth-per-pipe-kbps = <2300000>;
+		qcom,max-clk-rate = <400000000>;
+		qcom,mdss-default-ot-rd-limit = <32>;
+		qcom,mdss-default-ot-wr-limit = <16>;
+
+		qcom,max-bw-settings = <1 3400000>,
+				       <2 3100000>;
+
+		qcom,mdss-pipe-vig-off = <0x00005000>;
+		qcom,mdss-pipe-rgb-off = <0x00015000 0x00017000>;
+		qcom,mdss-pipe-dma-off = <0x00025000>;
+		qcom,mdss-pipe-cursor-off = <0x00035000>;
+
+		qcom,mdss-pipe-vig-xin-id = <0>;
+		qcom,mdss-pipe-rgb-xin-id = <1 5>;
+		qcom,mdss-pipe-dma-xin-id = <2>;
+		qcom,mdss-pipe-cursor-xin-id = <7>;
+
+		qcom,mdss-pipe-vig-clk-ctrl-offsets = <0x2aC 0 0>;
+		qcom,mdss-pipe-rgb-clk-ctrl-offsets = <0x2aC 4 8>,
+						      <0x2b4 4 8>;
+		qcom,mdss-pipe-dma-clk-ctrl-offsets = <0x2ac 8 12>;
+		qcom,mdss-pipe-cursor-clk-ctrl-offsets = <0x3a8 16 15>;
+
+		qcom,mdss-ctl-off = <0x00002000 0x00002200 0x00002400>;
+		qcom,mdss-mixer-intf-off = <0x00045000 0x00046000>;
+		qcom,mdss-dspp-off = <0x00055000>;
+		qcom,mdss-wb-off = <0x00065000 0x00066000>;
+		qcom,mdss-intf-off = <0x0006b000 0x0006b800 0x0006c000>;
+		qcom,mdss-pingpong-off = <0x00071000 0x00071800>;
+		qcom,mdss-slave-pingpong-off = <0x00073000>;
+		qcom,mdss-cdm-off = <0x0007a200>;
+		qcom,mdss-wfd-mode = "intf";
+		qcom,mdss-highest-bank-bit = <0x1>;
+		qcom,mdss-has-decimation;
+		qcom,mdss-has-non-scalar-rgb;
+		qcom,mdss-has-rotator-downscale;
+		qcom,mdss-rot-downscale-min = <2>;
+		qcom,mdss-rot-downscale-max = <16>;
+		qcom,mdss-idle-power-collapse-enabled;
+		qcom,mdss-rot-block-size = <64>;
+		qcom,mdss-ppb-off = <0x00000330>;
+		qcom,mdss-has-pingpong-split;
+
+		clocks = <&gcc GCC_MDSS_AHB_CLK>,
+			 <&gcc GCC_MDSS_AXI_CLK>,
+			 <&gcc MDP_CLK_SRC>,
+			 <&gcc GCC_MDSS_MDP_CLK>,
+			 <&gcc GCC_MDSS_VSYNC_CLK>;
+		clock-names = "iface_clk", "bus_clk", "core_clk_src",
+			"core_clk", "vsync_clk";
+
+		qcom,mdp-settings = <0x0506c 0x00000000>,
+				    <0x1506c 0x00000000>,
+				    <0x1706c 0x00000000>,
+				    <0x2506c 0x00000000>;
+
+		qcom,vbif-settings = <0x0d0 0x00000010>;
+
+		qcom,mdss-prefill-outstanding-buffer-bytes = <0>;
+		qcom,mdss-prefill-y-buffer-bytes = <0>;
+		qcom,mdss-prefill-scaler-buffer-lines-bilinear = <2>;
+		qcom,mdss-prefill-scaler-buffer-lines-caf = <4>;
+		qcom,mdss-prefill-post-scaler-buffer-pixels = <2048>;
+		qcom,mdss-prefill-pingpong-buffer-pixels = <4096>;
+
+		qcom,mdss-pp-offsets {
+			qcom,mdss-sspp-mdss-igc-lut-off = <0x2000>;
+			qcom,mdss-sspp-vig-pcc-off = <0x1780>;
+			qcom,mdss-sspp-rgb-pcc-off = <0x380>;
+			qcom,mdss-sspp-dma-pcc-off = <0x380>;
+			qcom,mdss-lm-pgc-off = <0x3c0>;
+			qcom,mdss-dspp-pcc-off = <0x1700>;
+			qcom,mdss-dspp-pgc-off = <0x17c0>;
+		};
+
+		qcom,mdss-reg-bus {
+			qcom,msm-bus,name = "mdss_reg";
+			qcom,msm-bus,num-cases = <4>;
+			qcom,msm-bus,num-paths = <1>;
+			qcom,msm-bus,active-only;
+			qcom,msm-bus,vectors-KBps =
+				<1 590 0 0>,
+				<1 590 0 76800>,
+				<1 590 0 160000>,
+				<1 590 0 320000>;
+		};
+
+		qcom,mdss-hw-rt-bus {
+			qcom,msm-bus,name = "mdss_hw_rt";
+			qcom,msm-bus,num-cases = <2>;
+			qcom,msm-bus,num-paths = <1>;
+			qcom,msm-bus,vectors-KBps =
+				<22 512 0 0>,
+				<22 512 0 1000>;
+		};
+
+		smmu_mdp_unsec: qcom,smmu_mdp_unsec_cb {
+			compatible = "qcom,smmu_mdp_unsec";
+			iommus = <&apps_iommu 0x15>;
+			clocks = <&gcc GCC_MDSS_AHB_CLK>,
+				 <&gcc GCC_MDSS_AXI_CLK>;
+			clock-names = "iface_clk", "bus_clk";
+			/* LK leaves the splash pipe scanning cont_splash_mem;
+			 * its iommu-addresses keep that fetch 1:1 mapped from
+			 * the first attach until the kernel's first commit.
+			 */
+			memory-region = <&cont_splash_mem>;
+		};
+
+		mdss_fb0: qcom,mdss_fb_primary {
+			cell-index = <0>;
+			compatible = "qcom,mdss-fb";
+		};
+
+		mdss_fb1: qcom,mdss_fb_wfd {
+			cell-index = <1>;
+			compatible = "qcom,mdss-fb";
+		};
+	};
+};
+
+&soc {
+	mdss_dsi: qcom,mdss_dsi@0 {
+		compatible = "qcom,mdss-dsi";
+		hw-config = "single_dsi";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		power-domains = <&gcc MDSS_GDSC>;
+		vdda-supply = <&pm8953_s3>;
+		vcca-supply = <&pm8953_l3>;
+
+		qcom,msm-bus,name = "mdss_dsi";
+		qcom,msm-bus,num-cases = <2>;
+		qcom,msm-bus,num-paths = <1>;
+		qcom,msm-bus,vectors-KBps =
+			<22 512 0 0>,
+			<22 512 0 1000>;
+
+		/* The DSI reads the display buffer from the memory. */
+		interconnects = <&snoc_mm MAS_MDP RPM_ALWAYS_TAG
+				 &bimc SLV_EBI RPM_ALWAYS_TAG>;
+		interconnect-names = "mdp-ddr";
+
+		ranges = <0x1a94000 0x1a94000 0x400
+			0x1a94400 0x1a94400 0x588
+			0x193e000 0x193e000 0x30>;
+
+		clocks = <&gcc GCC_MDSS_MDP_CLK>,
+			<&gcc GCC_MDSS_AHB_CLK>,
+			<&gcc GCC_MDSS_AXI_CLK>,
+			<&mdss_dsi0_pll MDSS_DSI_PLL_BYTE_MUX>,
+			<&mdss_dsi1_pll MDSS_DSI_PLL_BYTE_MUX>,
+			<&mdss_dsi0_pll MDSS_DSI_PLL_PIXEL_MUX>,
+			<&mdss_dsi1_pll MDSS_DSI_PLL_PIXEL_MUX>;
+		clock-names = "mdp_core_clk", "iface_clk", "bus_clk",
+			"ext_byte0_clk", "ext_byte1_clk", "ext_pixel0_clk",
+			"ext_pixel1_clk";
+
+		qcom,mmss-ulp-clamp-ctrl-offset = <0x20>;
+		qcom,mmss-phyreset-ctrl-offset = <0x24>;
+
+		qcom,mdss-fb-map-prim = <&mdss_fb0>;
+
+		qcom,core-supply-entries {
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+
+		qcom,ctrl-supply-entries {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			qcom,ctrl-supply-entry@0 {
+				reg = <0>;
+				qcom,supply-name = "vdda";
+				qcom,supply-min-voltage = <1224000>;
+				qcom,supply-max-voltage = <1224000>;
+				qcom,supply-enable-load = <18160>;
+				qcom,supply-disable-load = <1>;
+			};
+		};
+
+		qcom,phy-supply-entries {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			qcom,phy-supply-entry@0 {
+				reg = <0>;
+				qcom,supply-name = "vcca";
+				qcom,supply-min-voltage = <925000>;
+				qcom,supply-max-voltage = <925000>;
+				qcom,supply-enable-load = <17000>;
+				qcom,supply-disable-load = <32>;
+			};
+		};
+
+		mdss_dsi_ctrl0: qcom,mdss_dsi_ctrl0@1a94000 {
+			compatible = "qcom,mdss-dsi-ctrl";
+			label = "MDSS DSI CTRL->0";
+			cell-index = <0>;
+			reg = <0x1a94000 0x400>,
+				<0x1a94400 0x580>,
+				<0x193e000 0x30>;
+			reg-names = "dsi_ctrl", "dsi_phy", "mmss_misc_phys";
+			power-domains = <&gcc MDSS_GDSC>;
+
+			qcom,timing-db-mode;
+			qcom,mdss-mdp = <&mdss_mdp>;
+			vddio-supply = <&pm8953_l6>;
+			lab-supply = <&lab_regulator>;
+			ibb-supply = <&ibb_regulator>;
+
+			clocks = <&gcc GCC_MDSS_BYTE0_CLK>,
+				<&gcc GCC_MDSS_PCLK0_CLK>,
+				<&gcc GCC_MDSS_ESC0_CLK>,
+				<&gcc BYTE0_CLK_SRC>,
+				<&gcc PCLK0_CLK_SRC>,
+				<&mdss_dsi0_pll MDSS_DSI_PLL_BYTE_MUX>,
+				<&mdss_dsi0_pll MDSS_DSI_PLL_PIXEL_MUX>,
+				<&mdss_dsi0_pll MDSS_DSI_PLL_BYTE_SRC>,
+				<&mdss_dsi0_pll MDSS_DSI_PLL_PIXEL_SRC>;
+			clock-names = "byte_clk", "pixel_clk", "core_clk",
+				"byte_clk_rcg", "pixel_clk_rcg",
+				"pll_byte_clk_mux", "pll_pixel_clk_mux",
+				"pll_byte_clk_src", "pll_pixel_clk_src";
+
+			qcom,platform-strength-ctrl = [ff 06
+							ff 06
+							ff 06
+							ff 06
+							ff 00];
+			qcom,platform-regulator-settings = [1d
+							1d 1d 1d 1d];
+			qcom,platform-lane-config = [00 00 10 0f
+						00 00 10 0f
+						00 00 10 0f
+						00 00 10 0f
+						00 00 10 8f];
+
+			pinctrl-names = "mdss_default", "mdss_sleep";
+			pinctrl-0 = <&mdss_dsi_active &mdss_te_active>;
+			pinctrl-1 = <&mdss_dsi_suspend &mdss_te_suspend>;
+			qcom,platform-reset-gpio = <&tlmm 61 0>;
+			qcom,platform-te-gpio = <&tlmm 24 0>;
+			qcom,dsi-pref-prim-pan = <&dsi_otm1911_fhd_vid>;
+		};
+	};
+
+	mdss_dsi0_pll: qcom,mdss_dsi_pll@1a94400 {
+		compatible = "qcom,mdss-dsi-pll-8953";
+		label = "MDSS DSI 0 PLL";
+		cell-index = <0>;
+		#clock-cells = <1>;
+		reg = <0x01a94400 0x588>;
+		reg-names = "pll_base";
+		power-domains = <&gcc MDSS_GDSC>;
+
+		clocks = <&gcc GCC_MDSS_AHB_CLK>;
+		clock-names = "iface_clk";
+
+		qcom,dsi-pll-ssc-en;
+	};
+
+	mdss_dsi1_pll: qcom,mdss_dsi_pll@1a96400 {
+		compatible = "qcom,mdss-dsi-pll-8953";
+		label = "MDSS DSI 1 PLL";
+		cell-index = <1>;
+		#clock-cells = <1>;
+		reg = <0x01a96400 0x588>;
+		reg-names = "pll_base";
+		power-domains = <&gcc MDSS_GDSC>;
+
+		clocks = <&gcc GCC_MDSS_AHB_CLK>;
+		clock-names = "iface_clk";
+
+		qcom,dsi-pll-ssc-en;
+	};
+};
+
+&mdss_mdp {
+	dsi_otm1911_fhd_vid: qcom,mdss_dsi_otm1911_fhd_video {
+		qcom,mdss-dsi-panel-name = "otm1911 fhd video mode dsi panel";
+		qcom,mdss-dsi-panel-type = "dsi_video_mode";
+		qcom,mdss-dsi-panel-framerate = <60>;
+		qcom,mdss-dsi-virtual-channel-id = <0>;
+		qcom,mdss-dsi-stream = <0>;
+		qcom,mdss-dsi-panel-width = <1080>;
+		qcom,mdss-dsi-panel-height = <1920>;
+		qcom,mdss-dsi-h-front-porch = <24>;
+		qcom,mdss-dsi-h-back-porch = <24>;
+		qcom,mdss-dsi-h-pulse-width = <20>;
+		qcom,mdss-dsi-h-sync-skew = <0>;
+		qcom,mdss-dsi-v-back-porch = <6>;
+		qcom,mdss-dsi-v-front-porch = <14>;
+		qcom,mdss-dsi-v-pulse-width = <2>;
+		qcom,mdss-dsi-h-left-border = <0>;
+		qcom,mdss-dsi-h-right-border = <0>;
+		qcom,mdss-dsi-v-top-border = <0>;
+		qcom,mdss-dsi-v-bottom-border = <0>;
+		qcom,mdss-dsi-bpp = <24>;
+		qcom,mdss-dsi-underflow-color = <0xff>;
+		qcom,mdss-dsi-border-color = <0>;
+		qcom,mdss-dsi-on-command = [
+				39 01 00 00 00 00 02 51 FF
+				39 01 00 00 00 00 02 53 2c
+				39 01 00 00 00 00 02 55 00
+
+				39 01 00 00 78 00 02 11 00
+				39 01 00 00 14 00 02 29 00];
+
+		qcom,mdss-dsi-off-command = [39 01 00 00 32 00 02 28 00
+				39 01 00 00 78 00 02 10 00
+				];
+		qcom,mdss-dsi-panel-timings-phy-v2 = [23 1e 07 08 05 03 04 a0
+				23 1e 07 08 05 03 04 a0
+				23 1e 07 08 05 03 04 a0
+				23 1e 07 08 05 03 04 a0
+				23 18 07 08 05 03 04 a0];
+
+		qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
+		qcom,mdss-dsi-on-command-state = "dsi_lp_mode";
+		qcom,mdss-dsi-off-command-state = "dsi_lp_mode";
+		qcom,mdss-dsi-h-sync-pulse = <1>;
+		qcom,mdss-dsi-traffic-mode = "burst_mode";
+		qcom,mdss-dsi-bllp-eof-power-mode;
+		qcom,mdss-dsi-bllp-power-mode;
+		qcom,mdss-dsi-lane-0-state;
+		qcom,mdss-dsi-lane-1-state;
+		qcom,mdss-dsi-lane-2-state;
+		qcom,mdss-dsi-lane-3-state;
+		qcom,mdss-dsi-panel-timings = [7d 25 1d 00 37 33
+			22 27 1e 03 04 00];
+		qcom,mdss-dsi-t-clk-post = <0x0d>;
+		qcom,mdss-dsi-t-clk-pre = <0x2e>;
+		qcom,mdss-dsi-bl-min-level = <1>;
+		qcom,mdss-dsi-bl-max-level = <4095>;
+		qcom,mdss-dsi-dma-trigger = "trigger_sw";
+		qcom,mdss-dsi-mdp-trigger = "none";
+		qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_wled";
+		qcom,mdss-dsi-reset-sequence = <1 10>, <0 10>, <1 10>;
+		qcom,mdss-dsi-panel-status-command = [06 01 00 01 05 00 01 0A];
+		qcom,mdss-dsi-panel-status-command-state = "dsi_lp_mode";
+		qcom,mdss-dsi-panel-status-check-mode = "disabled";
+		qcom,mdss-dsi-panel-status-read-length = <1>;
+		qcom,mdss-dsi-panel-status-value = <0x9C>;
+		qcom,mdss-dsi-panel-max-error-count = <3>;
+		qcom,mdss-pan-physical-width-dimension = <69>;
+		qcom,mdss-pan-physical-height-dimension = <122>;
+	};
+};
+
+&soc {
+	dsi_panel_pwr_supply: dsi_panel_pwr_supply {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		qcom,panel-supply-entry@0 {
+			reg = <0>;
+			qcom,supply-name = "vdd";
+			qcom,supply-min-voltage = <2850000>;
+			qcom,supply-max-voltage = <2850000>;
+			qcom,supply-enable-load = <100000>;
+			qcom,supply-disable-load = <100>;
+		};
+
+		qcom,panel-supply-entry@1 {
+			reg = <1>;
+			qcom,supply-name = "vddio";
+			qcom,supply-min-voltage = <1800000>;
+			qcom,supply-max-voltage = <1800000>;
+			qcom,supply-enable-load = <100000>;
+			qcom,supply-disable-load = <100>;
+		};
+		qcom,panel-supply-entry@2 {
+			reg = <2>;
+			qcom,supply-name = "lab";
+			qcom,supply-min-voltage = <4600000>;
+			qcom,supply-max-voltage = <6000000>;
+			qcom,supply-enable-load = <100000>;
+			qcom,supply-disable-load = <100>;
+		};
+		qcom,panel-supply-entry@3 {
+			reg = <3>;
+			qcom,supply-name = "ibb";
+			qcom,supply-min-voltage = <4600000>;
+			qcom,supply-max-voltage = <6000000>;
+			qcom,supply-enable-load = <100000>;
+			qcom,supply-disable-load = <100>;
+			qcom,supply-post-on-sleep = <10>;
+		};
+	};
+
+	mdss_rotator: qcom,mdss_rotator {
+		compatible = "qcom,mdss_rotator";
+		power-domains = <&gcc MDSS_GDSC>;
+		qcom,mdss-wb-count = <1>;
+		qcom,mdss-has-downscale;
+		qcom,mdss-has-ubwc;
+		qcom,msm-bus,name = "mdss_rotator";
+		qcom,msm-bus,num-cases = <3>;
+		qcom,msm-bus,num-paths = <1>;
+		qcom,msm-bus,vectors-KBps =
+			<22 512 0 0>,
+			<22 512 0 6400000>,
+			<22 512 0 6400000>;
+
+		/* The same two paths as the display pipeline's. */
+		interconnects = <&snoc_mm MAS_MDP RPM_ALWAYS_TAG
+				 &bimc SLV_EBI RPM_ALWAYS_TAG>,
+				<&bimc MAS_APPS_PROC RPM_ACTIVE_TAG
+				 &pcnoc SLV_DISP_SS_CFG RPM_ACTIVE_TAG>;
+		interconnect-names = "mdp-ddr", "display-cfg";
+
+		clocks = <&gcc GCC_MDSS_AHB_CLK>,
+			<&gcc GCC_MDSS_MDP_CLK>;
+		clock-names = "iface_clk", "rot_core_clk";
+
+		qcom,mdss-rot-reg-bus {
+			qcom,msm-bus,name = "mdss_rot_reg";
+			qcom,msm-bus,num-cases = <2>;
+			qcom,msm-bus,num-paths = <1>;
+			qcom,msm-bus,active-only;
+			qcom,msm-bus,vectors-KBps =
+				<1 590 0 0>,
+				<1 590 0 76800>;
+		};
+	};
+
+	qcom,mdss_wb_panel {
+		compatible = "qcom,mdss_wb";
+		qcom,mdss_pan_res = <640 640>;
+		qcom,mdss_pan_bpp = <24>;
+		qcom,mdss-fb-map = <&mdss_fb1>;
+	};
+};
+
+&tlmm {
+	mdss_dsi_active: mdss_dsi_active {
+		mux {
+			pins = "gpio61";
+			function = "gpio";
+			drive-strength = <8>;
+			bias-disable;
+			output-high;
+		};
+	};
+
+	mdss_dsi_suspend: mdss_dsi_suspend {
+		mux {
+			pins = "gpio61";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
+	mdss_te_active: mdss_te_active {
+		mux {
+			pins = "gpio24";
+			function = "mdp_vsync";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
+	mdss_te_suspend: mdss_te_suspend {
+		mux {
+			pins = "gpio24";
+			function = "mdp_vsync";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+};
+
+&spmi_bus {
+	pmic@3 {
+		labibb: labibb@0 {
+			compatible = "qcom,pmi8950-lab-ibb";
+			status = "okay";
+
+			lab_regulator: lab {
+				regulator-name = "lab_reg";
+				regulator-min-microvolt = <4600000>;
+				regulator-max-microvolt = <6000000>;
+				qcom,discharge-resistor-kohms = <300>;
+				qcom,soft-start-us = <200>;
+				interrupts = <0x3 0xde 0x1 IRQ_TYPE_EDGE_RISING>,
+					     <0x3 0xde 0x0 IRQ_TYPE_LEVEL_LOW>;
+				interrupt-names = "sc-err", "ocp";
+			};
+
+			ibb_regulator: ibb {
+				regulator-name = "ibb_reg";
+				regulator-min-microvolt = <4600000>;
+				regulator-max-microvolt = <6000000>;
+				qcom,discharge-resistor-kohms = <300>;
+				qcom,soft-start-us = <200>;
+				interrupts = <0x3 0xdc 0x2 IRQ_TYPE_EDGE_RISING>,
+					     <0x3 0xdc 0x0 IRQ_TYPE_LEVEL_HIGH>;
+				interrupt-names = "sc-err", "ocp";
+			};
+		};
+	};
+};

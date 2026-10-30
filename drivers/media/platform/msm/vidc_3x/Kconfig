@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# VIDEO CORE
+#
+source "drivers/media/platform/msm/vidc_3x/governors/Kconfig"
+
+menuconfig MSM_VIDC_3X_V4L2
+	tristate "Qualcomm Technologies, Inc. MSM V4L2 3X based video driver"
+		depends on ARCH_QCOM && VIDEO_DEV
+		# The upstream Venus driver drives the same hardware and boots
+		# the same firmware (PAS id 9) into the same reserved memory.
+		# Only one of the two may be built.
+		depends on VIDEO_QCOM_VENUS=n
+		select VIDEOBUF2_CORE
+		# The firmware load (msm_subsystem_get_with_fwname()).
+		select QCOM_SUBSYSTEM_COMPAT
+	help
+		Enable support of MSM V4L2 3X based video driver for
+		Qualcomm Technologies, Inc.
+
+		The vendor OMX service of the ROM uses this driver's
+		private V4L2 interface.  It replaces the upstream Venus
+		driver (VIDEO_QCOM_VENUS), which has to be disabled.
+

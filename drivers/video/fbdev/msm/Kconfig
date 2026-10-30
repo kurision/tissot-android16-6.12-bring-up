@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Tissot MDSS fbdev port, Phase 1 compile gate. Donor symbols trimmed to
+# the tissot cutover: MDP core + DSI + FB core + rotator. Writeback,
+# livedisplay extras and debug stay optional/off for the first link.
+
+config FB_MSM
+	tristate "MSM Framebuffer support"
+	depends on FB && ARCH_QCOM
+	select FB_CFB_FILLRECT
+	select FB_CFB_COPYAREA
+	select FB_CFB_IMAGEBLIT
+	help
+	  MSM framebuffer support (MDSS fbdev for tissot).
+
+if FB_MSM
+
+config FB_MSM_MDSS
+	bool "MDSS HW"
+	select SYNC_FILE
+	select FB_MSM_MDSS_COMMON if FB_MSM_MDSS
+	help
+	  The Mobile Display Sub System (MDSS) driver supports devices which
+	  contain MDSS hardware block. Tissot cutover port.
+
+config FB_MSM_MDSS_COMMON
+	bool
+
+config FB_MSM_MDSS_WRITEBACK
+	bool "MDSS Writeback Panel"
+	depends on FB_MSM_MDSS
+	default n
+	help
+	  Phase 4 virtual display; off for first cutover.
+
+config FB_MSM_MDSS_DSI_CTRL_STATUS
+	bool "DSI controller status check feature"
+	depends on FB_MSM_MDSS
+	default n
+	help
+	  ESD check; off until phase 4 (false triggers blank loop).
+
+config FB_MSM_MDSS_XLOG_DEBUG
+	bool "Enable MDSS debugging"
+	depends on FB_MSM_MDSS
+	default n
+
+endif

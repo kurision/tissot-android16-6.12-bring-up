@@ -8,6 +8,10 @@ config GKI_HIDDEN_DRM_CONFIGS
 	select DRM_TTM if (HAS_IOMEM && DRM)
 	select DRM_CLIENT if (DRM)
 	select HMM_MIRROR if (DRM)
+	# HMM's mirror code calls the mmu notifier API. Mainline GKI kernels
+	# always build KVM, whose Kconfig selects MMU_NOTIFIER for it; this
+	# port does not, so the dependency has to be carried here.
+	select MMU_NOTIFIER if (DRM)
 	select VIDEOMODE_HELPERS
 	select WANT_DEV_COREDUMP
 	select INTERVAL_TREE

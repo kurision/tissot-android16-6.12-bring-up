@@ -1,0 +1,116 @@
+name: Build Tissot kernel release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ format('refs/tags/{0}', inputs.tag || github.ref_name) }}
+          fetch-depth: 1
+      - name: Verify release tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          git check-ref-format "refs/tags/$TAG"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$TAG^{commit}")"
+      # Caches are scoped per ref: tag runs can only restore entries saved by
+      # a run on the default branch, so seed it with workflow_dispatch from there.
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ccache
+            ~/.cargo/bin/bindgen
+          key: kbuild-${{ github.run_id }}
+          restore-keys: kbuild-
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-snapshot.gpg
+          echo 'deb [signed-by=/usr/share/keyrings/llvm-snapshot.gpg] https://apt.llvm.org/resolute/ llvm-toolchain-resolute-23 main' | sudo tee /etc/apt/sources.list.d/llvm-23.list
+          sudo apt-get update
+          sudo apt-get install -y clang-23 lld-23 llvm-23 libclang-23-dev gcc-aarch64-linux-gnu bc bison flex kmod libssl-dev libelf-dev libdw-dev device-tree-compiler python3-pip python3-venv ripgrep ccache pahole
+          rustup toolchain install 1.99.0 --profile minimal --component rust-src,rustfmt
+          rustup default 1.99.0
+          "$HOME/.cargo/bin/bindgen" --version 2>/dev/null | grep -qx 'bindgen 0.73.2' ||
+            cargo install --locked --force bindgen-cli --version 0.73.2
+          # build-kernel.sh needs CLANG to be one executable path.
+          mkdir -p "$RUNNER_TEMP/cc"
+          printf '#!/bin/sh\nexec ccache /usr/lib/llvm-23/bin/clang "$@"\n' > "$RUNNER_TEMP/cc/clang"
+          chmod +x "$RUNNER_TEMP/cc/clang"
+          {
+            echo "CLANG=$RUNNER_TEMP/cc/clang"
+            echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+            echo 'CCACHE_MAXSIZE=3G'
+            echo 'CCACHE_COMPILERCHECK=content'
+            echo "CCACHE_EXTRAFILES=$GITHUB_WORKSPACE/gki/aarch64/afdo/kernel.afdo"
+          } >> "$GITHUB_ENV"
+          python3 -m venv "$RUNNER_TEMP/dtschema-venv"
+          "$RUNNER_TEMP/dtschema-venv/bin/pip" install dtschema
+          echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/dtschema-venv/bin" >> "$GITHUB_PATH"
+          echo 'LIBCLANG_PATH=/usr/lib/llvm-23/lib' >> "$GITHUB_ENV"
+      - name: Build flashable update
+        env:
+          ACK_TISSOT_BASE_IMAGE: ''
+          ACK_EXPERIMENTAL_WCNSS_FALLBACK: '1'
+          ACK_SNAPSHOT_DIR: ${{ runner.temp }}/ack-kernel-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          bash porting/tools/build-kernel.sh release
+      - name: Compiler cache stats
+        if: always()
+        run: ccache -s
+      - name: Upload build evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-evidence-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/ack-kernel-${{ github.run_id }}-${{ github.run_attempt }}/*.log
+            ${{ runner.temp }}/ack-kernel-${{ github.run_id }}-${{ github.run_attempt }}/*.config
+            ${{ runner.temp }}/ack-kernel-${{ github.run_id }}-${{ github.run_attempt }}/*.diff
+          if-no-files-found: ignore
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          SNAPSHOT: ${{ runner.temp }}/ack-kernel-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          NOTES="$RUNNER_TEMP/release-notes.md"
+          echo 'Experimental kernel update for an existing ACK Tissot ramdisk.' > "$NOTES"
+          # The checkout is shallow, so list commits through the compare API
+          # against the most recent published release instead of git log.
+          PREV=$(gh release list --exclude-drafts --limit 20 --json tagName --jq '.[].tagName' |
+            grep -vx "$TAG" | head -1 || true)
+          if [ -n "$PREV" ]; then
+            {
+              printf '\n## Changes since %s\n\n' "$PREV"
+              gh api --paginate "repos/$GITHUB_REPOSITORY/compare/$PREV...$TAG" \
+                --jq '.commits[] | "- " + (.commit.message | split("\n")[0]) + " (" + .sha[0:12] + ")"'
+              printf '\n**Full changelog**: https://github.com/%s/compare/%s...%s\n' "$GITHUB_REPOSITORY" "$PREV" "$TAG"
+            } >> "$NOTES"
+          fi
+          gh release create "$TAG" --verify-tag \
+            --title "$TAG" \
+            --prerelease \
+            --notes-file "$NOTES" \
+            "$SNAPSHOT/ack-tissot-release.zip" "$SNAPSHOT/package-release.json"

@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/regulator/qcom,spm-regulator.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm SPM-backed SPMI PMIC SMPS regulator
+
+maintainers:
+  - Unmaintained
+
+description: |
+  Some Qualcomm SPMI PMIC SMPS regulators (for example the PM8953 S5/S6
+  VDD_APC supply) are driven through the shared sub-system power manager
+  (SPM/SAW) instead of writing the PMIC voltage set point over SPMI directly.
+  The SPM owns the PMIC voltage data so that hardware AVS and power-collapse
+  entry use the programmed level. An optional child node exposes the AVS
+  minimum/maximum limit regulator that a CPR controller programs.
+
+allOf:
+  - $ref: regulator.yaml#
+
+properties:
+  compatible:
+    const: qcom,spm-regulator
+
+  reg:
+    maxItems: 1
+
+  qcom,saw:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      Phandle to the SAW/SPM voltage controller that drives this rail.
+
+  qcom,bypass-spm:
+    type: boolean
+    description:
+      Drive the SMPS through SPMI only and do not use the SPM.
+
+  qcom,mode:
+    enum: [auto, pwm]
+    description: Initial SMPS mode.
+
+  qcom,max-voltage-step:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description:
+      Largest voltage change applied in a single step, in microvolts.
+
+patternProperties:
+  "^avs-limit-regulator$":
+    type: object
+    $ref: regulator.yaml#
+    unevaluatedProperties: false
+
+required:
+  - compatible
+  - reg
+  - regulator-name
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/spmi/spmi.h>
+
+    spmi {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        pmic@1 {
+            compatible = "qcom,pm8953", "qcom,spmi-pmic";
+            reg = <1 SPMI_USID>;
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            regulator@2000 {
+                compatible = "qcom,spm-regulator";
+                reg = <0x2000 0x100>;
+                regulator-name = "pm8953_s5";
+                regulator-min-microvolt = <400000>;
+                regulator-max-microvolt = <1140000>;
+
+                avs-limit-regulator {
+                    regulator-name = "pm8953_s5_avs_limit";
+                    regulator-min-microvolt = <400000>;
+                    regulator-max-microvolt = <1140000>;
+                };
+            };
+        };
+    };
+...

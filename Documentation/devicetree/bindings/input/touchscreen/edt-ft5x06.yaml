@@ -20,6 +20,14 @@ maintainers:
 allOf:
   - $ref: touchscreen.yaml#
   - if:
+      required:
+        - edt,gesture-wakeup
+    then:
+      required:
+        - reset-gpios
+      properties:
+        wakeup-source: false
+  - if:
       properties:
         compatible:
           contains:
@@ -59,6 +67,15 @@ properties:
     maxItems: 1
 
   wakeup-source: true
+
+  edt,gesture-wakeup:
+    type: boolean
+    description: |
+      The panel firmware implements the FocalTech low-power gesture protocol
+      (enable at register 0xd0, gesture ID at 0xd3, double tap ID 0x24).
+      Requires a reset GPIO to restore normal reporting. This is a downstream
+      extension for the Xiaomi tissot panel, not a request to enable wakeup by
+      default. Do not combine with wakeup-source.
 
   vcc-supply: true
   iovcc-supply: true
@@ -104,6 +121,27 @@ properties:
     minimum: 0
     maximum: 255
 
+  edt,keys:
+    description: >
+      Capacitive keys sitting on a sensor row outside the visible panel.
+      The controller reports them as ordinary touch coordinates, and the
+      driver turns each of them into a key event. Given as <x y code>
+      triplets in controller coordinates; without this property no key is
+      reported.
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    minItems: 3
+    maxItems: 12
+    items:
+      minimum: 0
+      maximum: 4095
+
+  touchscreen-size-x: true
+  touchscreen-size-y: true
+  touchscreen-fuzz-x: true
+  touchscreen-fuzz-y: true
+  touchscreen-inverted-x: true
+  touchscreen-inverted-y: true
+  touchscreen-swapped-x-y: true
   interrupt-controller: true
 
 unevaluatedProperties: false
@@ -127,6 +165,9 @@ examples:
         interrupts = <5 IRQ_TYPE_EDGE_FALLING>;
         reset-gpios = <&gpio2 6 GPIO_ACTIVE_LOW>;
         wake-gpios = <&gpio4 9 GPIO_ACTIVE_HIGH>;
+        touchscreen-size-x = <1080>;
+        touchscreen-size-y = <1920>;
+        edt,keys = <500 2040 172 200 2040 139 800 2040 158>;
       };
     };
 

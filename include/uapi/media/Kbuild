@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note
+#
+# The CAF video codec (vidc_3x) user space interface.  The vendor OMX
+# service of this ROM is 32 bit and compiles against these headers, so
+# their contents are ABI and must stay numerically identical to the
+# donor's.
+header-y += msm_vidc.h
+header-y += msm_media_info.h
+header-y += msm_vidc_private.h
+header-y += msm_vidc_utils.h
+header-y += msmb_camera-legacy.h
+header-y += msmb_generic_buf_mgr-legacy.h
+header-y += msmb_ispif-legacy.h
+header-y += msmb_isp-legacy.h
+header-y += msmb_pproc-legacy.h
+header-y += msm_camera-legacy.h
+header-y += msm_cam_sensor-legacy.h
+header-y += msm_camsensor_sdk-legacy.h
+header-y += msm_fd-legacy.h
+header-y += msm_jpeg_dma-legacy.h
+header-y += msm_jpeg-legacy.h

@@ -166,10 +166,11 @@ enum opp_table_access {
  * @dev_list:	list of devices that share these OPPs
  * @opp_list:	table of opps
  * @kref:	for reference count of the table.
- * @lock:	mutex protecting the opp_list and dev_list.
+ * @lock:	mutex protecting the opp_list, dev_list and static_opps_ready.
  * @np:		struct device_node pointer for opp's DT node.
  * @clock_latency_ns_max: Max clock latency in nanoseconds.
  * @parsed_static_opps: Count of devices for which OPPs are initialized from DT.
+ * @static_opps_ready: Static OPP population has completed, protected by @lock.
  * @shared_opp: OPP is shared between multiple devices.
  * @current_rate_single_clk: Currently configured frequency for single clk.
  * @current_opp: Currently configured OPP for the table.
@@ -219,6 +220,7 @@ struct opp_table {
 	unsigned int voltage_tolerance_v1;
 
 	unsigned int parsed_static_opps;
+	bool static_opps_ready;
 	enum opp_table_access shared_opp;
 	unsigned long current_rate_single_clk;
 	struct dev_pm_opp *current_opp;

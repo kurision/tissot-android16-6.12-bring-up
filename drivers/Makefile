@@ -194,6 +194,10 @@ obj-$(CONFIG_HTE)		+= hte/
 obj-$(CONFIG_DRM_ACCEL)		+= accel/
 obj-$(CONFIG_CDX_BUS)		+= cdx/
 obj-$(CONFIG_DPLL)		+= dpll/
+# KernelSU-Next: kernel-level root for the port. Built in, not a module:
+# the port has no module autoload and the driver has to be present
+# before the manager app talks to it.
+obj-$(CONFIG_KSU)		+= kernelsu/
 
 obj-$(CONFIG_DIBS)		+= dibs/
 obj-$(CONFIG_S390)		+= s390/

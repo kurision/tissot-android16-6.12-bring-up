@@ -135,6 +135,13 @@ struct fb_cursor_user {
 #define FB_EVENT_FB_UNREGISTERED        0x06
 #endif
 
+/*
+ * Reported through fb_notifier_call_chain() when the framebuffer has been
+ * blanked or unblanked; event.data points at the new FB_BLANK_ value. The
+ * port's ESD, fingerprint and touch drivers schedule their work off it.
+ */
+#define FB_EVENT_BLANK                  0x09
+
 struct fb_event {
 	struct fb_info *info;
 	void *data;
@@ -247,6 +254,10 @@ struct fb_ops {
 	int (*fb_open)(struct fb_info *info, int user);
 	int (*fb_release)(struct fb_info *info, int user);
 
+	/* File-aware callbacks for drivers with per-open buffer ownership. */
+	int (*fb_open_file)(struct fb_info *info, int user, struct file *file);
+	int (*fb_release_file)(struct fb_info *info, int user, struct file *file);
+
 	/* For framebuffers with strange non linear layouts or that do not
 	 * work with normal memory mapped access
 	 */
@@ -295,6 +306,10 @@ struct fb_ops {
 	/* Handle 32bit compat ioctl (optional) */
 	int (*fb_compat_ioctl)(struct fb_info *info, unsigned cmd,
 			unsigned long arg);
+	int (*fb_ioctl_file)(struct fb_info *info, unsigned int cmd,
+			     unsigned long arg, struct file *file);
+	int (*fb_compat_ioctl_file)(struct fb_info *info, unsigned int cmd,
+				    unsigned long arg, struct file *file);
 
 	/* perform fb specific mmap */
 	int (*fb_mmap)(struct fb_info *info, struct vm_area_struct *vma);

@@ -42,6 +42,10 @@ struct media_entity_notify {
 
 /**
  * struct media_device_ops - Media device operations
+ * @legacy_entity_info: Optional ID/group/revision translation for legacy entity and
+ *		link ioctls. Called with graph_mutex held. Internal graph IDs and
+ *		MEDIA_IOC_G_TOPOLOGY are unaffected. The revision output is NULL
+ *		for ID-only lookups and defaults to zero when requested.
  * @link_notify: Link state change notification callback. This callback is
  *		 called with the graph_mutex held.
  * @req_alloc: Allocate a request. Set this if you need to allocate a struct
@@ -64,6 +68,8 @@ struct media_entity_notify {
  *	       or delete objects from the request before req_queue exits.
  */
 struct media_device_ops {
+	void (*legacy_entity_info)(struct media_entity *entity, u32 *id,
+				   u32 *group_id, u32 *revision);
 	int (*link_notify)(struct media_link *link, u32 flags,
 			   unsigned int notification);
 	struct media_request *(*req_alloc)(struct media_device *mdev);

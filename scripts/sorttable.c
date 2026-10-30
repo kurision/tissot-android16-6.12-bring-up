@@ -449,7 +449,11 @@ static inline void *get_index(void *start, int entsize, int index)
 }
 
 static int extable_ent_size;
-static int long_size;
+/*
+ * Unused when neither the ORC nor the mcount sort path is compiled in;
+ * newer clang warns about the set-but-not-read assignment under -Werror.
+ */
+static int __attribute__((unused)) long_size;
 
 #define ERRSTR_MAXSZ	256
 

@@ -401,6 +401,14 @@ int fb_blank(struct fb_info *info, int blank)
 	fb_lcd_notify_blank(info);
 	fb_ledtrig_backlight_notify_blank(info);
 
+	{
+		struct fb_event event;
+
+		event.info = info;
+		event.data = &blank;
+		fb_notifier_call_chain(FB_EVENT_BLANK, &event);
+	}
+
 	return 0;
 
 err:

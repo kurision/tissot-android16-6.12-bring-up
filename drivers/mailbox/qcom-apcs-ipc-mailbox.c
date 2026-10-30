@@ -27,6 +27,7 @@ struct qcom_apcs_ipc {
 struct qcom_apcs_ipc_data {
 	int offset;
 	char *clk_name;
+	bool ipc_only;
 };
 
 static const struct qcom_apcs_ipc_data ipq6018_apcs_data = {
@@ -39,6 +40,10 @@ static const struct qcom_apcs_ipc_data msm8916_apcs_data = {
 
 static const struct qcom_apcs_ipc_data msm8994_apcs_data = {
 	.offset = 8, .clk_name = NULL
+};
+
+static const struct qcom_apcs_ipc_data msm8953_apcs_data = {
+	.offset = 8, .ipc_only = true,
 };
 
 static const struct qcom_apcs_ipc_data msm8996_apcs_data = {
@@ -60,6 +65,14 @@ static const struct regmap_config apcs_regmap_config = {
 	.max_register = 0x1008,
 };
 
+static const struct regmap_config msm8953_ipc_regmap_config = {
+	.reg_bits = 32,
+	.reg_stride = 4,
+	.val_bits = 32,
+	.max_register = 0,
+	.fast_io = true,
+};
+
 static int qcom_apcs_ipc_send_data(struct mbox_chan *chan, void *data)
 {
 	struct qcom_apcs_ipc *apcs = container_of(chan->mbox,
@@ -77,6 +90,8 @@ static int qcom_apcs_ipc_probe(struct platform_device *pdev)
 {
 	struct qcom_apcs_ipc *apcs;
 	const struct qcom_apcs_ipc_data *apcs_data;
+	const struct regmap_config *config = &apcs_regmap_config;
+	struct resource ipc, *res;
 	struct regmap *regmap;
 	void __iomem *base;
 	unsigned long i;
@@ -86,18 +101,30 @@ static int qcom_apcs_ipc_probe(struct platform_device *pdev)
 	if (!apcs)
 		return -ENOMEM;
 
-	base = devm_platform_ioremap_resource(pdev, 0);
+	apcs_data = of_device_get_match_data(&pdev->dev);
+	apcs->offset = apcs_data->offset;
+	if (apcs_data->ipc_only) {
+		/* The MSM8953 global block also contains the CPU4 clock RCG. */
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+		if (!res || resource_size(res) < apcs_data->offset + sizeof(u32))
+			return dev_err_probe(&pdev->dev, -EINVAL, "short IPC resource\n");
+		ipc = *res;
+		ipc.start += apcs_data->offset;
+		ipc.end = ipc.start + sizeof(u32) - 1;
+		base = devm_ioremap_resource(&pdev->dev, &ipc);
+		config = &msm8953_ipc_regmap_config;
+		apcs->offset = 0;
+	} else {
+		base = devm_platform_ioremap_resource(pdev, 0);
+	}
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
-	regmap = devm_regmap_init_mmio(&pdev->dev, base, &apcs_regmap_config);
+	regmap = devm_regmap_init_mmio(&pdev->dev, base, config);
 	if (IS_ERR(regmap))
 		return PTR_ERR(regmap);
 
-	apcs_data = of_device_get_match_data(&pdev->dev);
-
 	apcs->regmap = regmap;
-	apcs->offset = apcs_data->offset;
 
 	/* Initialize channel identifiers */
 	for (i = 0; i < ARRAY_SIZE(apcs->mbox_chans); i++)
@@ -149,7 +176,7 @@ static const struct of_device_id qcom_apcs_ipc_of_match[] = {
 	{ .compatible = "qcom,ipq6018-apcs-apps-global", .data = &ipq6018_apcs_data },
 	{ .compatible = "qcom,msm8916-apcs-kpss-global", .data = &msm8916_apcs_data },
 	{ .compatible = "qcom,msm8939-apcs-kpss-global", .data = &msm8916_apcs_data },
-	{ .compatible = "qcom,msm8953-apcs-kpss-global", .data = &msm8994_apcs_data },
+	{ .compatible = "qcom,msm8953-apcs-kpss-global", .data = &msm8953_apcs_data },
 	{ .compatible = "qcom,msm8994-apcs-kpss-global", .data = &msm8994_apcs_data },
 	{ .compatible = "qcom,msm8996-apcs-hmss-global", .data = &msm8996_apcs_data },
 	{ .compatible = "qcom,qcm2290-apcs-hmss-global", .data = &msm8994_apcs_data },

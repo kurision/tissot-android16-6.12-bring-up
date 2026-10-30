@@ -1146,6 +1146,50 @@ config REGULATOR_QCOM_SMD_RPM
 	  Qualcomm RPM as a module. The module will be named
 	  "qcom_smd-regulator".
 
+config REGULATOR_QCOM_MSM8953_MEM_ACC
+	bool "Qualcomm MSM8953 CPU memory-ACC corner regulator"
+	depends on ARCH_QCOM && OF
+	help
+	  Support the two CPU memory-accelerator corners used by MSM8953 CPR4.
+	  Corner values are selectors, not physical voltages. This provider
+	  does not control the APC rail and must be sequenced by the CPR driver.
+	  Leave disabled until the CPU power stack is configured.
+
+config REGULATOR_QCOM_MSM8953_SPM
+	bool "Qualcomm MSM8953 SPM-backed APC rail regulator"
+	depends on ARCH_QCOM && OF && REGULATOR && QCOM_MSM8953_SPM
+	help
+	  Drive the PM8953 S5/S6 VDD_APC SMPS through the shared MSM8953
+	  system-CCI SAW4 instead of writing the PMIC voltage set point
+	  directly, and expose the AVS minimum/maximum limit regulator that
+	  the CPR4 controller programs. The SPM must own the PMIC voltage data
+	  so that hardware AVS and power-collapse entry use the correct level.
+	  Leave disabled until the CPU power stack is configured.
+
+config REGULATOR_CPR3
+	bool "CPR3/CPR4 regulator core support"
+	depends on ARCH_QCOM && OF
+	help
+	  Core Power Reduction (CPR) version 3/4 support. The core manages the
+	  ring-oscillator sensing loops and the shared voltage-corner state
+	  machine used by the SoC-specific CPR controllers. Adapted from the
+	  MSM8953 vendor kernel; leave disabled until the CPU power stack is
+	  configured.
+
+config REGULATOR_CPR4_APSS
+	bool "Qualcomm CPR4 regulator for APSS"
+	depends on REGULATOR_CPR3
+	depends on REGULATOR_QCOM_MSM8953_SPM && REGULATOR_QCOM_MSM8953_MEM_ACC
+	depends on QCOM_MSM8953_APM
+	help
+	  Support the Qualcomm APSS application-processor CPR4 controller:
+	  memory-array power-mux (APM) switching, one CPR4 thread monitoring
+	  the two APSS clusters that share the APC supply, hardware closed-loop
+	  automatic voltage stepping, and voltage adjustments for online core
+	  count, temperature and performance boost mode. The initial voltage and
+	  CPR target-quotient values are read out of hardware fuses. Leave
+	  disabled until the CPU power stack is configured.
+
 config REGULATOR_QCOM_SPMI
 	tristate "Qualcomm SPMI regulator driver"
 	depends on SPMI || COMPILE_TEST

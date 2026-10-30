@@ -153,3 +153,5 @@ source "sound/soc/generic/Kconfig"
 
 endif	# SND_SOC
 
+
+source "sound/soc/msm/Kconfig"

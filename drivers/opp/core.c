@@ -1871,6 +1871,8 @@ bool _opp_remove_all_static(struct opp_table *opp_table)
 
 		if (--opp_table->parsed_static_opps)
 			return true;
+
+		opp_table->static_opps_ready = false;
 	}
 
 	_opp_remove_all(opp_table, false);

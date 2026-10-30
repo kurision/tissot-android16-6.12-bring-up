@@ -91,14 +91,23 @@ static inline int sigismember(sigset_t *set, int _sig)
 
 #endif /* __HAVE_ARCH_SIG_BITOPS */
 
+/*
+ * _NSIG_WORDS is a constant, but clang 23 flags the out-of-range indices in
+ * the unreachable switch arms under -Warray-bounds, so select on it with
+ * the preprocessor instead.
+ */
 static inline int sigisemptyset(sigset_t *set)
 {
 	switch (_NSIG_WORDS) {
+#if _NSIG_WORDS >= 4
 	case 4:
 		return (set->sig[3] | set->sig[2] |
 			set->sig[1] | set->sig[0]) == 0;
+#endif
+#if _NSIG_WORDS >= 2
 	case 2:
 		return (set->sig[1] | set->sig[0]) == 0;
+#endif
 	case 1:
 		return set->sig[0] == 0;
 	default:
@@ -110,14 +119,18 @@ static inline int sigisemptyset(sigset_t *set)
 static inline int sigequalsets(const sigset_t *set1, const sigset_t *set2)
 {
 	switch (_NSIG_WORDS) {
+#if _NSIG_WORDS >= 4
 	case 4:
 		return	(set1->sig[3] == set2->sig[3]) &&
 			(set1->sig[2] == set2->sig[2]) &&
 			(set1->sig[1] == set2->sig[1]) &&
 			(set1->sig[0] == set2->sig[0]);
+#endif
+#if _NSIG_WORDS >= 2
 	case 2:
 		return	(set1->sig[1] == set2->sig[1]) &&
 			(set1->sig[0] == set2->sig[0]);
+#endif
 	case 1:
 		return	set1->sig[0] == set2->sig[0];
 	}

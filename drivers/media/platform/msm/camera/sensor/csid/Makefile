@@ -1,0 +1,5 @@
+ccflags-y += -Wno-missing-prototypes
+ccflags-y += -I $(srctree)/drivers/media/platform/msm/camera
+ccflags-y += -I $(srctree)/drivers/media/platform/msm/camera/common
+ccflags-y += -I $(srctree)/drivers/media/platform/msm/camera/sensor/io
+obj-$(CONFIG_MSM_CSID) += msm_csid.o

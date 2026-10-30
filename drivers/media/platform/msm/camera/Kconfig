@@ -1,0 +1,122 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# The CAF camera stack (the donor's techpack/camera-legacy).
+#
+# The donor had two camera stacks for the same SoC generation and chose
+# between them per board (the "legacy" one and the "legacy-n" one); this
+# tree has only the legacy one, so the symbols of the donor's
+# Kconfig.orig that are still used by the Makefiles are kept and the
+# rest are not.
+
+menu "Qualcomm MSM camera (legacy)"
+
+config MSMB_CAMERA
+	bool
+
+config MSMB_CAMERA_LEGACY
+	bool "Qualcomm MSM camera and video capture 2.0 support (legacy)"
+	select MSMB_CAMERA
+	help
+	  Say Y here to enable the camera driver stack of the donor's
+	  techpack/camera-legacy: the sensor framework with the CCI, the
+	  CSIPHY and the CSID, the ISPIF, the VFE, the CPP and the JPEG
+	  encoder. The ROM's mm-qcamera-daemon drives this interface.
+
+config MSM_CAMERA_VFE
+	bool "QTI MSM camera VFE, ISPIF and CSID support"
+	depends on MSMB_CAMERA
+	help
+	  The pixel processor, the interface between the CSID and the VFE,
+	  and the CSI receivers.  This is the part of the stack that turns
+	  the sensor's frames into images, and it needs the pm8953's GDSC
+	  rails, which this tree does not describe yet.
+
+config MSM_CAMERA_CPP
+	bool "QTI MSM camera post processing engine support"
+	depends on MSMB_CAMERA
+	help
+	  The post processing engine: the scaling and the cropping of the
+	  image, and the JPEG encoder's input.  It needs the pm8953's GDSC
+	  rails, which this tree does not describe yet.
+
+config MSM_CAMERA_SENSOR
+	bool "QTI MSM camera sensor support"
+	depends on MSMB_CAMERA
+	select NEW_LEDS
+	select LEDS_CLASS
+	help
+	  This flag enables support for the camera sensor. The sensor
+	  driver is capable of providing real time data for camera
+	  support. The driver supports the V4L2 subdev API.
+
+config MSM_CPP
+	bool "QTI MSM camera post processing engine support"
+	depends on MSMB_CAMERA
+	help
+	  Enable support for the camera post-processing engine. The post
+	  processing engine is capable of scaling and cropping the image.
+	  The driver supports the V4L2 subdev API.
+
+config MSM_CCI
+	bool "QTI MSM camera control interface support"
+	depends on MSMB_CAMERA
+	help
+	  Enable support for the camera control interface driver only for
+	  those platforms that have hardware support. This driver is
+	  responsible for handling the I2C read and write on the I2C bus.
+	  It is also responsible for the synchronization with the GPIO and
+	  the data frames.
+
+config MSM_CSIPHY
+	bool "QTI MSM camera CSIPHY support"
+	depends on MSMB_CAMERA
+	help
+	  Enable support for the camera CSIPHY (the camera serial interface
+	  physical layer).
+
+config MSM_CSID
+	bool "QTI MSM camera CSID support"
+	depends on MSMB_CAMERA
+	help
+	  Enable support for the camera CSID (the camera serial interface
+	  digital).
+
+config MSM_EEPROM
+	bool "QTI MSM camera EEPROM support"
+	depends on MSMB_CAMERA
+	help
+	  Enable support for the camera EEPROM, which carries the module
+	  calibration of the camera.
+
+config MSM_ISPIF_V2
+	bool "QTI MSM image signal processing interface support"
+	depends on MSMB_CAMERA
+	help
+	  Enable support for the image signal processing interface module.
+	  This module acts as a crossbar between the CSID and the VFE: the
+	  output of any CID of the CSID can be routed to the pixel or the
+	  raw data interface of the VFE.
+
+config MSMB_JPEG
+	bool "QTI MSM JPEG encoder engine support"
+	depends on MSMB_CAMERA
+	help
+	  Enable support for the JPEG encoder engine.
+
+config MSM_FD
+	bool "QTI MSM face detection engine support"
+	depends on MSMB_CAMERA
+	depends on MSM_CAMERA_CPP
+	help
+	  Enable support for the MSM face detection engine.  The engine runs
+	  on the post processing engine's hardware, so it follows that
+	  symbol: with the CPP out of the build, this one cannot be linked
+	  either.
+
+config MSM_JPEGDMA
+	bool "QTI MSM JPEG DMA engine support"
+	depends on MSMB_CAMERA
+	help
+	  Enable support for the MSM JPEG DMA engine.
+
+endmenu

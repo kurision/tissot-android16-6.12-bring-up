@@ -485,7 +485,25 @@ struct v4l2_ioctl_ops {
 				  struct v4l2_modulator *a);
 	int (*vidioc_s_modulator)(struct file *file, void *priv,
 				  const struct v4l2_modulator *a);
+	/*
+	 * Plain control ioctls. The CAF camera, codec and FD drivers
+	 * implement the vendor control ABI directly instead of through
+	 * the control framework; the core dispatches here when no
+	 * ctrl_handler is attached.
+	 */
+	int (*vidioc_queryctrl)(struct file *file, void *fh,
+				struct v4l2_queryctrl *a);
+	int (*vidioc_g_ctrl)(struct file *file, void *fh,
+			     struct v4l2_control *a);
+	int (*vidioc_s_ctrl)(struct file *file, void *fh,
+			     struct v4l2_control *a);
 	/* Crop ioctls */
+	int (*vidioc_cropcap)(struct file *file, void *fh,
+			      struct v4l2_cropcap *a);
+	int (*vidioc_g_crop)(struct file *file, void *fh,
+			     struct v4l2_crop *a);
+	int (*vidioc_s_crop)(struct file *file, void *fh,
+			     const struct v4l2_crop *a);
 	int (*vidioc_g_pixelaspect)(struct file *file, void *priv,
 				    int buf_type, struct v4l2_fract *aspect);
 	int (*vidioc_g_selection)(struct file *file, void *priv,

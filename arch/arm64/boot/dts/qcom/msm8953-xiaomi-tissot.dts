@@ -8,7 +8,15 @@
 #include "msm8953.dtsi"
 #include "pm8953.dtsi"
 #include "pmi8950.dtsi"
+#include "msm8953-xiaomi-tissot-audio.dtsi"
+#include "msm8953-xiaomi-tissot-battery.dtsi"
+#include "msm8953-xiaomi-tissot-camera.dtsi"
+#include "msm8953-xiaomi-tissot-fingerprint.dtsi"
+#include "msm8953-xiaomi-tissot-mdss.dtsi"
+#include "msm8953-xiaomi-tissot-vidc.dtsi"
+#include "msm8953-xiaomi-tissot-thermal.dtsi"
 #include <dt-bindings/leds/common.h>
+#include <dt-bindings/input/linux-event-codes.h>
 
 /delete-node/ &adsp_fw_mem;
 /delete-node/ &qseecom_mem;
@@ -20,6 +28,38 @@
 	chassis-type = "handset";
 	qcom,msm-id = <293 0>;
 	qcom,board-id = <0x1000b 0x00>;
+
+	aliases {
+		mmc0 = &sdhc_1;
+		mmc1 = &sdhc_2;
+	};
+
+	cpus {
+		idle-states {
+			entry-method = "psci";
+
+			/* Core-only states and timings from CAF msm8953-pm.dtsi. */
+			tissot_cpu_sleep_0: cpu-sleep-0 {
+				compatible = "arm,idle-state";
+				idle-state-name = "standalone-power-collapse";
+				arm,psci-suspend-param = <0x40000003>;
+				entry-latency-us = <136>;
+				exit-latency-us = <180>;
+				min-residency-us = <901>;
+				local-timer-stop;
+			};
+
+			tissot_cpu_sleep_1: cpu-sleep-1 {
+				compatible = "arm,idle-state";
+				idle-state-name = "standalone-power-collapse";
+				arm,psci-suspend-param = <0x40000003>;
+				entry-latency-us = <179>;
+				exit-latency-us = <362>;
+				min-residency-us = <401>;
+				local-timer-stop;
+			};
+		};
+	};
 
 	gpio-keys {
 		compatible = "gpio-keys";
@@ -42,10 +82,62 @@
 		};
 	};
 
+	ion {
+		compatible = "qcom,msm-ion";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		heap@1b {
+			reg = <27>;
+			memory-region = <&qseecom_mem>;
+			qcom,ion-heap-type = "DMA";
+		};
+
+		heap@13 {
+			reg = <19>;
+			memory-region = <&qseecom_ta_mem>;
+			qcom,ion-heap-type = "DMA";
+		};
+
+		heap@19 {
+			reg = <25>;
+			qcom,ion-heap-type = "SYSTEM";
+		};
+	};
+
 	reserved-memory {
-		qseecom_mem: qseecom@84a00000 {
+		/* 0x84a00000 is other_ext_region (secure-app loading window owned
+		 * by TrustZone), not the shared DMA pool. Kept no-map and kept at
+		 * 0x1900000: stock's 0x1e00000 would overlap smem@86300000 and
+		 * ramoops@86800000 in this layout. Renamed to end the confusion
+		 * with the qseecom shared pools below.
+		 */
+		other_ext_region: other_ext_region@84a00000 {
 			reg = <0x0 0x84a00000 0x0 0x1900000>;
 			no-map;
+		};
+
+		/* TZ-shared pools, values read off the stock live device-tree.
+		 * Heap 27 (QSEECOM, 40KB keymaster buffers) and heap 19 (TA heap)
+		 * must allocate here: TrustZone XPU rejects secure-command buffers
+		 * outside the carveout (snapshot30 resets). Without memory-region
+		 * the msm ION driver leaves base/size zero and the heap falls back
+		 * to generic CMA: boot logs "ION heap qsecom created" with no
+		 * address. With it, expect "created at <addr>".
+		 */
+		qseecom_mem: qseecom_region@0 {
+			compatible = "shared-dma-pool";
+			reusable;
+			alignment = <0x0 0x400000>;
+			size = <0x0 0x1000000>;
+		};
+
+		qseecom_ta_mem: qseecom_ta_region {
+			compatible = "shared-dma-pool";
+			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
+			reusable;
+			alignment = <0x0 0x400000>;
+			size = <0x0 0x800000>;
 		};
 
 		adsp_fw_mem: adsp@8d600000 {
@@ -58,22 +150,37 @@
 			no-map;
 		};
 
-		ramoops@9ff00000 {
+		/* ACK's original ramoops@9ff00000 is not reproduced: accessing that
+		 * address aborts the CPU on this phone. 0x86800000 is a 4 MiB System
+		 * RAM hole (iomem reports 86800000-86bfffff) between
+		 * reserved@86400000 and mpss@86c00000 that nothing else claims.
+		 */
+		ramoops@86800000 {
 			compatible = "ramoops";
-			reg = <0x0 0x9ff00000 0x0 0x00100000>;
+			reg = <0x0 0x86800000 0x0 0x00100000>;
 			record-size = <0x1000>;
 			console-size = <0x80000>;
 			ftrace-size = <0x1000>;
 			pmsg-size = <0x8000>;
+			/* Include genuine emergency and orderly-shutdown dumps. */
+			max-reason = <4>;
 		};
 	};
-
 	vph_pwr: vph-pwr-regulator {
 		compatible = "regulator-fixed";
 		regulator-name = "vph_pwr";
 		regulator-always-on;
 		regulator-boot-on;
 	};
+};
+
+/* Attach the TZ-shared carveout to the qseecom device: every
+ * dma_alloc_coherent on it (tzbuf, SMC >4-arg spill buffers) then comes
+ * from memory TrustZone is allowed to read. Without this they fall back
+ * to generic memory and the first TA data transaction wedges silently.
+ */
+&qcom_seecom {
+	memory-region = <&qseecom_mem>;
 };
 
 &hsusb_phy {
@@ -129,14 +236,39 @@
 		interrupts = <65 IRQ_TYPE_EDGE_FALLING>;
 
 		pinctrl-names = "default";
-		pinctrl-0 = <&ts_int_default>;
+		pinctrl-0 = <&ts_int_default &ts_reset_default>;
 
 		reset-gpios = <&tlmm 64 GPIO_ACTIVE_LOW>;
 
 		vcc-supply = <&pm8953_l10>;
+		iovcc-supply = <&pm8953_l6>;
+		edt,gesture-wakeup;
 
 		touchscreen-size-x = <1080>;
 		touchscreen-size-y = <1920>;
+
+		/*
+		 * Capacitive navigation keys, reported by the controller as
+		 * touches on the sensor row below the panel, so the
+		 * coordinates are the controller's and not the panel's.
+		 *
+		 * The x positions are the stock ones: 500 is the home key
+		 * in the middle, 800 is back on the right, and 200 is the
+		 * recents on the left, which is where this phone puts it.
+		 *
+		 * The codes are the ones this ROM's own key layout names.
+		 * The framework translates the kernel's key code through
+		 * /system/usr/keylayout/Generic.kl, and that file maps
+		 * 172 to HOME, 158 to BACK and 580 to APP_SWITCH. The
+		 * donor's focaltech_ts node describes a board with a
+		 * Focaltech touch controller and gives the recents key
+		 * KEY_MENU, which that layout maps to MENU - the overflow
+		 * menu, not the recents. 580 is KEY_APPSELECT in the
+		 * kernel.
+		 */
+		edt,keys = <500 2040 KEY_HOMEPAGE
+			    200 2040 KEY_APPSELECT
+			    800 2040 KEY_BACK>;
 	};
 };
 
@@ -147,6 +279,7 @@
 
 &pmi8950_wled {
 	qcom,num-strings = <2>;
+	qcom,current-limit-microamp = <20000>;
 	qcom,external-pfet;
 	qcom,cabc;
 
@@ -213,6 +346,7 @@
 		pm8953_l7: l7 {
 			regulator-min-microvolt = <1800000>;
 			regulator-max-microvolt = <1900000>;
+			regulator-allow-set-load;
 		};
 
 		pm8953_l8: l8 {
@@ -243,6 +377,7 @@
 		pm8953_l13: l13 {
 			regulator-min-microvolt = <3125000>;
 			regulator-max-microvolt = <3125000>;
+			regulator-allow-set-load;
 		};
 
 		pm8953_l16: l16 {
@@ -295,6 +430,256 @@
 &tlmm {
 	gpio-reserved-ranges = <0 4>, <16 4>, <135 4>;
 
+	/*
+	 * The camera's pins, from the donor's msm8953-pinctrl.dtsi
+	 * (../oc-test/arch/arm64/boot/dts/vendor/qcom/).  The camera
+	 * nodes of msm8953-xiaomi-tissot-camera.dtsi name them.
+	 */
+	cci0_active: cci0_active {
+		/* cci0 active state */
+		mux {
+			/* CLK, DATA */
+			pins = "gpio29", "gpio30";
+			function = "cci_i2c";
+		};
+
+		config {
+			pins = "gpio29", "gpio30";
+			drive-strength = <2>; /* 2 MA */
+			bias-disable; /* No PULL */
+		};
+	};
+	cci0_suspend: cci0_suspend {
+		/* cci0 suspended state */
+		mux {
+			/* CLK, DATA */
+			pins = "gpio29", "gpio30";
+			function = "cci_i2c";
+		};
+
+		config {
+			pins = "gpio29", "gpio30";
+			drive-strength = <2>; /* 2 MA */
+			bias-disable; /* No PULL */
+		};
+	};
+	cci1_active: cci1_active {
+		/* cci1 active state */
+		mux {
+			/* CLK, DATA */
+			pins = "gpio31", "gpio32";
+			function = "cci_i2c";
+		};
+
+		config {
+			pins = "gpio31", "gpio32";
+			drive-strength = <2>; /* 2 MA */
+			bias-disable; /* No PULL */
+		};
+	};
+	cci1_suspend: cci1_suspend {
+		/* cci1 suspended state */
+		mux {
+			/* CLK, DATA */
+			pins = "gpio31", "gpio32";
+			function = "cci_i2c";
+		};
+
+		config {
+			pins = "gpio31", "gpio32";
+			drive-strength = <2>; /* 2 MA */
+			bias-disable; /* No PULL */
+		};
+	};
+	cam_sensor_mclk0_default: cam_sensor_mclk0_default {
+	/* MCLK0 */
+	mux {
+		/* CLK, DATA */
+		pins = "gpio26";
+		function = "cam_mclk";
+	};
+
+	config {
+		pins = "gpio26";
+		bias-disable; /* No PULL */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_mclk0_sleep: cam_sensor_mclk0_sleep {
+	/* MCLK0 */
+	mux {
+		/* CLK, DATA */
+		pins = "gpio26";
+		function = "cam_mclk";
+	};
+
+	config {
+		pins = "gpio26";
+		bias-pull-down; /* PULL DOWN */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_rear_default: cam_sensor_rear_default {
+	/* RESET, STANDBY */
+	mux {
+		pins = "gpio40", "gpio39";
+		function = "gpio";
+	};
+
+	config {
+		pins = "gpio40","gpio39";
+		bias-disable; /* No PULL */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_rear_sleep: cam_sensor_rear_sleep {
+	/* RESET, STANDBY */
+	mux {
+		pins = "gpio40","gpio39";
+		function = "gpio";
+	};
+
+	config {
+		pins = "gpio40","gpio39";
+		bias-disable; /* No PULL */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_rear_vana: cam_sensor_rear_vdig {
+	/* VDIG */
+	mux {
+		pins = "gpio134";
+		function = "gpio";
+	};
+
+	config {
+		pins = "gpio134";
+		bias-disable; /* No PULL */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_rear_vana_sleep: cam_sensor_rear_vdig_sleep {
+	/* VDIG */
+	mux {
+		pins = "gpio134";
+		function = "gpio";
+	};
+
+	config {
+		pins = "gpio134";
+		bias-disable; /* No PULL */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_mclk1_default: cam_sensor_mclk1_default {
+	/* MCLK1 */
+	mux {
+		/* CLK, DATA */
+		pins = "gpio27";
+		function = "cam_mclk";
+	};
+
+	config {
+		pins = "gpio27";
+		bias-disable; /* No PULL */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_mclk1_sleep: cam_sensor_mclk1_sleep {
+	/* MCLK1 */
+	mux {
+		/* CLK, DATA */
+		pins = "gpio27";
+		function = "cam_mclk";
+	};
+
+	config {
+		pins = "gpio27";
+		bias-pull-down; /* PULL DOWN */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_front_default: cam_sensor_front_default {
+	/* RESET, STANDBY */
+	mux {
+		pins = "gpio131","gpio132";
+		function = "gpio";
+	};
+
+	config {
+		pins = "gpio131","gpio132";
+		bias-disable; /* No PULL */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_front_sleep: cam_sensor_front_sleep {
+	/* RESET, STANDBY */
+	mux {
+		pins = "gpio131","gpio132";
+		function = "gpio";
+	};
+
+	config {
+		pins = "gpio131","gpio132";
+		bias-disable; /* No PULL */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_mclk2_default: cam_sensor_mclk2_default {
+	/* MCLK2 */
+	mux {
+		/* CLK, DATA */
+		pins = "gpio28";
+		function = "cam_mclk";
+	};
+
+	config {
+		pins = "gpio28";
+		bias-disable; /* No PULL */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_mclk2_sleep: cam_sensor_mclk2_sleep {
+	/* MCLK2 */
+	mux {
+		/* CLK, DATA */
+		pins = "gpio28";
+		function = "cam_mclk";
+	};
+
+	config {
+		pins = "gpio28";
+		bias-pull-down; /* PULL DOWN */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_front1_default: cam_sensor_front1_default {
+	/* RESET, STANDBY */
+	mux {
+		pins = "gpio129", "gpio130";
+		function = "gpio";
+	};
+
+	config {
+		pins = "gpio129", "gpio130";
+		bias-disable; /* No PULL */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+	cam_sensor_front1_sleep: cam_sensor_front1_sleep {
+	/* RESET, STANDBY */
+	mux {
+		pins = "gpio129", "gpio130";
+		function = "gpio";
+	};
+
+	config {
+		pins = "gpio129", "gpio130";
+		bias-disable; /* No PULL */
+		drive-strength = <2>; /* 2 MA */
+	};
+	};
+
 	gpio_hall_sensor_default: gpio-hall-sensor-state {
 		pins = "gpio44";
 		function = "gpio";
@@ -308,6 +693,13 @@
 		drive-strength = <2>;
 		bias-pull-up;
 	};
+
+	ts_reset_default: ts-reset-default-state {
+		pins = "gpio64";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
 };
 
 &uart_0 {
@@ -319,9 +711,457 @@
 
 &usb3 {
 	status = "okay";
+	extcon = <&qpnp_smbcharger>;
 };
 
 &usb3_dwc3 {
 	/delete-property/ usb-role-switch;
 	dr_mode = "peripheral";
+	usb-psy-name = "usb";
+	snps,dis_u2_susphy_quirk;
+	snps,dis_enblslpm_quirk;
 };
+
+&mdss {
+	status = "disabled";
+};
+
+&mdss_dsi0 {
+	status = "disabled";
+};
+
+&mdss_dsi1 {
+	status = "disabled";
+};
+
+&mdss_dsi0_phy {
+	status = "disabled";
+};
+
+&mdss_dsi1_phy {
+	status = "disabled";
+};
+
+&lpass {
+	status = "okay";
+
+	smd-edge {
+		/*
+		 * FastRPC compute channel (mirrors msm8996.dtsi). The label
+		 * must match the ADSP domain.
+		 */
+		fastrpc {
+			compatible = "qcom,fastrpc";
+			qcom,smd-channels = "fastrpcsmd-apps-dsp";
+			label = "adsp";
+			qcom,non-secure-domain;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/*
+			 * The compute-bank child is what creates the session
+			 * table, and without a session the node cannot be
+			 * opened. fastrpc_cb_probe() adds one entry per child
+			 * (sesscount++), and fastrpc_device_open() ends in
+			 * fastrpc_session_alloc(), which walks sesscount
+			 * entries looking for an unused-but-valid one and
+			 * returns NULL on an empty table -- which surfaces as
+			 * open() failing EBUSY, not ENOENT.
+			 *
+			 * run148 evidence, node name already corrected there:
+			 *   /dev/adsprpc-smd exists, fastrpc is bound to
+			 *   remoteproc0:smd-edge.fastrpcsmd-apps-dsp, and yet
+			 *   adsprpcd logs, thousands of times,
+			 *     apps_dev_init failed for domain 0,
+			 *     errno 16 (Device or resource busy)
+			 *
+			 * The iommus that upstream's msm8996 dtsi attaches to
+			 * each cb node are deliberately absent: there is no
+			 * LPASS SMMU on 8953, and fastrpc_cb_probe() does not
+			 * require one -- it only calls
+			 * dma_set_mask(dev, DMA_BIT_MASK(32)) and reads the
+			 * optional "reg" session id. The previous comment here
+			 * claimed cb children were only about the SMMU, which
+			 * is what left the session table empty.
+			 */
+			cb@0 {
+				compatible = "qcom,fastrpc-compute-cb";
+				reg = <0>;
+			};
+		};
+	};
+};
+
+&gpu {
+	compatible = "qcom,kgsl-3d0", "qcom,adreno-506.0";
+	status = "okay";
+
+	/*
+	 * Drop the SoC dtsi's iommus = <&gpu_iommu 0>.
+	 *
+	 * kgsl runs NOMMU here (the kgsl-iommu probe below fails at its clock
+	 * lookup on purpose), so it writes *physical* addresses into the ring
+	 * (gpuaddr == physaddr at ME_INIT, run128). With iommus present,
+	 * qcom_iommu attaches this device to a default DMA domain and turns
+	 * translation on for context bank 0 (run128: "init_domain
+	 * master=1c00000.gpu ... sctlr=000010e7"), so every CP fetch of a
+	 * physical address faulted (fsr=0x200) and "CP initialization failed
+	 * to idle" followed.
+	 *
+	 * Without iommus nothing attaches bank 0, so it should stay as read
+	 * at boot (run128: "ctx probe(boot) ... sctlr=00000000
+	 * translating=0") and the GPU's physical addresses pass through.
+	 * dma_alloc_coherent() on this device is then dma-direct and hands
+	 * back physical addresses too, matching NOMMU. Whether this SMMU
+	 * (secure-managed, TZ owns the stream mapping) really bypasses with
+	 * the bank off is untested: first verified by run130.
+	 */
+	/delete-property/ iommus;
+	/*
+	 * Vendor chip identity, from the 4.19 donor gpu node
+	 * (msm8953-gpu.dtsi:109, qcom,chipid = <0x05000600> = A506 rev 6.0.0).
+	 * 6.12's msm8953.dtsi gpu node dropped it (drm/msm probes the chip from
+	 * hardware), but adreno_update_soc_hw_revision_quirks() reads only the DT
+	 * and BUG()s in probe without it (adreno.c:838-843) — an invisible reset
+	 * with oops=panic + console=ttynull.
+	 */
+	qcom,chipid = <0x05000600>;
+
+	/*
+	 * Vendor identity/IO properties, from the 4.19 donor gpu node
+	 * (msm8953-gpu.dtsi:101-113). adreno_of_get_power() returns -EINVAL
+	 * without `label` (adreno.c:1215-1218, "(NULL device *): Unable to
+	 * read 'label'") and without `qcom,id` (adreno.c:1220).
+	 */
+	label = "kgsl-3d0";
+	qcom,id = <0>;
+	qcom,initial-pwrlevel = <0>;
+	qcom,idle-timeout = <80>; /* msecs */
+
+	/*
+	 * GPU memory addressing bank bit, verbatim from the 4.19 donor gpu node
+	 * (msm8953-gpu.dtsi:117). Without it of_property_read_u32() leaves
+	 * adreno_dev->highest_bank_bit at 0, and a5xx_init() WARNs
+	 * ("The highest-bank-bit property is invalid", adreno_a5xx.c:294) and
+	 * clamps it to 13 instead of the correct 14 — a wrong memory-addressing
+	 * parameter, not just a warning. seen in run29.
+	 */
+	qcom,highest-bank-bit = <14>;
+
+	/*
+	 * A506 hardware workarounds, verbatim from the 4.19 donor gpu node
+	 * (msm8953-gpu.dtsi:165-167). adreno.c reads them only from DT, so
+	 * without them every A506 start skipped the two-pass WFI, RB DP2
+	 * clock-gating and VPC local-memory-load-kill workarounds; run158
+	 * draws then hung mid-IB with RBBM_STATUS 800001C1.
+	 */
+	qcom,gpu-quirk-two-pass-use-wfi;
+	qcom,gpu-quirk-dp2clockgating-disable;
+	qcom,gpu-quirk-lmloadkill-disable;
+
+	/*
+	 * The thermal zone kgsl's temp attribute reports
+	 * (kgsl_pwrctrl.c temp_show(), /sys/class/kgsl/kgsl-3d0/temp). The
+	 * donor's msm8953 gpu node had none, so the file read INT_MIN
+	 * (-2147483648) there as well; apps that show the GPU temperature
+	 * read it. tsens_tz_sensor15 is the zone on the GPU's TSENS sensor
+	 * (msm8953-xiaomi-tissot-thermal.dtsi).
+	 */
+	qcom,tzone-names = "tsens_tz_sensor15";
+
+	/*
+	 * Donor GPU clock names, verbatim from the 4.19 gpu node
+	 * (msm8953-gpu.dtsi:128-130). _get_clocks() matches DT clock-names
+	 * against the driver's table (kgsl_pwrctrl.c:37-56) and skips every
+	 * name it does not know, so the 6.12 names ("core", "iface",
+	 * "mem_iface", ...) matched nothing: not one GPU clock was ever
+	 * acquired and nothing reported it. The clocks phandle list is
+	 * inherited unchanged from msm8953.dtsi:1054-1059, so these names
+	 * map onto the same six clocks in the same order.
+	 */
+	clock-names = "core_clk", "iface_clk",
+		      "mem_iface_clk", "alt_mem_iface_clk",
+		      "rbbmtimer_clk", "alwayson_clk";
+
+	/*
+	 * Donor IRQ name (msm8953-gpu.dtsi). kgsl_request_irq() looks the IRQ
+	 * up by name ("kgsl_3d0_irq", adreno.c:53 -> kgsl.c:5368); the 6.12
+	 * node has only `interrupts`, so probe failed with -ENXIO — run26.
+	 */
+	interrupt-names = "kgsl_3d0_irq";
+
+	/*
+	 * Vendor legacy bus-vote table, verbatim from the 4.19 donor gpu node
+	 * (msm8953-gpu.dtsi:135-149). kgsl_get_bus_scale_table() (kgsl.c:1390)
+	 * looks for a "qcom,gpu-bus-table[-ddrN]" child, then falls back to
+	 * msm_bus_cl_get_pdata(), which parses the vendor legacy
+	 * "qcom,msm-bus,*" properties off the gpu node itself. Neither the
+	 * child node nor these properties existed here, so all three lookups
+	 * returned NULL and kgsl_pwrctrl_init() bailed out with -EINVAL on its
+	 * very first statement (kgsl_pwrctrl.c:2267-2269) — run25.
+	 * msm-bus-compat.c reads exactly this format.
+	 *
+	 * Deliberately NOT ported: qcom,bus-control + qcom,gpubw-dev. The
+	 * donor's "qcom,devbw" gpubw node matches no 6.12 OF bus, so
+	 * of_find_device_by_node() would return NULL and the driver would
+	 * skip msm_bus_scale_register_client() entirely, silently dropping
+	 * every bus vote. Without those properties the driver registers the
+	 * client itself against the "gpu_icc_path" interconnect; this gpu node
+	 * has no "interconnects" property, so votes are accepted and warned
+	 * about once rather than applied.
+	 *
+	 * 11 cases cover every bus index the pwrlevels below use (0-10).
+	 */
+	qcom,msm-bus,name = "grp3d";
+	qcom,msm-bus,num-cases = <11>;
+	qcom,msm-bus,num-paths = <1>;
+	qcom,msm-bus,vectors-KBps =
+			<26 512 0 0>,	     /*  off          */
+			<26 512 0 1689600>, /* 1. 211.20 MHz */
+			<26 512 0 2227200>, /* 2. 278.40 MHz */
+			<26 512 0 3072000>, /* 3. 384.00 MHz */
+			<26 512 0 3379200>, /* 4.  422.40 MHz */
+			<26 512 0 4454400>, /* 5. 556.80 MHz */
+			<26 512 0 5376000>, /* 6. 672.00 MHz */
+			<26 512 0 6144000>, /* 7. 768.00 MHz */
+			<26 512 0 6451200>, /* 8. 806.40 MHz */
+			<26 512 0 6758400>, /* 9. 844.80 MHz */
+			<26 512 0 7449600>; /*10. 931.20 MHz */
+
+	/*
+	 * Vendor legacy power levels, verbatim from the 4.19 donor gpu node
+	 * (msm8953-gpu.dtsi:202-278, "qcom,gpu-pwrlevels"). The ported driver
+	 * parses only these: adreno_of_get_pwrlevels() falls back to the legacy
+	 * node and returns -EINVAL ("Unable to find 'qcom,gpu-pwrlevels'") when
+	 * it is absent (adreno.c:1108-1114). The 6.12 tree's gpu node carries
+	 * only the OPP-v2 table, which the driver never reads. Bus indices are
+	 * the donor's; the msm-bus shim maps them onto the 6.12 interconnect.
+	 */
+	qcom,gpu-pwrlevels {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		compatible = "qcom,gpu-pwrlevels";
+
+		/* TURBO */
+		qcom,gpu-pwrlevel@0 {
+			reg = <0>;
+			qcom,gpu-freq = <650000000>;
+			qcom,bus-freq = <10>;
+			qcom,bus-min = <10>;
+			qcom,bus-max = <10>;
+		};
+
+		/* NOM+ */
+		qcom,gpu-pwrlevel@1 {
+			reg = <1>;
+			qcom,gpu-freq = <560000000>;
+			qcom,bus-freq = <10>;
+			qcom,bus-min = <8>;
+			qcom,bus-max = <10>;
+		};
+
+		/* NOM */
+		qcom,gpu-pwrlevel@2 {
+			reg = <2>;
+			qcom,gpu-freq = <510000000>;
+			qcom,bus-freq = <9>;
+			qcom,bus-min = <6>;
+			qcom,bus-max = <10>;
+		};
+
+		qcom,gpu-pwrlevel@3 {
+			reg = <3>;
+			qcom,gpu-freq = <400000000>;
+			qcom,bus-freq = <7>;
+			qcom,bus-min = <5>;
+			qcom,bus-max = <8>;
+		};
+
+		/* SVS+ */
+		qcom,gpu-pwrlevel@4 {
+			reg = <4>;
+			qcom,gpu-freq = <320000000>;
+			qcom,bus-freq = <4>;
+			qcom,bus-min = <2>;
+			qcom,bus-max = <6>;
+		};
+
+		/* SVS */
+		qcom,gpu-pwrlevel@5 {
+			reg = <5>;
+			qcom,gpu-freq = <216000000>;
+			qcom,bus-freq = <1>;
+			qcom,bus-min = <1>;
+			qcom,bus-max = <4>;
+		};
+
+		/* Low SVS */
+		qcom,gpu-pwrlevel@6 {
+			reg = <6>;
+			qcom,gpu-freq = <133300000>;
+			qcom,bus-freq = <1>;
+			qcom,bus-min = <1>;
+			qcom,bus-max = <4>;
+		};
+
+		/* XO */
+		qcom,gpu-pwrlevel@7 {
+			reg = <7>;
+			qcom,gpu-freq = <19200000>;
+			qcom,bus-freq = <0>;
+			qcom,bus-min = <0>;
+			qcom,bus-max = <0>;
+		};
+	};
+
+	/*
+	 * Vendor kgsl-iommu glue from the 4.19 donor
+	 * (kernel_xiaomi_msm8953 msm8953-gpu.dtsi, kgsl_msm_iommu node),
+	 * retargeted to the 6.12 tree's gpu_iommu SMMU handle. Without it
+	 * kgsl_iommu_probe finds no qcom,kgsl-smmu-v2 node and the driver
+	 * cannot bring up its context bank.
+	 */
+	kgsl_iommu: qcom,kgsl-iommu@1c40000 {
+		compatible = "qcom,kgsl-smmu-v2";
+		reg = <0x01c40000 0x10000>;
+		clocks = <&gcc GCC_OXILI_AHB_CLK>, <&gcc GCC_BIMC_GFX_CLK>;
+		/*
+		 * RESOLVED AGAINST STOCK (run174).
+		 *
+		 * Stock CAF attaches gfx3d_user to a real SMMU: its dmesg shows
+		 *   iommu: Adding device 1c40000.qcom,kgsl-iommu:gfx3d_user to
+		 *   group 2
+		 *   arm-smmu 1c40000.arm,smmu-kgsl: AARCH64 is supported for
+		 *   1c40000.qcom,kgsl-iommu:gfx3d_user
+		 * and /proc/iomem shows 01c40000-01c4ffff : arm,smmu-kgsl@1c40000.
+		 * Our port measured `DIAG fault-smmu: sctlr=0 translating=0`,
+		 * i.e. NO translation at draw time. Stock also prints
+		 * "Couldn't get clock: gpu_ahb_clk" and then RETRIES until the
+		 * device is attached, so those lines are not evidence of failure.
+		 *
+		 * GCC_OXILI_AHB_CLK and GCC_BIMC_GFX_CLK are this GPU device's
+		 * iface_clk and mem_iface_clk. Naming them so lets _kgsl_iommu_probe
+		 * proceed and match stock instead of forcing NOMMU.
+		 *
+		 * Previously this early return was load-bearing because every boot
+		 * that let the probe get past it died with no recoverable log
+		 * (run13, run15, run34, run36, run129). run129 hung at the splash
+		 * because `panic=0` turns a panic into a hang, which is why no
+		 * evidence survived. Those attempts ran with `panic=0`; they were
+		 * never retried with a rebooting panic, so "fatal, untraceable"
+		 * was an artefact of the cmdline, not a property of the SMMU path.
+		 * This boot therefore DROPS panic=0 (see package-diag-boot
+		 * --drop-cmdline) so a fault reboots into a recoverable state.
+		 *
+		 * &gpu's own `iommus` stays deleted: with both KGSL and qcom_iommu
+		 * driving bank 0, the physical addresses NOMMU assumes became
+		 * IOVAs (run128: fsr=0x200 on every CP fetch).
+		 */
+		clock-names = "iface_clk", "mem_iface_clk";
+		qcom,secure_align_mask = <0xfff>;
+		qcom,retention;
+		qcom,global_pt;
+		/*
+		 * Verbatim from 4.19 msm-arm-smmu-impl-defs-8953.dtsi (&kgsl_smmu),
+		 * offsets from this SMMU's base. CAF arm-smmu wrote them on every
+		 * SMMU power-up; qcom_iommu does not, so kgsl_iommu_start does.
+		 */
+		attach-impl-defs = <0x6000 0x270>,
+			<0x6060 0x1055>,
+			<0x6800 0x6>,
+			<0x6900 0x3ff>,
+			<0x6924 0x204>,
+			<0x6928 0x10800>,
+			<0x6930 0x400>,
+			<0x6960 0xffffffff>,
+			<0x6b64 0xa0000>,
+			<0x6b68 0xaaab92a>;
+		gfx3d_user: gfx3d_user {
+			compatible = "qcom,smmu-kgsl-cb";
+			label = "gfx3d_user";
+			iommus = <&gpu_iommu 0>;
+		};
+	};
+};
+
+&cpu0 {
+	cpu-idle-states = <&tissot_cpu_sleep_0>;
+};
+
+&cpu1 {
+	cpu-idle-states = <&tissot_cpu_sleep_0>;
+};
+
+&cpu2 {
+	cpu-idle-states = <&tissot_cpu_sleep_0>;
+};
+
+&cpu3 {
+	cpu-idle-states = <&tissot_cpu_sleep_0>;
+};
+
+&cpu4 {
+	cpu-idle-states = <&tissot_cpu_sleep_1>;
+};
+
+&cpu5 {
+	cpu-idle-states = <&tissot_cpu_sleep_1>;
+};
+
+&cpu6 {
+	cpu-idle-states = <&tissot_cpu_sleep_1>;
+};
+
+&cpu7 {
+	cpu-idle-states = <&tissot_cpu_sleep_1>;
+};
+
+/*
+ * stdout-path lets a bare `earlycon` match the UART. The early console is
+ * the only channel that catches a panic before initcall level 2.
+ */
+&{/chosen} {
+	stdout-path = "/soc@0/serial@78af000:115200n8";
+};
+
+/*
+ * WCN3680, the iris compatible of the stock DT, with the stock supplies:
+ * vddxo = l7, vddrfa = l19, vddpa = l9, vdddig = l5.
+ */
+&wcnss {
+	status = "okay";
+};
+
+&wcnss_iris {
+	compatible = "qcom,wcn3680";
+	vddxo-supply = <&pm8953_l7>;
+	vddrfa-supply = <&pm8953_l19>;
+	vddpa-supply = <&pm8953_l9>;
+	vdddig-supply = <&pm8953_l5>;
+
+	status = "okay";
+};
+
+/*
+ * The stock aboot DTB has no local-mac-address, and this port boots with
+ * aboot rather than lk2nd, which synthesizes one from the serial. Ask the
+ * driver for the same 02:00:<serial[0:7]> address lk2nd would provide.
+ */
+&wcnss_wifi {
+	qcom,mac-address-from-serial;
+};
+
+/*
+ * The SoC DTSI disables the modem. It has no separate vdd_mss regulator
+ * here because the driver uses the MSM8953_VDDMD power domain; its only
+ * regulator is the 1.8 V PLL rail, pm8953_l7, which the stock 4.19 DTS
+ * names vdd_pll. rproc->auto_boot is false in the driver, so enabling the
+ * node only creates the remoteproc; userspace starts it.
+ */
+&mpss {
+	status = "okay";
+	pll-supply = <&pm8953_l7>;
+};
+
+/* CPU/GPU overclock and undervolt tables, kept in a separate file. */
+#include "msm8953-xiaomi-tissot-oc.dtsi"

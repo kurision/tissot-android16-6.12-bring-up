@@ -372,6 +372,16 @@ struct snd_soc_pcm_runtime;
 	.put = snd_soc_dapm_put_pin_switch, \
 	.private_value = (unsigned long)xname }
 
+/*
+ * Qualcomm's mic bias widget with no kcontrol, used by the WCD codecs.
+ * Ported from CAF include/sound/soc-dapm.h; upstream has no equivalent.
+ */
+#define SND_SOC_DAPM_MICBIAS_E(wname, wreg, wshift, winvert, wevent, wflags) \
+{	.id = snd_soc_dapm_micbias, .name = wname, \
+	SND_SOC_DAPM_INIT_REG_VAL(wreg, wshift, winvert), \
+	.kcontrol_news = NULL, .num_kcontrols = 0, \
+	.event = wevent, .event_flags = wflags}
+
 /* dapm stream operations */
 #define SND_SOC_DAPM_STREAM_NOP			0x0
 #define SND_SOC_DAPM_STREAM_START		0x1

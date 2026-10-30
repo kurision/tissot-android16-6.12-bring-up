@@ -4168,6 +4168,22 @@ struct wcn36xx_hal_tx_compl_ind_msg {
 	u32 status;
 };
 
+/*
+ * WCN3680 firmware (API 1.5.1.2) appends the TX BD token, so the indication
+ * is 16 bytes instead of 12. The stock prima driver describes the same wire
+ * layout as tTxComplParams {status, dialogToken}. The token is not used here
+ * because the driver tracks a single outstanding management frame.
+ */
+struct wcn36xx_hal_tx_compl_ind_msg_ext {
+	struct wcn36xx_hal_msg_header header;
+
+	/* Tx Complete Indication Success or Failure */
+	u32 status;
+
+	/* TX BD token of the completed descriptor */
+	u32 tx_bd_token;
+};
+
 struct wcn36xx_hal_wlan_host_suspend_ind_msg {
 	struct wcn36xx_hal_msg_header header;
 
@@ -4249,8 +4265,12 @@ struct wcn36xx_hal_del_ba_ind_msg {
 
 /* PNO Messages */
 
-/* Max number of channels that a network can be found on */
-#define WCN36XX_HAL_PNO_MAX_NETW_CHANNELS  26
+/*
+ * Max number of channels that a network can be found on. This is on the wire:
+ * the vendor prima driver that drove this firmware uses 60 for both the plain
+ * and the _EX variant.
+ */
+#define WCN36XX_HAL_PNO_MAX_NETW_CHANNELS  60
 
 /* Max number of channels that a network can be found on */
 #define WCN36XX_HAL_PNO_MAX_NETW_CHANNELS_EX  60
@@ -4338,7 +4358,7 @@ struct network_type {
 
 	/* Indicates the RSSI threshold for the network to be considered */
 	u8 rssi_threshold;
-};
+} __packed;
 
 struct scan_timer {
 	/* How much it should wait */
@@ -4366,7 +4386,7 @@ struct scan_timers_type {
 	 * once PNO reaches the end of the array it will continue scanning
 	 * at intervals presented by the last value */
 	struct scan_timer values[WCN36XX_HAL_PNO_MAX_SCAN_TIMERS];
-};
+} __packed;
 
 /* Preferred network list request */
 struct set_pref_netw_list_req {
@@ -4394,7 +4414,7 @@ struct set_pref_netw_list_req {
 	/* Probe template for 5GHz band */
 	u16 band_5g_probe_size;
 	u8 band_5g_probe_template[WCN36XX_HAL_PNO_MAX_PROBE_SIZE];
-};
+} __packed;
 
 /* The network description for which PNO will have to look for */
 struct network_type_new {
@@ -4417,7 +4437,7 @@ struct network_type_new {
 
 	/* Indicates the RSSI threshold for the network to be considered */
 	u8 rssi_threshold;
-};
+} __packed;
 
 /* Preferred network list request new */
 struct set_pref_netw_list_req_new {
@@ -4445,7 +4465,7 @@ struct set_pref_netw_list_req_new {
 	/* Probe template for 5GHz band */
 	u16 band_5g_probe_size;
 	u8 band_5g_probe_template[WCN36XX_HAL_PNO_MAX_PROBE_SIZE];
-};
+} __packed;
 
 /* Preferred network list response */
 struct set_pref_netw_list_resp {
@@ -4458,15 +4478,23 @@ struct set_pref_netw_list_resp {
 
 /* Preferred network found indication */
 struct pref_netw_found_ind {
-
 	struct wcn36xx_hal_msg_header header;
 
 	/* Network that was found with the highest RSSI */
 	struct wcn36xx_hal_mac_ssid ssid;
 
-	/* Indicates the RSSI */
+	/* Indicates the RSSI, as a positive dBm magnitude */
 	u8 rssi;
-};
+
+	/* Length of the beacon or probe response appended to this message */
+	u16 frame_length;
+
+	/* Frequency in MHz the frame was received on */
+	u32 freq;
+
+	/* The beacon or probe response itself */
+	u8 frame[];
+} __packed;
 
 /* RSSI Filter request */
 struct set_rssi_filter_req {

@@ -4,6 +4,25 @@
 #
 menu "Qualcomm SoC drivers"
 
+config QCOM_MSM8953_APM
+	bool "Qualcomm MSM8953 Array Power Mux"
+	depends on ARCH_QCOM && OF
+	help
+	  Support switching the CPU memory arrays between the APCC and MX
+	  supplies on MSM8953. This is a prerequisite for CPR4 CPU voltage
+	  control, not a CPUFreq driver. It does not select CPU frequencies
+	  or voltages. Leave disabled until the CPU power stack is configured.
+
+config QCOM_MSM8953_SPM
+	bool "Qualcomm MSM8953 shared SAW4 voltage controller"
+	depends on ARCH_QCOM && ARM64 && OF && SMP
+	help
+	  Support port-0 voltage requests and hardware AVS limits on MSM8953's
+	  shared system-CCI SAW4 controller. Requests are serialized and sent
+	  from an online CPU in the voltage domain. This is a prerequisite for
+	  the CPU rail/CPR4 drivers, not a CPUFreq or CPUIdle driver.
+	  Leave disabled until the complete CPU power stack is configured.
+
 config QCOM_AOSS_QMP
 	tristate "Qualcomm AOSS Driver"
 	depends on ARCH_QCOM || COMPILE_TEST
@@ -171,6 +190,31 @@ config QCOM_RPMH
 	  of hardware components aggregate requests for these resources and
 	  help apply the aggregated state on the resource.
 
+config QCOM_SUBSYSTEM_COMPAT
+	bool "Qualcomm subsystem framework compatibility for CAF userspace and video"
+	depends on ARCH_QCOM && OF
+	depends on REMOTEPROC=y
+	select QCOM_MDT_LOADER
+	select QCOM_SCM
+	help
+	  The CAF 4.19 subsystem framework is not in 6.12.  The CAF video
+	  codec (vidc_3x) needs two things from it: the Venus firmware
+	  load, and the subsystem restart notification.
+
+	  This provides the firmware load the way this port's own upstream
+	  Venus driver does it.  The restart notification is a no-op; the
+	  driver recovers from a Venus crash by itself, by releasing the
+	  core and loading the firmware again.  The donor's ramdump on
+	  crash is not provided.
+
+	  It also provides the framework's userspace interface for the
+	  vendor peripheral manager: /sys/bus/msm_subsys with a subsysN
+	  device per remote processor, and /dev/subsys_<name> nodes that
+	  hold a vote on the processor while they are open.
+
+	  Say Y here if the CAF video codec or the vendor peripheral
+	  manager is used.
+
 config QCOM_SMEM
 	tristate "Qualcomm Shared Memory Manager (SMEM)"
 	depends on ARCH_QCOM || COMPILE_TEST
@@ -218,6 +262,14 @@ config QCOM_SMSM
 	help
 	  Say yes here to support the Qualcomm Shared Memory State Machine.
 	  The state machine is represented by bits in shared memory.
+
+config QCOM_RUN_QUEUE_STATS
+	bool "Qualcomm deferred timer for the vendor IRQ balancer"
+	depends on SMP && SYSFS
+	help
+	  Provides /sys/devices/system/cpu/cpu0/rq-stats/def_timer_ms, the
+	  deferred sleep that Qualcomm's msm_irqbalance daemon polls. The
+	  daemon exits without it.
 
 config QCOM_SOCINFO
 	tristate "Qualcomm socinfo driver"

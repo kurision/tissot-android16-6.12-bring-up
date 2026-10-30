@@ -1,0 +1,9 @@
+ccflags-y += -Wno-missing-prototypes
+ccflags-y += -I $(srctree)/drivers/media/platform/msm/camera
+ccflags-y += -I $(srctree)/drivers/media/platform/msm/camera/common
+ccflags-y += -I $(srctree)/drivers/media/platform/msm/camera/msm_vb2
+ccflags-y += -I $(srctree)/drivers/media/platform/msm/camera/camera
+ccflags-y += -I $(srctree)/drivers/media/platform/msm/camera/sensor/io
+ccflags-y += -I $(srctree)/drivers/media/platform/msm/camera/sensor/cci
+obj-$(CONFIG_MSMB_CAMERA) += cci/ io/ csiphy/ csid/ actuator/ eeprom/ ois/ flash/ ir_led/ ir_cut/
+obj-$(CONFIG_MSM_CAMERA_SENSOR) += msm_sensor_init.o msm_sensor_driver.o msm_sensor.o

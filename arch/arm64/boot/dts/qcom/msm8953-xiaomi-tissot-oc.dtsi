@@ -1,0 +1,406 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Tissot CPU/GPU overclock overlay.
+ *
+ * Ported from the donor's
+ * arch/arm64/boot/dts/vendor/qcom/mi8953/tissot/oc.dtsi at df4a1f863991.
+ * The donor table is 480 - 2784 MHz over 19 CPR corners on the 19.2 MHz
+ * HFPLL grid; the stock msm8953 table is 652.8 - 2016 MHz over 7 corners.
+ * The GPU gains the donor's 725 MHz Turbo+ step and 100 MHz underclock.
+ *
+ * All CPU sensors control the shared CPUFreq cooling device. At 80 C,
+ * remove overclock headroom; at the donor's 88 C threshold, request maximum
+ * cooling. These initial limits need bounded runtime validation. The CPU
+ * and GPU critical trips remain at 100 C and 90 C respectively.
+ *
+ * The APCC driver range is widened in apcc-msm8953.c: it has to accept the
+ * 480 MHz and 2784 MHz endpoints before these plans can be used.
+ */
+
+/* CPU clock: CPR corner per cluster / CCI frequency. */
+#define TISSOT_CL_FMAX				\
+	<          0  0>,			\
+	<  480000000  1>,			\
+	<  576000000  2>,			\
+	<  652800000  3>,			\
+	<  806400000  4>,			\
+	< 1036800000  5>,			\
+	< 1248000000  6>,			\
+	< 1401600000  7>,			\
+	< 1689600000  8>,			\
+	< 1804800000  9>,			\
+	< 1958400000 10>,			\
+	< 2016000000 11>,			\
+	< 2150400000 12>,			\
+	< 2208000000 13>,			\
+	< 2304000000 14>,			\
+	< 2400000000 15>,			\
+	< 2496000000 16>,			\
+	< 2592000000 17>,			\
+	< 2688000000 18>,			\
+	< 2784000000 19>
+
+/* CCI runs at HFPLL / 2.5. */
+#define TISSOT_CCI_FMAX				\
+	<          0  0>,			\
+	<  192000000  1>,			\
+	<  230400000  2>,			\
+	<  261120000  3>,			\
+	<  322560000  4>,			\
+	<  414720000  5>,			\
+	<  499200000  6>,			\
+	<  560640000  7>,			\
+	<  675840000  8>,			\
+	<  721920000  9>,			\
+	<  783360000 10>,			\
+	<  806400000 11>,			\
+	<  860160000 12>,			\
+	<  883200000 13>,			\
+	<  921600000 14>,			\
+	<  960000000 15>,			\
+	<  998400000 16>,			\
+	< 1036800000 17>,			\
+	< 1075200000 18>,			\
+	< 1113600000 19>
+
+&apcc {
+	qcom,speed0-bin-v0-cl = TISSOT_CL_FMAX;
+	qcom,speed0-bin-v0-cci = TISSOT_CCI_FMAX;
+	qcom,speed2-bin-v0-cl = TISSOT_CL_FMAX;
+	qcom,speed2-bin-v0-cci = TISSOT_CCI_FMAX;
+	qcom,speed6-bin-v0-cl = TISSOT_CL_FMAX;
+	qcom,speed6-bin-v0-cci = TISSOT_CCI_FMAX;
+	qcom,speed7-bin-v0-cl = TISSOT_CL_FMAX;
+	qcom,speed7-bin-v0-cci = TISSOT_CCI_FMAX;
+};
+
+/*
+ * The 7 stock OPPs are 652.8, 1036.8, 1401.6, 1689.6, 1804.8, 1958.4 and
+ * 2016 MHz. Add the 12 missing grid points so the table has one entry per
+ * CPR corner; the OPP core inserts each entry in frequency order.
+ *
+ * Every entry needs its DDR bandwidth (msm8953-cpu.dtsi): an OPP without
+ * opp-peak-kBps votes nothing. The values follow CAF's cpu-to-dev-map
+ * lookup: below 652.8 MHz the first entry, above 2208 MHz the last.
+ */
+&msm8953_cpu_opp {
+	/* clock-latency-ns mirrors msm8953-cpu.dtsi: see the note there. */
+	opp-480000000 {
+		opp-hz = /bits/ 64 <480000000>;
+		opp-peak-kBps = <1689255>;
+		clock-latency-ns = <5000000>;
+	};
+
+	opp-576000000 {
+		opp-hz = /bits/ 64 <576000000>;
+		opp-peak-kBps = <1689255>;
+		clock-latency-ns = <5000000>;
+	};
+
+	opp-806400000 {
+		opp-hz = /bits/ 64 <806400000>;
+		opp-peak-kBps = <3377463>;
+		clock-latency-ns = <5000000>;
+	};
+
+	opp-1248000000 {
+		opp-hz = /bits/ 64 <1248000000>;
+		opp-peak-kBps = <6143606>;
+		clock-latency-ns = <5000000>;
+	};
+
+	opp-2150400000 {
+		opp-hz = /bits/ 64 <2150400000>;
+		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
+	};
+
+	opp-2208000000 {
+		opp-hz = /bits/ 64 <2208000000>;
+		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
+	};
+
+	opp-2304000000 {
+		opp-hz = /bits/ 64 <2304000000>;
+		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
+	};
+
+	opp-2400000000 {
+		opp-hz = /bits/ 64 <2400000000>;
+		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
+	};
+
+	opp-2496000000 {
+		opp-hz = /bits/ 64 <2496000000>;
+		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
+	};
+
+	opp-2592000000 {
+		opp-hz = /bits/ 64 <2592000000>;
+		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
+	};
+
+	opp-2688000000 {
+		opp-hz = /bits/ 64 <2688000000>;
+		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
+	};
+
+	opp-2784000000 {
+		opp-hz = /bits/ 64 <2784000000>;
+		opp-peak-kBps = <7449083>;
+		clock-latency-ns = <5000000>;
+	};
+};
+
+/*
+ * One OPP policy controls both cluster muxes: its cooling device is registered
+ * on CPU0, so every CPU sensor must refer to CPU0, not its individual CPU node.
+ *
+ * Cooling states count down from the highest frequency in the 19-entry table:
+ * state 8 = 2016 MHz, state 18 = 480 MHz. At 80 C, step_wise can increase
+ * cooling beyond state 8; at 88 C, force state 18 until below 86 C. Preserve
+ * the existing 2 C hysteresis and 100 C critical trip. The 50/100 ms polling
+ * delays and 88 C threshold come from the donor's deca-cpu-max-step zone
+ * (msm8953-thermal.dtsi and mi8953/tissot/oc.dtsi). Unlike CAF, generic cooling
+ * uses direct state indices, not THERMAL_MAX_LIMIT-relative limits.
+ */
+#define TISSOT_CPU_COOLING(zone, alert, backstop) \
+	zone { \
+		polling-delay-passive = <50>; \
+		polling-delay = <100>; \
+		trips { \
+			backstop: trip-point1 { \
+				temperature = <88000>; \
+				hysteresis = <2000>; \
+				type = "passive"; \
+			}; \
+		}; \
+		cooling-maps { \
+			map0 { \
+				trip = <&alert>; \
+				cooling-device = <&cpu0 8 THERMAL_NO_LIMIT>; \
+			}; \
+			map1 { \
+				trip = <&backstop>; \
+				cooling-device = <&cpu0 18 18>; \
+			}; \
+		}; \
+	}
+
+&{/thermal-zones} {
+	TISSOT_CPU_COOLING(tsens_tz_sensor9, cpu0_alert, cpu0_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor10, cpu1_alert, cpu1_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor11, cpu2_alert, cpu2_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor12, cpu3_alert, cpu3_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor4, cpu4_alert, cpu4_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor5, cpu5_alert, cpu5_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor6, cpu6_alert, cpu6_backstop);
+	TISSOT_CPU_COOLING(tsens_tz_sensor7, cpu7_alert, cpu7_backstop);
+};
+
+#undef TISSOT_CPU_COOLING
+
+/*
+ * Every populated speed bin (0, 2, 6, 7) gets the same 19 corners, so all
+ * per-corner properties below use the single-tuple form that applies to
+ * every fuse combo.
+ */
+&apc_vreg {
+	/* Corner selectors, not millivolts: selector N == corner N - 1. */
+	regulator-max-microvolt = <19>;
+
+	qcom,cpr-speed-bin-corners = <19 0 19 0 0 0 19 19>;
+	qcom,cpr-corners =
+		/* Speed bin 0 */
+		<19 19 19 19 19 19 19 19>,
+
+		/* Speed bin 1 */
+		<0 0 0 0 0 0 0 0>,
+
+		/* Speed bin 2 */
+		<19 19 19 19 19 19 19 19>,
+
+		/* Speed bin 3..5 */
+		<0 0 0 0 0 0 0 0>,
+		<0 0 0 0 0 0 0 0>,
+		<0 0 0 0 0 0 0 0>,
+
+		/* Speed bin 6 */
+		<19 19 19 19 19 19 19 19>,
+
+		/* Speed bin 7 */
+		<19 19 19 19 19 19 19 19>;
+
+	/* LowSVS 652.8, SVS 1036.8, NOM 1689.6, Turbo 2016 MHz. */
+	qcom,cpr-corner-fmax-map = <3 5 8 11>;
+
+	qcom,corner-frequencies =
+		< 480000000  576000000  652800000  806400000 1036800000
+		 1248000000 1401600000 1689600000 1804800000 1958400000
+		 2016000000 2150400000 2208000000 2304000000 2400000000
+		 2496000000 2592000000 2688000000 2784000000>;
+
+	qcom,cpr-voltage-ceiling =
+		< 715000  715000  715000  790000  790000
+		  790000  860000  865000  920000  990000
+		 1065000 1065000 1090000 1115000 1140000 1140000 1140000
+		 1140000 1140000>;
+
+	qcom,cpr-voltage-floor =
+		< 500000  500000  500000  500000  500000
+		  500000  500000  500000  500000  500000
+		  500000  500000  500000  500000  500000
+		  500000  500000  500000  500000>;
+
+	qcom,cpr-floor-to-ceiling-max-range =
+		<  50000   50000   50000   50000   50000
+		   50000   50000   50000   50000   50000
+		   50000   50000   50000   50000   50000
+		   50000   50000   50000   50000>;
+
+	/*
+	 * Misc fuse 0..1. Stock adds 30 mV at 1401.6 MHz for misc fuse 1;
+	 * the overclocked corners get extra margin on top of the
+	 * extrapolated voltage.
+	 */
+	qcom,cpr-misc-fuse-voltage-adjustment =
+		<0 0 0 0 0 0 0 0 0 0 0 15000 20000 25000 30000 30000 30000 30000 30000>,
+		<0 0 0 0 0 0 30000 0 0 0 0 15000 20000 25000 30000 30000 30000 30000 30000>;
+
+	qcom,mem-acc-voltage =
+		<1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2 2 2 2>;
+
+	/* 1958.4 MHz, as with the stock corner 6. */
+	qcom,cpr-aging-ref-corner = <10>;
+};
+
+&gpu_opp_table {
+	opp-725000000 {
+		opp-hz = /bits/ 64 <725000000>;
+		opp-supported-hw = <0xff>;
+		required-opps = <&rpmpd_opp_turbo>;
+	};
+
+	opp-100000000 {
+		opp-hz = /bits/ 64 <100000000>;
+		opp-supported-hw = <0xff>;
+		required-opps = <&rpmpd_opp_min_svs>;
+	};
+};
+
+&gpu {
+	/*
+	 * 320 MHz. KGSL restarts at this level on every wake from slumber;
+	 * at 650 MHz the governor rarely gets a sample window to step down
+	 * before the GPU idles again.
+	 */
+	qcom,initial-pwrlevel = <5>;
+
+	/* 400 MHz, as stock. */
+	qcom,ca-target-pwrlevel = <4>;
+
+	/* KGSL_MAX_PWRLEVELS is 10, XO included. */
+	/delete-node/ qcom,gpu-pwrlevels;
+	qcom,gpu-pwrlevels {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		compatible = "qcom,gpu-pwrlevels";
+
+		/* TURBO+ */
+		qcom,gpu-pwrlevel@0 {
+			reg = <0>;
+			qcom,gpu-freq = <725000000>;
+			qcom,bus-freq = <10>;
+			qcom,bus-min = <10>;
+			qcom,bus-max = <10>;
+		};
+
+		/* TURBO */
+		qcom,gpu-pwrlevel@1 {
+			reg = <1>;
+			qcom,gpu-freq = <650000000>;
+			qcom,bus-freq = <10>;
+			qcom,bus-min = <10>;
+			qcom,bus-max = <10>;
+		};
+
+		/* NOM+ */
+		qcom,gpu-pwrlevel@2 {
+			reg = <2>;
+			qcom,gpu-freq = <560000000>;
+			qcom,bus-freq = <10>;
+			qcom,bus-min = <8>;
+			qcom,bus-max = <10>;
+		};
+
+		/* NOM */
+		qcom,gpu-pwrlevel@3 {
+			reg = <3>;
+			qcom,gpu-freq = <510000000>;
+			qcom,bus-freq = <9>;
+			qcom,bus-min = <6>;
+			qcom,bus-max = <10>;
+		};
+
+		/* SVS+ */
+		qcom,gpu-pwrlevel@4 {
+			reg = <4>;
+			qcom,gpu-freq = <400000000>;
+			qcom,bus-freq = <7>;
+			qcom,bus-min = <5>;
+			qcom,bus-max = <8>;
+		};
+
+		/* SVS */
+		qcom,gpu-pwrlevel@5 {
+			reg = <5>;
+			qcom,gpu-freq = <320000000>;
+			qcom,bus-freq = <4>;
+			qcom,bus-min = <2>;
+			qcom,bus-max = <6>;
+		};
+
+		/* Low SVS */
+		qcom,gpu-pwrlevel@6 {
+			reg = <6>;
+			qcom,gpu-freq = <216000000>;
+			qcom,bus-freq = <1>;
+			qcom,bus-min = <1>;
+			qcom,bus-max = <4>;
+		};
+
+		/* Min SVS */
+		qcom,gpu-pwrlevel@7 {
+			reg = <7>;
+			qcom,gpu-freq = <133300000>;
+			qcom,bus-freq = <1>;
+			qcom,bus-min = <1>;
+			qcom,bus-max = <4>;
+		};
+
+		/* Min SVS, underclocked */
+		qcom,gpu-pwrlevel@8 {
+			reg = <8>;
+			qcom,gpu-freq = <100000000>;
+			qcom,bus-freq = <1>;
+			qcom,bus-min = <1>;
+			qcom,bus-max = <4>;
+		};
+
+		/* XO */
+		qcom,gpu-pwrlevel@9 {
+			reg = <9>;
+			qcom,gpu-freq = <19200000>;
+			qcom,bus-freq = <0>;
+			qcom,bus-min = <0>;
+			qcom,bus-max = <0>;
+		};
+	};
+};

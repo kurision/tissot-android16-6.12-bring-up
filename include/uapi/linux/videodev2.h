@@ -718,6 +718,10 @@ struct v4l2_pix_format {
 #define V4L2_PIX_FMT_SGRBG10ALAW8 v4l2_fourcc('a', 'g', 'A', '8')
 #define V4L2_PIX_FMT_SRGGB10ALAW8 v4l2_fourcc('a', 'R', 'A', '8')
 	/* 10bit raw bayer DPCM compressed to 8 bits */
+#define V4L2_PIX_FMT_SBGGR10DPCM6 v4l2_fourcc('b', 'B', 'A', '6')
+#define V4L2_PIX_FMT_SGBRG10DPCM6 v4l2_fourcc('b', 'G', 'A', '6')
+#define V4L2_PIX_FMT_SGRBG10DPCM6 v4l2_fourcc('B', 'D', '1', '6')
+#define V4L2_PIX_FMT_SRGGB10DPCM6 v4l2_fourcc('b', 'R', 'A', '6')
 #define V4L2_PIX_FMT_SBGGR10DPCM8 v4l2_fourcc('b', 'B', 'A', '8')
 #define V4L2_PIX_FMT_SGBRG10DPCM8 v4l2_fourcc('b', 'G', 'A', '8')
 #define V4L2_PIX_FMT_SGRBG10DPCM8 v4l2_fourcc('B', 'D', '1', '0')
@@ -845,6 +849,135 @@ struct v4l2_pix_format {
 #define V4L2_PIX_FMT_RAW_CRU12	v4l2_fourcc('C', 'R', '1', '2')
 #define V4L2_PIX_FMT_RAW_CRU14	v4l2_fourcc('C', 'R', '1', '4')
 #define V4L2_PIX_FMT_RAW_CRU20	v4l2_fourcc('C', 'R', '2', '0')
+/* The pixel formats the CAF video codec's capability table uses. */
+#define V4L2_PIX_FMT_DIVX       v4l2_fourcc('D', 'I', 'V', 'X') /* DIVX  */
+#define V4L2_PIX_FMT_DIVX_311   v4l2_fourcc('D', 'I', 'V', '3') /* DIVX311 */
+#define V4L2_PIX_FMT_HEVC_HYBRID v4l2_fourcc('H', 'V', 'C', 'H')
+
+/*
+ * Qualcomm pixel formats used by the CAF video codec (vidc_3x).
+ *
+ * The vendor OMX service of this ROM is compiled against the
+ * donor's headers, so these values are ABI and must stay
+ * numerically identical to the donor's.
+ */
+#define V4L2_PIX_FMT_RGBA8888_UBWC   v4l2_fourcc('Q', 'R', 'G', 'B')
+
+/* NV12_512 8-bit Y/CbCr 4:2:0  */
+#define V4L2_PIX_FMT_NV12_512         v4l2_fourcc('Q', '5', '1', '2')
+
+/* UBWC 8-bit Y/CbCr 4:2:0  */
+#define V4L2_PIX_FMT_NV12_UBWC        v4l2_fourcc('Q', '1', '2', '8')
+/* UBWC 10-bit Y/CbCr 4:2:0 */
+#define V4L2_PIX_FMT_NV12_TP10_UBWC   v4l2_fourcc('Q', '1', '2', 'A')
+
+#define V4L2_PIX_FMT_NV12_P010_UBWC   v4l2_fourcc('Q', '1', '2', 'B')
+
+#define V4L2_PIX_FMT_SDE_ABGR_8888 \
+	v4l2_fourcc('R', 'A', '2', '4') /* 32-bit ABGR 8:8:8:8 */
+#define V4L2_PIX_FMT_SDE_RGBA_8888 \
+	v4l2_fourcc('A', 'B', '2', '4') /* 32-bit RGBA 8:8:8:8 */
+#define V4L2_PIX_FMT_SDE_RGBX_8888 \
+	v4l2_fourcc('X', 'B', '2', '4') /* 32-bit RGBX 8:8:8:8 */
+#define V4L2_PIX_FMT_SDE_XBGR_8888 \
+	v4l2_fourcc('R', 'X', '2', '4') /* 32-bit XBGR 8:8:8:8 */
+#define V4L2_PIX_FMT_SDE_RGBA_5551 \
+	v4l2_fourcc('R', 'A', '1', '5') /* 16-bit RGBA 5:5:5:1 */
+#define V4L2_PIX_FMT_SDE_ABGR_1555 \
+	v4l2_fourcc('A', 'B', '1', '5') /* 16-bit ABGR 1:5:5:5 */
+#define V4L2_PIX_FMT_SDE_BGRA_5551 \
+	v4l2_fourcc('B', 'A', '1', '5') /* 16-bit BGRA 5:5:5:1 */
+#define V4L2_PIX_FMT_SDE_BGRX_5551 \
+	v4l2_fourcc('B', 'X', '1', '5') /* 16-bit BGRX 5:5:5:1 */
+#define V4L2_PIX_FMT_SDE_RGBX_5551 \
+	v4l2_fourcc('R', 'X', '1', '5') /* 16-bit RGBX 5:5:5:1 */
+#define V4L2_PIX_FMT_SDE_XBGR_1555 \
+	v4l2_fourcc('X', 'B', '1', '5') /* 16-bit XBGR 1:5:5:5 */
+#define V4L2_PIX_FMT_SDE_RGBA_4444 \
+	v4l2_fourcc('R', 'A', '1', '2') /* 16-bit RGBA 4:4:4:4 */
+#define V4L2_PIX_FMT_SDE_BGRA_4444 \
+	v4l2_fourcc('b', 'A', '1', '2') /* 16-bit BGRA 4:4:4:4 */
+#define V4L2_PIX_FMT_SDE_ABGR_4444 \
+	v4l2_fourcc('A', 'B', '1', '2') /* 16-bit ABGR 4:4:4:4 */
+#define V4L2_PIX_FMT_SDE_RGBX_4444 \
+	v4l2_fourcc('R', 'X', '1', '2') /* 16-bit RGBX 4:4:4:4 */
+#define V4L2_PIX_FMT_SDE_BGRX_4444 \
+	v4l2_fourcc('B', 'X', '1', '2') /* 16-bit BGRX 4:4:4:4 */
+#define V4L2_PIX_FMT_SDE_XBGR_4444 \
+	v4l2_fourcc('X', 'B', '1', '2') /* 16-bit XBGR 4:4:4:4 */
+#define V4L2_PIX_FMT_SDE_BGR_565 \
+	v4l2_fourcc('B', 'G', '1', '6') /* 16-bit BGR 5:6:5 */
+#define V4L2_PIX_FMT_SDE_Y_CR_CB_GH2V2 \
+	v4l2_fourcc('Y', 'U', '4', '2') /* Planar YVU 4:2:0 A16 */
+#define V4L2_PIX_FMT_SDE_Y_CBCR_H1V2 \
+	v4l2_fourcc('N', 'H', '1', '6') /* Y/CbCr 4:2:2 */
+#define V4L2_PIX_FMT_SDE_Y_CRCB_H1V2 \
+	v4l2_fourcc('N', 'H', '6', '1') /* Y/CrCb 4:2:2 */
+#define V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_VENUS \
+	v4l2_fourcc('Q', 'N', 'V', '2') /* Y/CbCr 4:2:0 Venus */
+#define V4L2_PIX_FMT_SDE_Y_CRCB_H2V2_VENUS \
+	v4l2_fourcc('Q', 'N', 'V', '1') /* Y/CrCb 4:2:0 Venus */
+#define V4L2_PIX_FMT_SDE_RGBX_8888_UBWC \
+	v4l2_fourcc('Q', 'X', 'B', '4') /* RGBX 8:8:8:8 UBWC */
+#define V4L2_PIX_FMT_SDE_RGB_565_UBWC \
+	v4l2_fourcc('Q', 'R', 'G', '6') /* RGB 5:6:5 UBWC */
+#define V4L2_PIX_FMT_SDE_RGBA_1010102 \
+	v4l2_fourcc('A', 'B', '3', '0') /* RGBA 10:10:10:2 */
+#define V4L2_PIX_FMT_SDE_RGBX_1010102 \
+	v4l2_fourcc('X', 'B', '3', '0') /* RGBX 10:10:10:2 */
+#define V4L2_PIX_FMT_SDE_ARGB_2101010 \
+	v4l2_fourcc('A', 'R', '3', '0') /* ARGB 2:10:10:10 */
+#define V4L2_PIX_FMT_SDE_XRGB_2101010 \
+	v4l2_fourcc('X', 'R', '3', '0') /* XRGB 2:10:10:10 */
+#define V4L2_PIX_FMT_SDE_BGRA_1010102 \
+	v4l2_fourcc('B', 'A', '3', '0') /* BGRA 10:10:10:2 */
+#define V4L2_PIX_FMT_SDE_BGRX_1010102 \
+	v4l2_fourcc('B', 'X', '3', '0') /* BGRX 10:10:10:2 */
+#define V4L2_PIX_FMT_SDE_ABGR_2101010 \
+	v4l2_fourcc('R', 'A', '3', '0') /* ABGR 2:10:10:10 */
+#define V4L2_PIX_FMT_SDE_XBGR_2101010 \
+	v4l2_fourcc('R', 'X', '3', '0') /* XBGR 2:10:10:10 */
+#define V4L2_PIX_FMT_SDE_RGBA_1010102_UBWC \
+	v4l2_fourcc('Q', 'R', 'B', 'A') /* RGBA 10:10:10:2 UBWC */
+#define V4L2_PIX_FMT_SDE_RGBX_1010102_UBWC \
+	v4l2_fourcc('Q', 'X', 'B', 'A') /* RGBX 10:10:10:2 UBWC */
+#define V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_TP10 \
+	v4l2_fourcc('T', 'P', '1', '0') /* Y/CbCr 4:2:0 TP10 */
+#define V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010 \
+	v4l2_fourcc('P', '0', '1', '0') /* Y/CbCr 4:2:0 P10 */
+#define V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010_VENUS \
+	v4l2_fourcc('Q', 'P', '1', '0') /* Y/CbCr 4:2:0 P10 Venus*/
+
+/*
+ * Decoder commands of the CAF video codec, with the donor's values.
+ * They are the private commands of the V4L2 "dec" ioctl class.
+ */
+#define V4L2_DEC_CMD_START       (0)
+#define V4L2_DEC_CMD_STOP        (1)
+#define V4L2_DEC_CMD_PAUSE       (2)
+#define V4L2_DEC_CMD_RESUME      (3)
+#define V4L2_CMD_FLUSH      (4)
+#define V4L2_CMD_SESSION_CONTINUE (5)
+#define V4L2_DEC_QCOM_CMD_RECONFIG_HINT  (6)
+
+/* Flags for V4L2_DEC_CMD_START */
+#define V4L2_DEC_CMD_START_MUTE_AUDIO	(1 << 0)
+
+/* Flags for V4L2_DEC_CMD_PAUSE */
+#define V4L2_DEC_CMD_PAUSE_TO_BLACK	(1 << 0)
+
+/* Flags for V4L2_DEC_CMD_STOP */
+#define V4L2_DEC_CMD_STOP_TO_BLACK	(1 << 0)
+#define V4L2_DEC_CMD_STOP_IMMEDIATELY	(1 << 1)
+
+/* Flags for V4L2_CMD_FLUSH */
+#define V4L2_CMD_FLUSH_OUTPUT  (1 << 0)
+#define V4L2_CMD_FLUSH_CAPTURE (1 << 1)
+
+#define V4L2_QCOM_CMD_FLUSH	V4L2_CMD_FLUSH
+#define V4L2_QCOM_CMD_SESSION_CONTINUE	V4L2_CMD_SESSION_CONTINUE
+#define V4L2_QCOM_CMD_FLUSH_OUTPUT	V4L2_CMD_FLUSH_OUTPUT
+#define V4L2_QCOM_CMD_FLUSH_CAPTURE	V4L2_CMD_FLUSH_CAPTURE
 
 /* SDR formats - used only for Software Defined Radio devices */
 #define V4L2_SDR_FMT_CU8          v4l2_fourcc('C', 'U', '0', '8') /* IQ u8 */
@@ -1253,6 +1386,54 @@ static inline __u64 v4l2_timeval_to_ns(const struct timeval *tv)
 #define V4L2_BUF_FLAG_LAST			0x00100000
 /* request_fd is valid */
 #define V4L2_BUF_FLAG_REQUEST_FD		0x00800000
+
+/*
+ * Buffer flags and event flags that 6.12 removed, with the values the
+ * donor has.  The CAF video codec uses them, and the vendor OMX service
+ * is compiled against the donor's values, so they are ABI here.
+ */
+#define V4L2_BUF_FLAG_END_OF_SUBFRAME		0x00000080
+#define V4L2_BUF_FLAG_CODECCONFIG		0x00020000
+#define V4L2_BUF_FLAG_DATA_CORRUPT		0x00400000
+#define V4L2_BUF_INPUT_UNSUPPORTED		0x01000000
+#define V4L2_BUF_FLAG_EOS			0x02000000
+#define V4L2_BUF_FLAG_READONLY		0x04000000
+#define V4L2_BUF_FLAG_PERF_MODE		0x20000000
+
+/* Event flags of the CAF video codec. */
+#define V4L2_EVENT_BITDEPTH_FLAG	0x1
+#define V4L2_EVENT_PICSTRUCT_FLAG	0x2
+#define V4L2_EVENT_COLOUR_SPACE_FLAG	0x4
+
+/*
+ * Buffer flags used by the CAF video codec (vidc_3x).  The values
+ * are the donor's and are ABI: the vendor OMX service is compiled
+ * against them.
+ *
+ * V4L2_QCOM_BUF_DROP_FRAME (0x00800000) and
+ * V4L2_QCOM_BUF_END_OF_SUBFRAME (0x00000080) are the same bits as
+ * upstream's V4L2_BUF_FLAG_REQUEST_FD and V4L2_BUF_FLAG_IN_REQUEST.
+ * The 6.12 videobuf2 masks both of them off the flags it hands to
+ * the driver (V4L2_BUFFER_MASK_FLAGS in
+ * drivers/media/common/videobuf2/videobuf2-v4l2.c) and treats a
+ * queued buffer with V4L2_BUF_FLAG_REQUEST_FD as a request, which
+ * a queue without the requests API rejects with -EBADR.
+ */
+#define V4L2_QCOM_BUF_FLAG_EOSEQ                0x00040000
+#define V4L2_QCOM_BUF_TIMESTAMP_INVALID         0x00080000
+#define V4L2_MSM_BUF_FLAG_MBAFF                 0x00000200
+#define V4L2_QCOM_BUF_FLAG_DECODEONLY           0x00200000
+#define V4L2_QCOM_BUF_DROP_FRAME                0x00800000
+#define V4L2_MSM_VIDC_BUF_START_CODE_NOT_FOUND  0x08000000
+#define V4L2_MSM_BUF_FLAG_YUV_601_709_CLAMP     0x10000000
+#define V4L2_MSM_BUF_FLAG_DEFER                 0x40000000
+#define V4L2_QCOM_BUF_FLAG_IDRFRAME             0x80000000
+#define V4L2_QCOM_BUF_END_OF_SUBFRAME   V4L2_BUF_FLAG_END_OF_SUBFRAME
+#define V4L2_QCOM_BUF_FLAG_CODECCONFIG  V4L2_BUF_FLAG_CODECCONFIG
+#define V4L2_QCOM_BUF_INPUT_UNSUPPORTED V4L2_BUF_INPUT_UNSUPPORTED
+#define V4L2_QCOM_BUF_FLAG_EOS	V4L2_BUF_FLAG_EOS
+#define V4L2_QCOM_BUF_FLAG_READONLY V4L2_BUF_FLAG_READONLY
+#define V4L2_QCOM_BUF_FLAG_PERF_MODE	V4L2_BUF_FLAG_PERF_MODE
 
 /**
  * struct v4l2_exportbuffer - export of video buffer as DMABUF file descriptor
@@ -2548,6 +2729,38 @@ struct v4l2_streamparm {
 #define V4L2_EVENT_SOURCE_CHANGE		5
 #define V4L2_EVENT_MOTION_DET			6
 #define V4L2_EVENT_PRIVATE_START		0x08000000
+
+/*
+ * Events of the CAF video codec (vidc_3x).  The values are the
+ * donor's and are ABI: the vendor OMX service is compiled against
+ * them.
+ */
+#define V4L2_EVENT_MSM_VIDC_START	(V4L2_EVENT_PRIVATE_START + 0x00001000)
+#define V4L2_EVENT_MSM_VIDC_FLUSH_DONE	(V4L2_EVENT_MSM_VIDC_START + 1)
+#define V4L2_EVENT_MSM_VIDC_PORT_SETTINGS_CHANGED_SUFFICIENT	\
+		(V4L2_EVENT_MSM_VIDC_START + 2)
+#define V4L2_EVENT_MSM_VIDC_PORT_SETTINGS_CHANGED_INSUFFICIENT	\
+		(V4L2_EVENT_MSM_VIDC_START + 3)
+
+/*
+ * Bitdepth changed insufficient is deprecated now, however retaining
+ * to prevent changing the values of the other macros after bitdepth
+ */
+#define V4L2_EVENT_MSM_VIDC_PORT_SETTINGS_BITDEPTH_CHANGED_INSUFFICIENT \
+		(V4L2_EVENT_MSM_VIDC_START + 4)
+
+#define V4L2_EVENT_MSM_VIDC_SYS_ERROR	(V4L2_EVENT_MSM_VIDC_START + 5)
+#define V4L2_EVENT_MSM_VIDC_RELEASE_BUFFER_REFERENCE \
+		(V4L2_EVENT_MSM_VIDC_START + 6)
+#define V4L2_EVENT_MSM_VIDC_RELEASE_UNQUEUED_BUFFER \
+		(V4L2_EVENT_MSM_VIDC_START + 7)
+#define V4L2_EVENT_MSM_VIDC_HW_OVERLOAD (V4L2_EVENT_MSM_VIDC_START + 8)
+#define V4L2_EVENT_MSM_VIDC_MAX_CLIENTS (V4L2_EVENT_MSM_VIDC_START + 9)
+#define V4L2_EVENT_MSM_VIDC_HW_UNSUPPORTED (V4L2_EVENT_MSM_VIDC_START + 10)
+#define V4L2_EVENT_MSM_VIDC_REGISTER_BUFFER_DONE \
+		(V4L2_EVENT_MSM_VIDC_START + 11)
+#define V4L2_EVENT_MSM_VIDC_UNREGISTER_BUFFER_DONE \
+		(V4L2_EVENT_MSM_VIDC_START + 12)
 
 /* Payload for V4L2_EVENT_VSYNC */
 struct v4l2_event_vsync {

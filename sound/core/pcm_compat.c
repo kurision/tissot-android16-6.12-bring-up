@@ -630,5 +630,9 @@ static long snd_pcm_ioctl_compat(struct file *file, unsigned int cmd, unsigned l
 #endif /* CONFIG_X86_X32_ABI */
 	}
 
+	/* Vendor ioctls are the driver's own, and it knows their arguments. */
+	if (substream->ops->compat_ioctl)
+		return substream->ops->compat_ioctl(substream, cmd, argp);
+
 	return -ENOIOCTLCMD;
 }

@@ -688,6 +688,92 @@ static const struct venus_resources msm8916_res = {
 	.enc_nodename = "video-encoder",
 };
 
+/*
+ * MSM8953 (tissot): the Venus core is the 89xx class one - the register
+ * presets are the msm8916/msm8939 (Venus 1.8) set, but the firmware on
+ * this device reports itself as "Venus332" and the CAF donor's DT says
+ * qcom,hfi-version = "3xx" (kernel/oc-test/
+ * arch/arm64/boot/dts/vendor/qcom/msm8953-vidc.dtsi), so the HFI
+ * protocol is the 3.x one.
+ *
+ * The rate list is the GCC vcodec0_clk_src table
+ * (drivers/clk/qcom/gcc-msm8953.c): 540/465/360/310/228.57/114.29 MHz.
+ * The zero load column means "set this rate, whatever the load is",
+ * which is what the DT opp-table drives through dev_pm_opp_set_rate().
+ */
+static const struct freq_tbl msm8953_freq_table[] = {
+	{ 0, 540000000 },
+	{ 0, 465000000 },
+	{ 0, 360000000 },
+	{ 0, 310000000 },
+	{ 0, 228570000 },
+	{ 0, 114290000 },
+};
+
+static const struct reg_val msm8953_reg_preset[] = {
+	{ 0xe0020, 0x05555556 },
+	{ 0xe0024, 0x05555556 },
+	{ 0x80124, 0x00000003 },
+};
+
+/* Bandwidth for the Venus DDR and CPU-cfg paths, from the donor's
+ * qcom,msm-vidc,bus nodes and the venus-ddr-gov governor table
+ * (kernel/oc-test/arch/arm64/boot/dts/vendor/qcom/msm8953-vidc.dtsi).
+ */
+static const struct bw_tbl msm8953_bw_table_enc[] = {
+	{  979200,  1044000, 0, 2446336, 0 },	/* 4k UHD @ 30 */
+	{  864000,   887000, 0, 2108416, 0 },	/* 720p @ 240 */
+	{  489600,   666000, 0, 1207296, 0 },	/* 1080p @ 60 */
+	{  432000,   578000, 0, 1058816, 0 },	/* 720p @ 120 */
+	{  244800,   346000, 0,  616448, 0 },	/* 1080p @ 30 */
+	{  216000,   293000, 0,  534528, 0 },	/* 720p @ 60 */
+	{  108000,   151000, 0,  271360, 0 },	/* 720p @ 30 */
+};
+
+static const struct bw_tbl msm8953_bw_table_dec[] = {
+	{  979200,  2365000, 0, 1892000, 0 },	/* 4k UHD @ 30 */
+	{  864000,  1978000, 0, 1554000, 0 },	/* 720p @ 240 */
+	{  489600,  1133000, 0,  895000, 0 },	/* 1080p @ 60 */
+	{  432000,   994000, 0,  781000, 0 },	/* 720p @ 120 */
+	{  244800,   580000, 0,  460000, 0 },	/* 1080p @ 30 */
+	{  216000,   501000, 0,  301000, 0 },	/* 720p @ 60 */
+	{  108000,   255000, 0,  202000, 0 },	/* 720p @ 30 */
+};
+
+static const struct venus_resources msm8953_res = {
+	.freq_tbl = msm8953_freq_table,
+	.freq_tbl_size = ARRAY_SIZE(msm8953_freq_table),
+	.reg_tbl = msm8953_reg_preset,
+	.reg_tbl_size = ARRAY_SIZE(msm8953_reg_preset),
+	.bw_tbl_enc = msm8953_bw_table_enc,
+	.bw_tbl_enc_size = ARRAY_SIZE(msm8953_bw_table_enc),
+	.bw_tbl_dec = msm8953_bw_table_dec,
+	.bw_tbl_dec_size = ARRAY_SIZE(msm8953_bw_table_dec),
+	.clks = { "core", "iface", "bus" },
+	.clks_num = 3,
+	/* The decoder/encoder child nodes carry this clock themselves. */
+	.vcodec0_clks = { "vcodec0_core" },
+	.vcodec1_clks = { "vcodec0_core" },
+	.vcodec_clks_num = 1,
+	.max_load = 1036800,
+	.hfi_version = HFI_VERSION_3XX,
+	.vmem_id = VIDC_RESOURCE_NONE,
+	.vmem_size = 0,
+	.vmem_addr = 0,
+	.cp_start = 0,
+	.cp_size = 0x5dc00000,
+	.cp_nonpixel_start = 0x1000000,
+	.cp_nonpixel_size = 0x24800000,
+	.dma_mask = 0xddc00000 - 1,
+	/*
+	 * The ROM keeps the Venus firmware on the firmware_mnt partition as
+	 * venus.mdt + venus.b00..b04 (a split ELF image, the same layout the
+	 * MDT loader expects). The name has to match the staged file; the
+	 * loader derives the segment names from it (venus.mdt -> venus.bNN).
+	 */
+	.fwname = "venus.mdt",
+};
+
 static const struct freq_tbl msm8996_freq_table[] = {
 	{ 1944000, 520000000 },	/* 4k UHD @ 60 (decode only) */
 	{  972000, 520000000 },	/* 4k UHD @ 30 */
@@ -1121,6 +1207,7 @@ static const struct venus_resources qcm2290_res = {
 
 static const struct of_device_id venus_dt_match[] = {
 	{ .compatible = "qcom,msm8916-venus", .data = &msm8916_res, },
+	{ .compatible = "qcom,msm8953-venus", .data = &msm8953_res, },
 	{ .compatible = "qcom,msm8996-venus", .data = &msm8996_res, },
 	{ .compatible = "qcom,msm8998-venus", .data = &msm8998_res, },
 	{ .compatible = "qcom,qcm2290-venus", .data = &qcm2290_res, },

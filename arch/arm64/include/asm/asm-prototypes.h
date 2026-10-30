@@ -17,6 +17,16 @@
 #include <asm/string.h>
 #include <asm/uaccess.h>
 
+/*
+ * dcache_clean_inval_poc() is exported for the vendor audio stack,
+ * whose MDF driver hands a kernel buffer to the secure world
+ * through a non-coherent SMMU and has to clean it first.  The
+ * declaration is needed here because an exported assembly symbol
+ * needs a C prototype for CONFIG_MODVERSIONS and for the
+ * gendwarfksyms pass.
+ */
+extern void dcache_clean_inval_poc(unsigned long start, unsigned long end);
+
 #include <asm-generic/asm-prototypes.h>
 
 long long __ashlti3(long long a, int b);

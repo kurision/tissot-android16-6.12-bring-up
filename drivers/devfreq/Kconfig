@@ -75,6 +75,20 @@ config DEVFREQ_GOV_PASSIVE
 
 comment "DEVFREQ Drivers"
 
+config MSM_DEVBW
+	tristate "Qualcomm MSM DDR bandwidth voting driver"
+	depends on ARCH_QCOM || COMPILE_TEST
+	depends on INTERCONNECT_QCOM
+	depends on PM_DEVFREQ
+	select DEVFREQ_GOV_PERFORMANCE
+	select DEVFREQ_GOV_POWERSAVE
+	help
+	  This adds the devfreq device of the bandwidth between the
+	  application processor and the memory. Its frequency is the
+	  bandwidth of the path, its operating points are the bandwidths
+	  of the donor's table, and its votes go to the interconnect
+	  framework, which hands the result to the RPM.
+
 config ARM_EXYNOS_BUS_DEVFREQ
 	tristate "ARM Exynos Generic Memory Bus DEVFREQ Driver"
 	depends on ARCH_EXYNOS || COMPILE_TEST

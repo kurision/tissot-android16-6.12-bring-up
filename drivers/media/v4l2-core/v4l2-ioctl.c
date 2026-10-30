@@ -2302,6 +2302,8 @@ static int v4l_queryctrl(const struct v4l2_ioctl_ops *ops, struct file *file,
 		return v4l2_queryctrl(vfh->ctrl_handler, p);
 	if (vfd->ctrl_handler)
 		return v4l2_queryctrl(vfd->ctrl_handler, p);
+	if (ops->vidioc_queryctrl)
+		return ops->vidioc_queryctrl(file, file->private_data, p);
 	if (!ops->vidioc_query_ext_ctrl)
 		return -ENOTTY;
 
@@ -2359,6 +2361,8 @@ static int v4l_g_ctrl(const struct v4l2_ioctl_ops *ops, struct file *file,
 		return v4l2_g_ctrl(vfh->ctrl_handler, p);
 	if (vfd->ctrl_handler)
 		return v4l2_g_ctrl(vfd->ctrl_handler, p);
+	if (ops->vidioc_g_ctrl)
+		return ops->vidioc_g_ctrl(file, file->private_data, p);
 	if (ops->vidioc_g_ext_ctrls == NULL)
 		return -ENOTTY;
 
@@ -2391,6 +2395,8 @@ static int v4l_s_ctrl(const struct v4l2_ioctl_ops *ops, struct file *file,
 		return v4l2_s_ctrl(vfh, vfh->ctrl_handler, p);
 	if (vfd->ctrl_handler)
 		return v4l2_s_ctrl(NULL, vfd->ctrl_handler, p);
+	if (ops->vidioc_s_ctrl)
+		return ops->vidioc_s_ctrl(file, file->private_data, p);
 	if (ops->vidioc_s_ext_ctrls == NULL)
 		return -ENOTTY;
 
@@ -2511,11 +2517,16 @@ static int v4l_g_crop(const struct v4l2_ioctl_ops *ops, struct file *file,
 		      void *arg)
 {
 	struct video_device *vfd = video_devdata(file);
+	void *fh = file->private_data;
 	struct v4l2_crop *p = arg;
 	struct v4l2_selection s = {
 		.type = p->type,
 	};
 	int ret;
+
+	/* the driver's own crop handler, if it has one */
+	if (ops->vidioc_g_crop)
+		return ops->vidioc_g_crop(file, fh, p);
 
 	/* simulate capture crop using selection api */
 
@@ -2541,11 +2552,16 @@ static int v4l_s_crop(const struct v4l2_ioctl_ops *ops, struct file *file,
 		      void *arg)
 {
 	struct video_device *vfd = video_devdata(file);
+	void *fh = file->private_data;
 	struct v4l2_crop *p = arg;
 	struct v4l2_selection s = {
 		.type = p->type,
 		.r = p->c,
 	};
+
+	/* the driver's own crop handler, if it has one */
+	if (ops->vidioc_s_crop)
+		return ops->vidioc_s_crop(file, fh, p);
 
 	/* simulate capture crop using selection api */
 

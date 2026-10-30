@@ -26,10 +26,12 @@
 #include <linux/platform_device.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
+#include <linux/sizes.h>
 #include <linux/firmware/qcom/qcom_scm.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 
+#include "../../dma-iommu.h"
 #include "arm-smmu.h"
 
 #define SMMU_INTR_SEL_NS     0x2000
@@ -51,6 +53,7 @@ struct qcom_iommu_dev {
 	void __iomem		*local_base;
 	u32			 sec_id;
 	u8			 max_asid;
+	bool			 use_aarch64_pt;
 	struct qcom_iommu_ctx	*ctxs[];   /* indexed by asid */
 };
 
@@ -156,13 +159,21 @@ static void qcom_iommu_tlb_inv_range_nosync(unsigned long iova, size_t size,
 	for (i = 0; i < fwspec->num_ids; i++) {
 		struct qcom_iommu_ctx *ctx = to_ctx(qcom_domain, fwspec->ids[i]);
 		size_t s = size;
+		u64 addr;
 
-		iova = (iova >> 12) << 12;
-		iova |= ctx->asid;
-		do {
-			iommu_writel(ctx, reg, iova);
-			iova += granule;
-		} while (s -= granule);
+		if (qcom_domain->iommu->use_aarch64_pt) {
+			addr = (iova >> 12) | ((u64)ctx->asid << 48);
+			do {
+				iommu_writeq(ctx, reg, addr);
+				addr += granule >> 12;
+			} while (s -= granule);
+		} else {
+			addr = ((iova >> 12) << 12) | ctx->asid;
+			do {
+				iommu_writel(ctx, reg, addr);
+				addr += granule;
+			} while (s -= granule);
+		}
 	}
 }
 
@@ -189,13 +200,30 @@ static const struct iommu_flush_ops qcom_flush_ops = {
 static irqreturn_t qcom_iommu_fault(int irq, void *dev)
 {
 	struct qcom_iommu_ctx *ctx = dev;
+	struct device *iommu_dev = ctx->dev->parent;
 	u32 fsr, fsynr;
 	u64 iova;
 
+	/*
+	 * The IOMMU's clocks are only held around attach/map/unmap; reading
+	 * CB_FSR while it is runtime-suspended is an unclocked access, which
+	 * on msm8953 raises a synchronous external abort (run118/run119:
+	 * readl_relaxed in IRQ context, FAR = ctx@15000 + CB_FSR, MDSS cb).
+	 * Same guard as the upstream arm-smmu fault-handler fix.
+	 */
+	if (pm_runtime_get_if_active(iommu_dev) <= 0) {
+		dev_err_ratelimited(ctx->dev,
+				    "context fault IRQ while IOMMU suspended, cb=%d\n",
+				    ctx->asid);
+		return IRQ_NONE;
+	}
+
 	fsr = iommu_readl(ctx, ARM_SMMU_CB_FSR);
 
-	if (!(fsr & ARM_SMMU_CB_FSR_FAULT))
+	if (!(fsr & ARM_SMMU_CB_FSR_FAULT)) {
+		pm_runtime_put(iommu_dev);
 		return IRQ_NONE;
+	}
 
 	fsynr = iommu_readl(ctx, ARM_SMMU_CB_FSYNR0);
 	iova = iommu_readq(ctx, ARM_SMMU_CB_FAR);
@@ -209,6 +237,7 @@ static irqreturn_t qcom_iommu_fault(int irq, void *dev)
 
 	iommu_writel(ctx, ARM_SMMU_CB_FSR, fsr);
 	iommu_writel(ctx, ARM_SMMU_CB_RESUME, ARM_SMMU_RESUME_TERMINATE);
+	pm_runtime_put(iommu_dev);
 
 	return IRQ_HANDLED;
 }
@@ -221,6 +250,7 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
 	struct io_pgtable_ops *pgtbl_ops;
 	struct io_pgtable_cfg pgtbl_cfg;
+	bool aarch64 = qcom_iommu->use_aarch64_pt;
 	int i, ret = 0;
 	u32 reg;
 
@@ -228,9 +258,10 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 	if (qcom_domain->iommu)
 		goto out_unlock;
 
+	/* CAF caps GPU input addresses at 39 bits for three-level 4 KiB tables. */
 	pgtbl_cfg = (struct io_pgtable_cfg) {
 		.pgsize_bitmap	= domain->pgsize_bitmap,
-		.ias		= 32,
+		.ias		= aarch64 ? 39 : 32,
 		.oas		= 40,
 		.tlb		= &qcom_flush_ops,
 		.iommu_dev	= qcom_iommu->dev,
@@ -239,7 +270,8 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 	qcom_domain->iommu = qcom_iommu;
 	qcom_domain->fwspec = fwspec;
 
-	pgtbl_ops = alloc_io_pgtable_ops(ARM_32_LPAE_S1, &pgtbl_cfg, qcom_domain);
+	pgtbl_ops = alloc_io_pgtable_ops(aarch64 ? ARM_64_LPAE_S1 : ARM_32_LPAE_S1,
+					 &pgtbl_cfg, qcom_domain);
 	if (!pgtbl_ops) {
 		dev_err(qcom_iommu->dev, "failed to allocate pagetable ops\n");
 		ret = -ENOMEM;
@@ -256,7 +288,7 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 			ret = qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, ctx->asid);
 			if (ret) {
 				dev_err(qcom_iommu->dev, "secure init failed: %d\n", ret);
-				goto out_clear_iommu;
+				goto out_free_pgtable;
 			}
 			ctx->secure_init = true;
 		}
@@ -270,6 +302,16 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 		/* Disable context bank before programming */
 		iommu_writel(ctx, ARM_SMMU_CB_SCTLR, 0);
 
+		if (aarch64) {
+			ret = qcom_scm_iommu_set_pt_format(qcom_iommu->sec_id,
+							   ctx->asid, 1);
+			if (ret) {
+				dev_err(ctx->dev, "cannot set AArch64 page-table format: %d\n",
+					ret);
+				goto out_free_pgtable;
+			}
+		}
+
 		/* Clear context bank fault address fault status registers */
 		iommu_writel(ctx, ARM_SMMU_CB_FAR, 0);
 		iommu_writel(ctx, ARM_SMMU_CB_FSR, ARM_SMMU_CB_FSR_FAULT);
@@ -282,9 +324,11 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 
 		/* TCR */
 		iommu_writel(ctx, ARM_SMMU_CB_TCR2,
-				arm_smmu_lpae_tcr2(&pgtbl_cfg));
+			     arm_smmu_lpae_tcr2(&pgtbl_cfg) |
+			     (aarch64 ? ARM_SMMU_TCR2_AS : 0));
 		iommu_writel(ctx, ARM_SMMU_CB_TCR,
-			     arm_smmu_lpae_tcr(&pgtbl_cfg) | ARM_SMMU_TCR_EAE);
+			     arm_smmu_lpae_tcr(&pgtbl_cfg) |
+			     (aarch64 ? 0 : ARM_SMMU_TCR_EAE));
 
 		/* MAIRs (stage-1 only) */
 		iommu_writel(ctx, ARM_SMMU_CB_S1_MAIR0,
@@ -313,6 +357,15 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 
 	return 0;
 
+out_free_pgtable:
+	while (i--) {
+		struct qcom_iommu_ctx *ctx = to_ctx(qcom_domain, fwspec->ids[i]);
+
+		if (!ctx->secured_ctx)
+			iommu_writel(ctx, ARM_SMMU_CB_SCTLR, 0);
+		ctx->domain = NULL;
+	}
+	free_io_pgtable_ops(pgtbl_ops);
 out_clear_iommu:
 	qcom_domain->iommu = NULL;
 out_unlock:
@@ -413,6 +466,7 @@ static int qcom_iommu_identity_attach(struct iommu_domain *identity_domain,
 		ctx->domain = NULL;
 	}
 	pm_runtime_put_sync(qcom_iommu->dev);
+
 	return 0;
 }
 
@@ -594,6 +648,10 @@ static const struct iommu_ops qcom_iommu_ops = {
 	.domain_alloc_paging = qcom_iommu_domain_alloc_paging,
 	.probe_device	= qcom_iommu_probe_device,
 	.device_group	= generic_device_group,
+	/* DT reserved-memory iommu-addresses, e.g. a splash buffer the
+	 * bootloader leaves scanning out through this IOMMU.
+	 */
+	.get_resv_regions = iommu_dma_get_resv_regions,
 	.of_xlate	= qcom_iommu_of_xlate,
 	.default_domain_ops = &(const struct iommu_domain_ops) {
 		.attach_dev	= qcom_iommu_attach_dev,
@@ -829,6 +887,22 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
+	/*
+	 * MSM8953's GPU uses v2; its display and other clients use v1.
+	 *
+	 * This matches stock. CAF 4.19 arm-smmu picks ARM_SMMU_CTX_FMT_AARCH64
+	 * whenever the SMMU supports it on a 64-bit kernel, and
+	 * qcom,use-3-lvl-tables only caps ias at 39
+	 * (oc-test/drivers/iommu/arm-smmu.c:2547-2568); stock dmesg prints
+	 * "AARCH64 is supported for 1c40000.qcom,kgsl-iommu:gfx3d_user".
+	 * run199 forced ARM_32_LPAE_S1 on a misreading of that property and
+	 * changed nothing. ias=39 is also what KGSL_MMU_64BIT needs: its VA
+	 * (0x500000000) and SVM (0x700000000) ranges sit above 4 GiB.
+	 */
+	qcom_iommu->use_aarch64_pt =
+		of_device_is_compatible(dev->of_node, "qcom,msm8953-iommu") &&
+		of_device_is_compatible(dev->of_node, "qcom,msm-iommu-v2");
+
 	if (qcom_iommu_has_secure_context(qcom_iommu)) {
 		ret = qcom_iommu_sec_ptbl_init(dev);
 		if (ret) {
@@ -866,6 +940,14 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 		writel_relaxed(0xffffffff, qcom_iommu->local_base + SMMU_INTR_SEL_NS);
 		pm_runtime_put_sync(dev);
 	}
+
+	/*
+	 * The CAF MDSS driver scans out through this IOMMU without holding
+	 * its runtime-PM link active, so a suspended IOMMU loses its clocks
+	 * under a live fetch and faults on every frame. Keep it powered
+	 * until MDSS holds its consumer link while scanning out.
+	 */
+	pm_runtime_forbid(dev);
 
 	return 0;
 

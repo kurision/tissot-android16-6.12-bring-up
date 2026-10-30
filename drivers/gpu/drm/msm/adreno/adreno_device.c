@@ -296,8 +296,6 @@ static const struct of_device_id dt_match[] = {
 	{ .compatible = "qcom,adreno-3xx" },
 	/* for compatibility with imx5 gpu: */
 	{ .compatible = "amd,imageon" },
-	/* for backwards compat w/ downstream kgsl DT files: */
-	{ .compatible = "qcom,kgsl-3d0" },
 	{}
 };
 

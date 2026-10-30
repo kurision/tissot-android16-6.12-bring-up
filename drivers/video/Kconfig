@@ -89,4 +89,6 @@ endif
 
 source "drivers/gpu/trace/Kconfig"
 
+source "drivers/gpu/msm/Kconfig"
+
 endmenu

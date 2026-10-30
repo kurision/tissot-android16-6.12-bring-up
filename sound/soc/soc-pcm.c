@@ -2960,6 +2960,8 @@ int soc_new_pcm(struct snd_soc_pcm_runtime *rtd)
 
 		if (drv->ioctl)
 			rtd->ops.ioctl		= snd_soc_pcm_component_ioctl;
+		if (drv->compat_ioctl)
+			rtd->ops.compat_ioctl	= snd_soc_pcm_component_compat_ioctl;
 		if (drv->sync_stop)
 			rtd->ops.sync_stop	= snd_soc_pcm_component_sync_stop;
 		if (drv->copy)

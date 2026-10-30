@@ -21,6 +21,22 @@ description: |
   the PMIC. It can also be wired up to interact with other processors in the
   system, notifying them when a low power state is entered or exited.
 
+allOf:
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: qcom,msm8953-saw2-v4.1-cci
+    then:
+      required:
+        - qcom,cpu-vctl-list
+      properties:
+        reg:
+          maxItems: 1
+    else:
+      properties:
+        qcom,cpu-vctl-list: false
+
 properties:
   compatible:
     items:
@@ -35,6 +51,7 @@ properties:
           - qcom,msm8909-saw2-v3.0-cpu
           - qcom,msm8916-saw2-v3.0-cpu
           - qcom,msm8939-saw2-v3.0-cpu
+          - qcom,msm8953-saw2-v4.1-cci
           - qcom,msm8226-saw2-v2.1-cpu
           - qcom,msm8226-saw2-v2.1-l2
           - qcom,msm8960-saw2-cpu
@@ -52,6 +69,17 @@ properties:
       - description: Base address and size of the SPM register region
       - description: Base address and size of the alias register region
     minItems: 1
+
+  qcom,cpu-vctl-list:
+    $ref: /schemas/types.yaml#/definitions/phandle-array
+    minItems: 8
+    maxItems: 8
+    items:
+      maxItems: 1
+    description:
+      CPUs whose shared APC voltage is controlled by the MSM8953 system-CCI
+      SAW4.1 controller. Voltage requests may be issued from any online CPU
+      in this list. All eight Cortex-A53 CPUs share this voltage domain.
 
   regulator:
     $ref: /schemas/regulator/regulator.yaml#
@@ -116,5 +144,13 @@ examples:
             regulator-min-microvolt = <850000>;
             regulator-max-microvolt = <1300000>;
         };
+    };
+
+  - |
+    power-manager@b1d2000 {
+        compatible = "qcom,msm8953-saw2-v4.1-cci", "qcom,saw2";
+        reg = <0x0b1d2000 0x1000>;
+        qcom,cpu-vctl-list = <&CPU0>, <&CPU1>, <&CPU2>, <&CPU3>,
+                             <&CPU4>, <&CPU5>, <&CPU6>, <&CPU7>;
     };
 ...

@@ -1979,22 +1979,58 @@ static int qup_i2c_pm_resume_runtime(struct device *device)
 	return 0;
 }
 
-static int qup_i2c_suspend(struct device *device)
+/*
+ * System sleep runs in the noirq phase, as i2c-qcom-geni does. A client
+ * whose interrupt stays armed for wakeup (the tissot touchscreen's
+ * double-tap) runs its threaded handler as soon as device interrupts
+ * come back, which is before the normal resume phase. With the clocks
+ * still off and runtime PM still reporting the controller active,
+ * qup_i2c_xfer() read the QUP registers unclocked and the SoC raised an
+ * SError:
+ *
+ *   SError Interrupt on CPU2 ... Comm: irq/51-edt-ft54
+ *   readl <- qup_i2c_xfer_v2 <- i2c_transfer <- edt_ft5x06_ts_isr
+ *
+ * Runtime PM is disabled between the late suspend and the early resume
+ * phase, so its status can be set here to match the clocks; the adapter
+ * is marked suspended so a transfer in that window fails instead of
+ * touching the hardware.
+ */
+static int qup_i2c_suspend_noirq(struct device *device)
 {
-	if (!pm_runtime_suspended(device))
-		return qup_i2c_pm_suspend_runtime(device);
+	struct qup_i2c_dev *qup = dev_get_drvdata(device);
+
+	i2c_mark_adapter_suspended(&qup->adap);
+
+	if (!pm_runtime_status_suspended(device)) {
+		qup_i2c_pm_suspend_runtime(device);
+		pm_runtime_set_suspended(device);
+	}
+	return 0;
+}
+
+static int qup_i2c_resume_noirq(struct device *device)
+{
+	struct qup_i2c_dev *qup = dev_get_drvdata(device);
+
+	qup_i2c_pm_resume_runtime(device);
+	pm_runtime_set_active(device);
+	i2c_mark_adapter_resumed(&qup->adap);
 	return 0;
 }
 
 static int qup_i2c_resume(struct device *device)
 {
 	qup_i2c_pm_resume_runtime(device);
+	/* Runtime PM is enabled again; let the controller idle. */
+	pm_runtime_mark_last_busy(device);
 	pm_request_autosuspend(device);
 	return 0;
 }
 
 static const struct dev_pm_ops qup_i2c_qup_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(qup_i2c_suspend, qup_i2c_resume)
+	NOIRQ_SYSTEM_SLEEP_PM_OPS(qup_i2c_suspend_noirq, qup_i2c_resume_noirq)
+	SYSTEM_SLEEP_PM_OPS(NULL, qup_i2c_resume)
 	RUNTIME_PM_OPS(qup_i2c_pm_suspend_runtime,
 		       qup_i2c_pm_resume_runtime, NULL)
 };

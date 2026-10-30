@@ -19,6 +19,7 @@
 #include <linux/reboot.h>
 #include <linux/slab.h>
 #include <linux/suspend.h>
+#include <linux/pstore_ram.h>
 
 #include <uapi/linux/psci.h>
 
@@ -321,6 +322,8 @@ static int get_set_conduit_method(const struct device_node *np)
 static int psci_sys_reset(struct notifier_block *nb, unsigned long action,
 			  void *data)
 {
+	ramoops_reset_mark(RAMOOPS_RESET_PSCI, NULL);
+
 	if ((reboot_mode == REBOOT_WARM || reboot_mode == REBOOT_SOFT) &&
 	    psci_system_reset2_supported) {
 		/*
