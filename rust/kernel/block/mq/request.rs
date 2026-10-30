@@ -205,6 +205,7 @@ unsafe impl<T: Operations> Sync for Request<T> {}
 // `fetch_update` was renamed `try_update`; old name kept for older toolchains.
 #[allow(deprecated)]
 fn atomic_relaxed_op_return(target: &AtomicU64, op: impl Fn(u64) -> u64) -> u64 {
+    #[allow(deprecated)]
     let old = target.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| Some(op(x)));
 
     // SAFETY: Because the operation passed to `fetch_update` above always
@@ -219,6 +220,7 @@ fn atomic_relaxed_op_return(target: &AtomicU64, op: impl Fn(u64) -> u64) -> u64 
 // `fetch_update` was renamed `try_update`; old name kept for older toolchains.
 #[allow(deprecated)]
 fn atomic_relaxed_op_unless(target: &AtomicU64, op: impl Fn(u64) -> u64, pred: u64) -> bool {
+    #[allow(deprecated)]
     target
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
             if x == pred {
