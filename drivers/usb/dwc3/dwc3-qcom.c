@@ -471,6 +471,24 @@ static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
 	if (qcom->is_suspended)
 		return 0;
 
+	/*
+	 * Gating the glue clocks while the controller is still running
+	 * leaves it running behind a stopped branch: the branch2 halt
+	 * check warns ("gcc_usb30_master_clk status stuck at 'on'") and
+	 * a gadget link across such a suspend does not re-enumerate
+	 * after resume. The core refuses runtime suspend while a host
+	 * has the link (dwc3_runtime_checks()), so a runtime-active core
+	 * means the link is live: leave the clocks on for this cycle.
+	 * Once the host drops the link the core exits and runtime-
+	 * suspends, and the next suspend gates the clocks normally.
+	 * The HS-PHY L2 latch below only proves a past U3, not that the
+	 * link is idle now, so it cannot gate this decision.
+	 */
+	if (!pm_runtime_suspended(&qcom->dwc3->dev)) {
+		dev_dbg(qcom->dev, "core active; keeping glue clocks on\n");
+		return 0;
+	}
+
 	for (i = 0; i < qcom->num_ports; i++) {
 		val = readl(qcom->qscratch_base + pwr_evnt_irq_stat_reg[i]);
 		if (!(val & PWR_EVNT_LPM_IN_L2_MASK))
