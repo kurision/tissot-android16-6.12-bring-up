@@ -496,8 +496,15 @@ static int ctrl_cmd_del_client(struct sockaddr_qrtr *from,
 
 		ret = kernel_sendmsg(qrtr_ns.sock, &msg, &iv, 1, sizeof(pkt));
 		if (ret < 0 && ret != -ENODEV) {
-			pr_err("failed to send del client cmd\n");
-			return ret;
+			/* A server that never reads its control socket
+			 * fills its receive queue (-ENOBUFS). Skip it
+			 * and keep notifying the rest; aborting here
+			 * leaves every later server with a stale client
+			 * record.
+			 */
+			pr_warn_ratelimited("failed to send del client cmd: %d\n",
+					    ret);
+			continue;
 		}
 	}
 	return 0;
