@@ -236,7 +236,7 @@ static int camera_v4l2_reqbufs(struct file *filep, void *fh,
 {
 	int ret;
 	struct msm_session *session;
-	struct camera_v4l2_private *sp = fh_to_private(fh);
+	struct camera_v4l2_private *sp = fh_to_private(filep->private_data);
 	struct msm_video_device *pvdev = video_drvdata(filep);
 	unsigned int session_id = pvdev->vdev->num;
 	session = legacy_msm_session_find(session_id);
@@ -259,7 +259,7 @@ static int camera_v4l2_qbuf(struct file *filep, void *fh,
 {
 	int ret;
 	struct msm_session *session;
-	struct camera_v4l2_private *sp = fh_to_private(fh);
+	struct camera_v4l2_private *sp = fh_to_private(filep->private_data);
 		struct msm_video_device *pvdev = video_drvdata(filep);
 	unsigned int session_id = pvdev->vdev->num;
 	session = legacy_msm_session_find(session_id);
@@ -276,7 +276,7 @@ static int camera_v4l2_dqbuf(struct file *filep, void *fh,
 {
 	int ret;
 	struct msm_session *session;
-	struct camera_v4l2_private *sp = fh_to_private(fh);
+	struct camera_v4l2_private *sp = fh_to_private(filep->private_data);
 		struct msm_video_device *pvdev = video_drvdata(filep);
 	unsigned int session_id = pvdev->vdev->num;
 	session = legacy_msm_session_find(session_id);
@@ -293,7 +293,7 @@ static int camera_v4l2_streamon(struct file *filep, void *fh,
 {
 	struct v4l2_event event;
 	int rc;
-	struct camera_v4l2_private *sp = fh_to_private(fh);
+	struct camera_v4l2_private *sp = fh_to_private(filep->private_data);
 
 	mutex_lock(&sp->lock);
 	rc = vb2_streamon(&sp->vb2_q, buf_type);
@@ -318,7 +318,7 @@ static int camera_v4l2_streamoff(struct file *filep, void *fh,
 {
 	struct v4l2_event event;
 	int rc = 0;
-	struct camera_v4l2_private *sp = fh_to_private(fh);
+	struct camera_v4l2_private *sp = fh_to_private(filep->private_data);
 
 	if (msm_is_daemon_present() != false) {
 		camera_pack_event(filep, MSM_CAMERA_SET_PARM,
@@ -365,7 +365,7 @@ static int camera_v4l2_s_fmt_vid_cap_mplane(struct file *filep, void *fh,
 	int rc = 0;
 	int i = 0;
 	struct v4l2_event event;
-	struct camera_v4l2_private *sp = fh_to_private(fh);
+	struct camera_v4l2_private *sp = fh_to_private(filep->private_data);
 	struct msm_v4l2_format_data *user_fmt;
 
 	if (pfmt->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
@@ -432,7 +432,7 @@ static int camera_v4l2_s_parm(struct file *filep, void *fh,
 	struct v4l2_event event;
 	struct msm_v4l2_event_data *event_data =
 		(struct msm_v4l2_event_data *)&event.u.data[0];
-	struct camera_v4l2_private *sp = fh_to_private(fh);
+	struct camera_v4l2_private *sp = fh_to_private(filep->private_data);
 
 	camera_pack_event(filep, MSM_CAMERA_SET_PARM,
 		MSM_CAMERA_PRIV_NEW_STREAM, -1, &event);
@@ -492,7 +492,7 @@ static int camera_v4l2_unsubscribe_event(struct v4l2_fh *fh,
 static long camera_v4l2_vidioc_private_ioctl(struct file *filep, void *fh,
 	bool valid_prio, unsigned int cmd, void *arg)
 {
-	struct camera_v4l2_private *sp = fh_to_private(fh);
+	struct camera_v4l2_private *sp = fh_to_private(filep->private_data);
 	struct msm_video_device *pvdev = video_drvdata(filep);
 	struct msm_camera_private_ioctl_arg *k_ioctl = arg;
 	long rc = -EINVAL;

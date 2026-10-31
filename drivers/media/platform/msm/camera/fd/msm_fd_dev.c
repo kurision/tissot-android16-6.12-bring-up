@@ -550,7 +550,7 @@ static long msm_fd_private_ioctl(struct file *file, void *fh,
 	bool valid_prio, unsigned int cmd, void *arg)
 {
 	struct msm_fd_result *req_result = arg;
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 	struct msm_fd_stats *stats;
 	int stats_idx;
 	int ret = 0;
@@ -702,7 +702,7 @@ static int msm_fd_enum_fmt_vid_out(struct file *file,
  */
 static int msm_fd_g_fmt(struct file *file, void *fh, struct v4l2_format *f)
 {
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 
 	return msm_fd_fill_format_from_ctx(f, ctx);
 }
@@ -732,7 +732,7 @@ static int msm_fd_try_fmt_vid_out(struct file *file,
 static int msm_fd_s_fmt_vid_out(struct file *file,
 	void *fh, struct v4l2_format *f)
 {
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 	int index;
 
 	index = msm_fd_get_format_index(f);
@@ -763,7 +763,7 @@ static int msm_fd_reqbufs(struct file *file,
 	void *fh, struct v4l2_requestbuffers *req)
 {
 	int ret;
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 
 	mutex_lock(&ctx->lock);
 	ret = vb2_reqbufs(&ctx->vb2_q, req);
@@ -781,7 +781,7 @@ static int msm_fd_qbuf(struct file *file, void *fh,
 	struct v4l2_buffer *pb)
 {
 	int ret;
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 
 	mutex_lock(&ctx->lock);
 	ret = vb2_qbuf(&ctx->vb2_q, NULL, pb);
@@ -800,7 +800,7 @@ static int msm_fd_dqbuf(struct file *file,
 	void *fh, struct v4l2_buffer *pb)
 {
 	int ret;
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 
 	mutex_lock(&ctx->lock);
 	ret = vb2_dqbuf(&ctx->vb2_q, pb, file->f_flags & O_NONBLOCK);
@@ -817,7 +817,7 @@ static int msm_fd_dqbuf(struct file *file,
 static int msm_fd_streamon(struct file *file,
 	void *fh, enum v4l2_buf_type buf_type)
 {
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 	int ret;
 
 	mutex_lock(&ctx->lock);
@@ -838,7 +838,7 @@ static int msm_fd_streamon(struct file *file,
 static int msm_fd_streamoff(struct file *file,
 	void *fh, enum v4l2_buf_type buf_type)
 {
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 	int ret;
 
 	mutex_lock(&ctx->lock);
@@ -898,7 +898,7 @@ static int msm_fd_unsubscribe_event(struct v4l2_fh *fh,
 static int msm_fd_guery_ctrl(struct file *file, void *fh,
 	struct v4l2_queryctrl *a)
 {
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 
 	switch (a->id) {
 	case V4L2_CID_FD_SPEED:
@@ -979,7 +979,7 @@ static int msm_fd_guery_ctrl(struct file *file, void *fh,
  */
 static int msm_fd_g_ctrl(struct file *file, void *fh, struct v4l2_control *a)
 {
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 
 	switch (a->id) {
 	case V4L2_CID_FD_SPEED:
@@ -1024,7 +1024,7 @@ static int msm_fd_g_ctrl(struct file *file, void *fh, struct v4l2_control *a)
  */
 static int msm_fd_s_ctrl(struct file *file, void *fh, struct v4l2_control *a)
 {
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 	int idx;
 	int ret;
 
@@ -1102,7 +1102,7 @@ static int msm_fd_s_ctrl(struct file *file, void *fh, struct v4l2_control *a)
  */
 static int msm_fd_cropcap(struct file *file, void *fh, struct v4l2_cropcap *a)
 {
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 
 	if (!ctx->format.size) {
 		dev_err(ctx->fd_device->dev, "Cropcap fails format missing\n");
@@ -1130,7 +1130,7 @@ static int msm_fd_cropcap(struct file *file, void *fh, struct v4l2_cropcap *a)
  */
 static int msm_fd_g_crop(struct file *file, void *fh, struct v4l2_crop *crop)
 {
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 
 	if (!ctx->format.size) {
 		dev_err(ctx->fd_device->dev, "Get crop, format missing!\n");
@@ -1151,7 +1151,7 @@ static int msm_fd_g_crop(struct file *file, void *fh, struct v4l2_crop *crop)
 static int msm_fd_s_crop(struct file *file, void *fh,
 	const struct v4l2_crop *crop)
 {
-	struct fd_ctx *ctx = msm_fd_ctx_from_fh(fh);
+	struct fd_ctx *ctx = msm_fd_ctx_from_fh(file->private_data);
 	int min_face_size;
 
 	if (!ctx->format.size) {

@@ -642,7 +642,7 @@ static int msm_jpegdma_enum_fmt_vid_out(struct file *file,
 static int msm_jpegdma_g_fmt_cap(struct file *file, void *fh,
 	struct v4l2_format *f)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 
 	*f = ctx->format_cap;
 
@@ -658,7 +658,7 @@ static int msm_jpegdma_g_fmt_cap(struct file *file, void *fh,
 static int msm_jpegdma_g_fmt_out(struct file *file, void *fh,
 	struct v4l2_format *f)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 
 	*f = ctx->format_out;
 
@@ -674,7 +674,7 @@ static int msm_jpegdma_g_fmt_out(struct file *file, void *fh,
 static int msm_jpegdma_try_fmt_vid_cap(struct file *file,
 	void *fh, struct v4l2_format *f)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 
 	msm_jpegdma_align_format(f, ctx->format_idx);
 
@@ -690,7 +690,7 @@ static int msm_jpegdma_try_fmt_vid_cap(struct file *file,
 static int msm_jpegdma_try_fmt_vid_out(struct file *file,
 	void *fh, struct v4l2_format *f)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 
 	msm_jpegdma_align_format(f, ctx->format_idx);
 
@@ -706,7 +706,7 @@ static int msm_jpegdma_try_fmt_vid_out(struct file *file,
 static int msm_jpegdma_s_fmt_vid_cap(struct file *file,
 	void *fh, struct v4l2_format *f)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 	int ret;
 
 	ret = msm_jpegdma_get_format_idx(ctx, f);
@@ -737,7 +737,7 @@ static int msm_jpegdma_s_fmt_vid_cap(struct file *file,
 static int msm_jpegdma_s_fmt_vid_out(struct file *file,
 	void *fh, struct v4l2_format *f)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 	int ret;
 
 	ret = msm_jpegdma_get_format_idx(ctx, f);
@@ -769,7 +769,7 @@ static int msm_jpegdma_reqbufs(struct file *file,
 	void *fh, struct v4l2_requestbuffers *req)
 {
 	int ret = 0;
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 	mutex_lock(&ctx->lock);
 	ret = v4l2_m2m_reqbufs(file, ctx->m2m_ctx, req);
 	mutex_unlock(&ctx->lock);
@@ -785,7 +785,7 @@ static int msm_jpegdma_reqbufs(struct file *file,
 static int msm_jpegdma_qbuf(struct file *file, void *fh,
 	struct v4l2_buffer *buf)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 	int ret;
 
 	mutex_lock(&ctx->lock);
@@ -808,7 +808,7 @@ static int msm_jpegdma_qbuf(struct file *file, void *fh,
 static int msm_jpegdma_dqbuf(struct file *file,
 	void *fh, struct v4l2_buffer *buf)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 	int ret;
 
 	mutex_lock(&ctx->lock);
@@ -826,7 +826,7 @@ static int msm_jpegdma_dqbuf(struct file *file,
 static int msm_jpegdma_streamon(struct file *file,
 	void *fh, enum v4l2_buf_type buf_type)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 	int ret;
 
 	mutex_lock(&ctx->lock);
@@ -850,7 +850,7 @@ static int msm_jpegdma_streamon(struct file *file,
 static int msm_jpegdma_streamoff(struct file *file,
 	void *fh, enum v4l2_buf_type buf_type)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 	int ret;
 	mutex_lock(&ctx->lock);
 	ret = v4l2_m2m_streamoff(file, ctx->m2m_ctx, buf_type);
@@ -869,7 +869,7 @@ static int msm_jpegdma_streamoff(struct file *file,
 static int msm_jpegdma_cropcap(struct file *file, void *fh,
 	struct v4l2_cropcap *a)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 	struct v4l2_format *format;
 
 	switch (a->type) {
@@ -905,7 +905,7 @@ static int msm_jpegdma_cropcap(struct file *file, void *fh,
 static int msm_jpegdma_g_crop(struct file *file, void *fh,
 	struct v4l2_crop *crop)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 
 	switch (crop->type) {
 	case V4L2_BUF_TYPE_VIDEO_OUTPUT:
@@ -932,7 +932,7 @@ static int msm_jpegdma_g_crop(struct file *file, void *fh,
 static int msm_jpegdma_s_crop(struct file *file, void *fh,
 	const struct v4l2_crop *crop)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 	int ret = 0;
 
 	/* Crop is supported only for input buffers */
@@ -988,7 +988,7 @@ static int msm_jpegdma_s_crop(struct file *file, void *fh,
 static int msm_jpegdma_g_parm(struct file *file, void *fh,
 	struct v4l2_streamparm *a)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 
 	/* Get param is supported only for input buffers */
 	if (a->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)
@@ -1012,7 +1012,7 @@ static int msm_jpegdma_g_parm(struct file *file, void *fh,
 static int msm_jpegdma_s_parm(struct file *file, void *fh,
 	struct v4l2_streamparm *a)
 {
-	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(fh);
+	struct jpegdma_ctx *ctx = msm_jpegdma_ctx_from_fh(file->private_data);
 	/* Set param is supported only for input buffers */
 	if (a->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)
 		return -EINVAL;
