@@ -61,7 +61,6 @@ static int msm_v4l2_open(struct file *filp)
 		core->id, vid_dev->type);
 		return -ENOMEM;
 	}
-	clear_bit(V4L2_FL_USES_V4L2_FH, &vdev->flags);
 	trace_msm_v4l2_vidc_open_end("v4l2-vidc open end");
 	return 0;
 }
