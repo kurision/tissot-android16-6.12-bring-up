@@ -135,6 +135,11 @@
 ;; 0440/0550 system-owned modes: run339 also records a DAC denial. Do not
 ;; grant kernel DAC bypass capabilities; fix the firmware mount permissions.
 (allow kernel firmware_file (file (open read getattr)))
+;; 6.18 checks system:firmware_load against the file being loaded
+;; (security/selinux/hooks.c, selinux_kernel_read_file), and the ROM only grants
+;; it on kernel self.  The GPU firmware is on /vendor as vendor_file, so without
+;; this kgsl cannot start, EGL fails and surfaceflinger aborts.
+(allow kernel vendor_file (system (firmware_load)))
 
 ;; ---------------
 ;; The modem's remote storage memory on 6.12: label the UIO device with the
