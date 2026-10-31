@@ -1377,8 +1377,15 @@ static int32_t msm_cci_init(struct v4l2_subdev *sd,
 	} else {
 		cci_dev->cci_pinctrl_status = 1;
 	}
-	rc = legacy_msm_camera_request_gpio_table(cci_dev->cci_gpio_tbl,
-		cci_dev->cci_gpio_tbl_size, 1);
+	/*
+	 * pinctrl-msm is strict: pins muxed to CCI cannot also be requested as
+	 * GPIOs, and gpio_free() of a line that was never requested drops a
+	 * reference on the GPIO device.
+	 */
+	rc = 0;
+	if (!cci_dev->cci_pinctrl_status)
+		rc = legacy_msm_camera_request_gpio_table(cci_dev->cci_gpio_tbl,
+			cci_dev->cci_gpio_tbl_size, 1);
 	if (cci_dev->cci_pinctrl_status) {
 		ret = pinctrl_select_state(cci_dev->cci_pinctrl.pinctrl,
 				cci_dev->cci_pinctrl.gpio_state_active);
@@ -1523,8 +1530,9 @@ clk_enable_failed:
 			pr_err("%s:%d cannot set pin to suspend state\n",
 				__func__, __LINE__);
 	}
-	legacy_msm_camera_request_gpio_table(cci_dev->cci_gpio_tbl,
-		cci_dev->cci_gpio_tbl_size, 0);
+	if (!cci_dev->cci_pinctrl_status)
+		legacy_msm_camera_request_gpio_table(cci_dev->cci_gpio_tbl,
+			cci_dev->cci_gpio_tbl_size, 0);
 request_gpio_failed:
 	cci_dev->ref_count--;
 	if (legacy_cam_config_ahb_clk(NULL, 0, CAM_AHB_CLIENT_CCI,
@@ -1575,9 +1583,10 @@ static int32_t msm_cci_release(struct v4l2_subdev *sd)
 			pr_err("%s:%d cannot set pin to active state\n",
 				__func__, __LINE__);
 	}
+	if (!cci_dev->cci_pinctrl_status)
+		legacy_msm_camera_request_gpio_table(cci_dev->cci_gpio_tbl,
+			cci_dev->cci_gpio_tbl_size, 0);
 	cci_dev->cci_pinctrl_status = 0;
-	legacy_msm_camera_request_gpio_table(cci_dev->cci_gpio_tbl,
-		cci_dev->cci_gpio_tbl_size, 0);
 	for (i = 0; i < MASTER_MAX; i++)
 		cci_dev->i2c_freq_mode[i] = I2C_MAX_MODES;
 	cci_dev->cci_state = CCI_STATE_DISABLED;
