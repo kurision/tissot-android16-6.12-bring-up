@@ -3223,7 +3223,8 @@ static struct clk_branch gcc_mdss_byte0_clk = {
 			},
 			.num_parents = 1,
 			.ops = &clk_branch2_ops,
-			.flags = CLK_SET_RATE_PARENT | CLK_DONT_HOLD_STATE,
+			.flags = CLK_SET_RATE_PARENT | CLK_DONT_HOLD_STATE |
+				 CLK_IGNORE_UNUSED,
 		}
 	}
 };
@@ -3313,7 +3314,8 @@ static struct clk_branch gcc_mdss_pclk0_clk = {
 			},
 			.num_parents = 1,
 			.ops = &clk_branch2_ops,
-			.flags = CLK_SET_RATE_PARENT | CLK_DONT_HOLD_STATE,
+			.flags = CLK_SET_RATE_PARENT | CLK_DONT_HOLD_STATE |
+				 CLK_IGNORE_UNUSED,
 		}
 	}
 };
