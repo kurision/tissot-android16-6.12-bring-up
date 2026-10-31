@@ -649,7 +649,7 @@ static struct clk_rcg2 byte0_clk_src = {
 		.num_parents = ARRAY_SIZE(gcc_byte_data),
 		.ops = &clk_byte2_ops,
 		/* For set_rate and set_parent to succeed, parent(s) must be enabled */
-		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE,
+		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE | CLK_DONT_HOLD_STATE,
 	}
 };
 
@@ -663,7 +663,7 @@ static struct clk_rcg2 byte1_clk_src = {
 		.num_parents = ARRAY_SIZE(gcc_byte_data),
 		.ops = &clk_byte2_ops,
 		/* For set_rate and set_parent to succeed, parent(s) must be enabled */
-		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE,
+		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE | CLK_DONT_HOLD_STATE,
 	}
 };
 
@@ -1344,7 +1344,7 @@ static struct clk_rcg2 pclk0_clk_src = {
 		.num_parents = ARRAY_SIZE(gcc_pclk_data),
 		.ops = &clk_pixel_ops,
 		/* For set_rate and set_parent to succeed, parent(s) must be enabled */
-		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE,
+		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE | CLK_DONT_HOLD_STATE,
 	}
 };
 
@@ -1359,7 +1359,7 @@ static struct clk_rcg2 pclk1_clk_src = {
 		.num_parents = ARRAY_SIZE(gcc_pclk_data),
 		.ops = &clk_pixel_ops,
 		/* For set_rate and set_parent to succeed, parent(s) must be enabled */
-		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE,
+		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE | CLK_DONT_HOLD_STATE,
 	}
 };
 
@@ -3223,7 +3223,7 @@ static struct clk_branch gcc_mdss_byte0_clk = {
 			},
 			.num_parents = 1,
 			.ops = &clk_branch2_ops,
-			.flags = CLK_SET_RATE_PARENT,
+			.flags = CLK_SET_RATE_PARENT | CLK_DONT_HOLD_STATE,
 		}
 	}
 };
@@ -3241,7 +3241,7 @@ static struct clk_branch gcc_mdss_byte1_clk = {
 			},
 			.num_parents = 1,
 			.ops = &clk_branch2_ops,
-			.flags = CLK_SET_RATE_PARENT,
+			.flags = CLK_SET_RATE_PARENT | CLK_DONT_HOLD_STATE,
 		}
 	}
 };
@@ -3313,7 +3313,7 @@ static struct clk_branch gcc_mdss_pclk0_clk = {
 			},
 			.num_parents = 1,
 			.ops = &clk_branch2_ops,
-			.flags = CLK_SET_RATE_PARENT,
+			.flags = CLK_SET_RATE_PARENT | CLK_DONT_HOLD_STATE,
 		}
 	}
 };
@@ -3331,7 +3331,7 @@ static struct clk_branch gcc_mdss_pclk1_clk = {
 			},
 			.num_parents = 1,
 			.ops = &clk_branch2_ops,
-			.flags = CLK_SET_RATE_PARENT,
+			.flags = CLK_SET_RATE_PARENT | CLK_DONT_HOLD_STATE,
 		}
 	}
 };
