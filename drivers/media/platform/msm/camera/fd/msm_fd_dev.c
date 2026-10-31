@@ -274,7 +274,14 @@ static void msm_fd_stop_streaming(struct vb2_queue *q)
 }
 
 /* Videobuf2 queue callbacks. */
+/* vb2 requires a wait callback when q->lock is NULL. */
+static void msm_fd_wait_noop(struct vb2_queue *q)
+{
+}
+
 static struct vb2_ops msm_fd_vb2_q_ops = {
+	.wait_prepare    = msm_fd_wait_noop,
+	.wait_finish     = msm_fd_wait_noop,
 	.queue_setup     = msm_fd_queue_setup,
 	.buf_init        = legacy_msm_fd_buf_init,
 	.buf_queue       = msm_fd_buf_queue,

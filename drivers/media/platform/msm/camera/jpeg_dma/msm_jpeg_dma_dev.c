@@ -369,7 +369,14 @@ static void msm_jpegdma_stop_streaming(struct vb2_queue *q)
 }
 
 /* Videobuf2 queue callbacks. */
+/* vb2 requires a wait callback when q->lock is NULL. */
+static void msm_jpegdma_wait_noop(struct vb2_queue *q)
+{
+}
+
 static struct vb2_ops msm_jpegdma_vb2_q_ops = {
+	.wait_prepare    = msm_jpegdma_wait_noop,
+	.wait_finish     = msm_jpegdma_wait_noop,
 	.queue_setup     = msm_jpegdma_queue_setup,
 	.buf_queue       = msm_jpegdma_buf_queue,
 	.start_streaming = msm_jpegdma_start_streaming,

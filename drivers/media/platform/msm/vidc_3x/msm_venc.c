@@ -1985,7 +1985,17 @@ static void msm_venc_buf_queue(struct vb2_buffer *vb)
 		dprintk(VIDC_ERR, "Failed to queue buffer: %d\n", rc);
 }
 
+/*
+ * vb2 requires a wait callback when q->lock is NULL. Dequeues here are
+ * non-blocking, so nothing ever waits.
+ */
+static void msm_venc_wait_noop(struct vb2_queue *q)
+{
+}
+
 static const struct vb2_ops msm_venc_vb2q_ops = {
+	.wait_prepare = msm_venc_wait_noop,
+	.wait_finish = msm_venc_wait_noop,
 	.queue_setup = msm_venc_queue_setup,
 	.start_streaming = msm_venc_start_streaming,
 	.buf_queue = msm_venc_buf_queue,
