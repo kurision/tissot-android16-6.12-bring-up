@@ -670,11 +670,17 @@ static long mdss_8953_vco_round_rate(unsigned long rate)
 
 /* Divider helpers: N1 (postdiv) and N2, identity-mapped 1-15 in CLK_CFG0. */
 
+/*
+ * The VCO lands on its own step, a few hundred Hz off the rate the panel
+ * asks for, and it cannot retune while prepared. Rounding down would then
+ * skip the exact divider for the next larger one.
+ */
 static int mdss_8953_div_determine(struct clk_hw *hw,
 				   struct clk_rate_request *req)
 {
 	return divider_determine_rate(hw, req, NULL, 4,
-				      CLK_DIVIDER_ONE_BASED);
+				      CLK_DIVIDER_ONE_BASED |
+				      CLK_DIVIDER_ROUND_CLOSEST);
 }
 
 static void mdss_8953_postdiv_set(struct mdss_8953_pll *pll, int div)
