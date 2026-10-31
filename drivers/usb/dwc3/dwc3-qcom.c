@@ -17,7 +17,6 @@
 #include <linux/usb/of.h>
 #include <linux/reset.h>
 #include <linux/iopoll.h>
-#include <linux/mutex.h>
 #include <linux/usb/hcd.h>
 #include <linux/usb.h>
 #include "core.h"
@@ -79,21 +78,6 @@ struct dwc3_qcom {
 	struct dwc3_qcom_port	ports[DWC3_QCOM_MAX_PORTS];
 	u8			num_ports;
 
-	struct extcon_dev	*edev;
-	struct extcon_dev	*host_edev;
-	struct notifier_block	vbus_nb;
-	struct notifier_block	host_nb;
-
-	/*
-	 * Serialises the extcon notifiers' QSCRATCH writes against the glue
-	 * clocks going off in suspend; protects is_suspended and the
-	 * deferred override below.
-	 */
-	struct mutex		vbus_lock;
-	bool			vbus_override;
-	bool			vbus_override_pending;
-	bool			vbus_resume_pending;
-
 	enum usb_dr_mode	mode;
 	bool			is_suspended;
 	bool			pm_suspended;
@@ -136,113 +120,12 @@ static void dwc3_qcom_vbus_override_enable(struct dwc3_qcom *qcom, bool enable)
 				  LANE0_PWR_PRESENT);
 		dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_HS_PHY_CTRL,
 				  UTMI_OTG_VBUS_VALID | SW_SESSVLD_SEL);
-		/* VBUS alone cannot wake a runtime-suspended peripheral core. */
-		if (usb_get_dr_mode(qcom->dwc.dev) == USB_DR_MODE_PERIPHERAL)
-			qcom->vbus_resume_pending =
-				pm_request_resume(qcom->dwc.dev) == -EACCES;
 	} else {
-		qcom->vbus_resume_pending = false;
 		dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_SS_PHY_CTRL,
 				  LANE0_PWR_PRESENT);
 		dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_HS_PHY_CTRL,
 				  UTMI_OTG_VBUS_VALID | SW_SESSVLD_SEL);
 	}
-}
-
-/*
- * The extcon provider calls the notifiers from its own context, which may
- * run while the glue is suspended: between the glue's suspend callback and
- * the noirq phase, or on a wake interrupt before the glue has resumed. Its
- * clocks are off then, and a QSCRATCH access hangs the bus. Defer the write
- * to resume in that case.
- */
-static void dwc3_qcom_set_vbus_override(struct dwc3_qcom *qcom, bool enable)
-{
-	guard(mutex)(&qcom->vbus_lock);
-
-	if (qcom->is_suspended) {
-		qcom->vbus_override = enable;
-		qcom->vbus_override_pending = true;
-		dev_info(qcom->dev, "deferring VBUS override %d to resume\n",
-			 enable);
-		return;
-	}
-
-	dwc3_qcom_vbus_override_enable(qcom, enable);
-}
-
-static int dwc3_qcom_vbus_notifier(struct notifier_block *nb,
-				   unsigned long event, void *ptr)
-{
-	struct dwc3_qcom *qcom = container_of(nb, struct dwc3_qcom, vbus_nb);
-
-	/* enable vbus override for device mode */
-	dwc3_qcom_set_vbus_override(qcom, event);
-	qcom->mode = event ? USB_DR_MODE_PERIPHERAL : USB_DR_MODE_HOST;
-
-	return NOTIFY_DONE;
-}
-
-static int dwc3_qcom_host_notifier(struct notifier_block *nb,
-				   unsigned long event, void *ptr)
-{
-	struct dwc3_qcom *qcom = container_of(nb, struct dwc3_qcom, host_nb);
-
-	/* disable vbus override in host mode */
-	dwc3_qcom_set_vbus_override(qcom, !event);
-	qcom->mode = event ? USB_DR_MODE_HOST : USB_DR_MODE_PERIPHERAL;
-
-	return NOTIFY_DONE;
-}
-
-static int dwc3_qcom_register_extcon(struct dwc3_qcom *qcom)
-{
-	struct device		*dev = qcom->dev;
-	struct extcon_dev	*host_edev;
-	int			ret;
-
-	if (!of_property_read_bool(dev->of_node, "extcon"))
-		return 0;
-
-	qcom->edev = extcon_get_edev_by_phandle(dev, 0);
-	if (IS_ERR(qcom->edev))
-		return dev_err_probe(dev, PTR_ERR(qcom->edev),
-				     "Failed to get extcon\n");
-
-	qcom->vbus_nb.notifier_call = dwc3_qcom_vbus_notifier;
-
-	qcom->host_edev = extcon_get_edev_by_phandle(dev, 1);
-	if (IS_ERR(qcom->host_edev))
-		qcom->host_edev = NULL;
-
-	ret = devm_extcon_register_notifier(dev, qcom->edev, EXTCON_USB,
-					    &qcom->vbus_nb);
-	if (ret < 0) {
-		dev_err(dev, "VBUS notifier register failed\n");
-		return ret;
-	}
-
-	if (qcom->host_edev)
-		host_edev = qcom->host_edev;
-	else
-		host_edev = qcom->edev;
-
-	qcom->host_nb.notifier_call = dwc3_qcom_host_notifier;
-	ret = devm_extcon_register_notifier(dev, host_edev, EXTCON_USB_HOST,
-					    &qcom->host_nb);
-	if (ret < 0) {
-		dev_err(dev, "Host notifier register failed\n");
-		return ret;
-	}
-
-	/* Update initial VBUS override based on extcon state */
-	if (extcon_get_state(qcom->edev, EXTCON_USB) ||
-	    !extcon_get_state(host_edev, EXTCON_USB_HOST))
-		dwc3_qcom_vbus_notifier(&qcom->vbus_nb, true, qcom->edev);
-	else
-		dwc3_qcom_vbus_notifier(&qcom->vbus_nb, false, qcom->edev);
-
-	return 0;
 }
 
 static int dwc3_qcom_interconnect_enable(struct dwc3_qcom *qcom)
@@ -457,8 +340,6 @@ static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
 	u32 val;
 	int i, ret;
 
-	guard(mutex)(&qcom->vbus_lock);
-
 	if (qcom->is_suspended)
 		return 0;
 
@@ -493,8 +374,6 @@ static int dwc3_qcom_resume(struct dwc3_qcom *qcom, bool wakeup)
 	int ret;
 	int i;
 
-	guard(mutex)(&qcom->vbus_lock);
-
 	if (!qcom->is_suspended)
 		return 0;
 
@@ -514,13 +393,6 @@ static int dwc3_qcom_resume(struct dwc3_qcom *qcom, bool wakeup)
 		dwc3_qcom_setbits(qcom->qscratch_base,
 				  pwr_evnt_irq_stat_reg[i],
 				  PWR_EVNT_LPM_IN_L2_MASK | PWR_EVNT_LPM_OUT_L2_MASK);
-	}
-
-	if (qcom->vbus_override_pending) {
-		dev_info(qcom->dev, "applying deferred VBUS override %d\n",
-			 qcom->vbus_override);
-		dwc3_qcom_vbus_override_enable(qcom, qcom->vbus_override);
-		qcom->vbus_override_pending = false;
 	}
 
 	qcom->is_suspended = false;
@@ -842,19 +714,6 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 	if (ret)
 		goto remove_core;
 
-	ret = devm_mutex_init(dev, &qcom->vbus_lock);
-	if (ret)
-		goto remove_core;
-
-	/* enable vbus override for device mode */
-	if (qcom->mode != USB_DR_MODE_HOST)
-		dwc3_qcom_vbus_override_enable(qcom, true);
-
-	/* register extcon to override sw_vbus on Vbus change later */
-	ret = dwc3_qcom_register_extcon(qcom);
-	if (ret)
-		goto remove_core;
-
 	wakeup_source = of_property_read_bool(dev->of_node, "wakeup-source");
 	device_init_wakeup(&pdev->dev, wakeup_source);
 
@@ -877,13 +736,6 @@ static void dwc3_qcom_remove(struct platform_device *pdev)
 
 	if (pm_runtime_resume_and_get(qcom->dev) < 0)
 		return;
-
-	/*
-	 * The extcon notifiers are devm-managed and stay registered until
-	 * after remove() returns; park them before removing the core.
-	 */
-	scoped_guard(mutex, &qcom->vbus_lock)
-		qcom->is_suspended = true;
 
 	dwc3_core_remove(&qcom->dwc);
 	clk_bulk_disable_unprepare(qcom->num_clocks, qcom->clks);
@@ -932,6 +784,13 @@ static int dwc3_qcom_pm_resume(struct device *dev)
 	return 0;
 }
 
+static void dwc3_qcom_complete(struct device *dev)
+{
+	struct dwc3 *dwc = dev_get_drvdata(dev);
+
+	dwc3_pm_complete(dwc);
+}
+
 static int dwc3_qcom_prepare(struct device *dev)
 {
 	struct dwc3 *dwc = dev_get_drvdata(dev);
@@ -970,26 +829,10 @@ static int dwc3_qcom_runtime_idle(struct device *dev)
 	return dwc3_runtime_idle(dev_get_drvdata(dev));
 }
 
-static void dwc3_qcom_complete(struct device *dev)
-{
-	struct dwc3_qcom *qcom = to_dwc3_qcom(dev_get_drvdata(dev));
-
-	dwc3_pm_complete(&qcom->dwc);
-
-	guard(mutex)(&qcom->vbus_lock);
-
-	if (!qcom->vbus_resume_pending || qcom->is_suspended)
-		return;
-
-	/* Direct-complete children have runtime PM disabled until resume ends. */
-	qcom->vbus_resume_pending = false;
-	pm_request_resume(qcom->dwc.dev);
-}
-
 static const struct dev_pm_ops dwc3_qcom_dev_pm_ops = {
 	SYSTEM_SLEEP_PM_OPS(dwc3_qcom_pm_suspend, dwc3_qcom_pm_resume)
 	RUNTIME_PM_OPS(dwc3_qcom_runtime_suspend, dwc3_qcom_runtime_resume,
-		       dwc3_qcom_runtime_idle)
+			   dwc3_qcom_runtime_idle)
 	.complete = pm_sleep_ptr(dwc3_qcom_complete),
 	.prepare = pm_sleep_ptr(dwc3_qcom_prepare),
 };
