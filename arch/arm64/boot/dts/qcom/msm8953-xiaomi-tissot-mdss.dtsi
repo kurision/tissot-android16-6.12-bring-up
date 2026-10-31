@@ -66,6 +66,13 @@
 
 &soc {
 	mdss_mdp: qcom,mdss_mdp@1a00000 {
+		/*
+		 * The iommu-addresses of the splash region are translated
+		 * through this node, and the default OF bus only matches
+		 * nodes that carry #address-cells.
+		 */
+		#address-cells = <1>;
+		#size-cells = <1>;
 		compatible = "qcom,mdss_mdp";
 		reg = <0x01a00000 0x90000>,
 		      <0x01ab0000 0x1040>;
