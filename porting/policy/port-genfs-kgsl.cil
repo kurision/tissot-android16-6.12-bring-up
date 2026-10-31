@@ -140,6 +140,8 @@
 ;; it on kernel self.  The GPU firmware is on /vendor as vendor_file, so without
 ;; this kgsl cannot start, EGL fails and surfaceflinger aborts.
 (allow kernel vendor_file (system (firmware_load)))
+;; The MSS firmware on /vendor/firmware_mnt is firmware_file.
+(allow kernel firmware_file (system (firmware_load)))
 
 ;; ---------------
 ;; The modem's remote storage memory on 6.12: label the UIO device with the
