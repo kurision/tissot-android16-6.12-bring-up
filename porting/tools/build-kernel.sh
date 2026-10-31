@@ -45,6 +45,11 @@
 # defaults look for it:
 #
 #   ACK_TISSOT_BASE_IMAGE  the base boot image (also the second argument)
+#   ACK_BRINGUP_OFF        CONFIG symbols, without the prefix, to build with
+#                          off, for adding drivers back one group at a time.
+#                          The result is a bring-up image: the checks for
+#                          those symbols and the final symbol check are
+#                          skipped, so it is not a release candidate.
 #   ACK_SNAPSHOT_DIR       where the per-run evidence goes
 #   ACK_EXPERIMENTAL_WCNSS_FALLBACK=1  use ueventd instead of embedding NV
 #   ACK_WCNSS_FIRMWARE_DIR the staged wcnss.* + WCNSS_qcom_wlan_nv.bin
@@ -71,6 +76,11 @@ set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$REPO"
+
+bringup_off() {
+	case " ${ACK_BRINGUP_OFF:-} " in *" $1 "*) return 0;; esac
+	return 1
+}
 
 RUN=${1:-run-$(date -u +%Y%m%dT%H%M%SZ)}
 SNAP=${ACK_SNAPSHOT_DIR:-$REPO/porting/artifacts/snapshot60}
@@ -302,6 +312,7 @@ cp "$OUT_DIR/.config" "$SNAP/$RUN-prebuild.config"
 # which this kernel does not carry, and with it in the kernel does not
 # link. It is built on the ack-audio branch.
 for sym in KSU SLIMBUS SLIM_QCOM_CTRL ZRAM ZRAM_BACKEND_LZ4 ZRAM_BACKEND_ZSTD MSM_SMD_PKT; do
+ bringup_off "$sym" && continue
  grep -q "^CONFIG_$sym=" "$OUT_DIR/.config" && sed -i "s/^CONFIG_$sym=.*/CONFIG_$sym=y/" "$OUT_DIR/.config" || \
 	echo "CONFIG_$sym=y" >> "$OUT_DIR/.config"
 done
@@ -311,6 +322,10 @@ done
 # this HAL ignores; keep it out of the kernel so the two cannot race.
 sed -i "/^CONFIG_BT_QCOMSMD=/d" "$OUT_DIR/.config"
 echo "# CONFIG_BT_QCOMSMD is not set" >> "$OUT_DIR/.config"
+for sym in ${ACK_BRINGUP_OFF:-}; do
+ sed -i "/^CONFIG_$sym=/d" "$OUT_DIR/.config"
+ echo "# CONFIG_$sym is not set" >> "$OUT_DIR/.config"
+done
 # The upstream WCD9335 and its microphone bias helper have to be off: the
 # port's own versions of both are built, they register the same DAIs, and
 # they define the same symbols. They are turned off here, and not only
@@ -348,6 +363,7 @@ scripts/diffconfig "$SNAP/$RUN-prebuild.config" "$OUT_DIR/.config" | tee "$SNAP/
 # null-derefs at enrollment (run417 shipped without them because the =y
 # lived only in scripts/tissot-ack.config; kernel.config carries it now).
 for sym in KSU RUST RUST_IS_AVAILABLE ASHMEM SHMEM SLIMBUS ZRAM MSM_SMD_PKT FINGERPRINT_FPC1020 FINGERPRINT_GOODIX_GF3208; do
+ bringup_off "$sym" && continue
  grep -qx "CONFIG_$sym=y" "$OUT_DIR/.config" || { echo "CONFIG_$sym is not set" >&2; exit 1; }
 done
 grep -qx '# CONFIG_BT_QCOMSMD is not set' "$OUT_DIR/.config" || {
@@ -574,7 +590,7 @@ scripts/extract-ikconfig "$SNAP/kdir-$RUN/Image.gz" > "$SNAP/$RUN-embedded.confi
 
 # --- check the result -------------------------------------------------------
 LLVM_NM=${LLVM_NM:-$(command -v llvm-nm || ls /usr/lib/llvm-*/bin/llvm-nm 2>/dev/null | head -1)}
-SNAP="$SNAP" LLVM_NM="$LLVM_NM" RUN="$RUN" python3 - <<'PY'
+[ -n "${ACK_BRINGUP_OFF:-}" ] || SNAP="$SNAP" LLVM_NM="$LLVM_NM" RUN="$RUN" python3 - <<'PY'
 import hashlib, os, pathlib, json, gzip, re, struct, subprocess, zipfile
 s=pathlib.Path(os.environ['SNAP'])
 run=os.environ['RUN']
