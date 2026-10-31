@@ -600,6 +600,12 @@
 
 &spmi_bus {
 	pmic@3 {
+		/*
+		 * pmi8950.dtsi describes the same block without the rails;
+		 * two nodes cannot both claim its interrupts.
+		 */
+		/delete-node/ labibb;
+
 		labibb: labibb@0 {
 			compatible = "qcom,pmi8950-lab-ibb";
 			status = "okay";
